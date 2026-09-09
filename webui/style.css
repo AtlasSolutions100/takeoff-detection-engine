@@ -331,6 +331,9 @@ canvas#view.panning { cursor: grabbing; }
    screen, so it tracks the window instead of a constant. */
 .ew-rows { max-height: 32vh; }
 .ew-hint { color: var(--dim); font-size: var(--t-fs-xs); padding: 6px 12px 2px; }
+.ew-hint.ew-unsplit { color: var(--fg); }
+.ew-hint.ew-unsplit button { margin: 4px 6px 0 0; }
+.ew-ocr-cut { margin-bottom: 4px; }
 /* the in-flight line for /earthwork/suggest - sits under the panel HEAD,
    above the fold, because the old hint rendered into #ewRows at the bottom
    of the panel where the operator could not see it */

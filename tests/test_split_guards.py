@@ -29,6 +29,35 @@ TIN, so the two places they can be confidently wrong get closed first.
      _POP_SHARE_MIN = 0.15 sits in the empty band between 6% and 20%, so it
      closes both near-misses and moves none of the eight measured sheets.
 
+  3. ONE LINE WEIGHT IS NOT A SPLIT.  The width tier put every row at or
+     below the median on EXISTING, which on a one-weight sheet is every
+     row. Measured 2026-09-08 over the twelve-sheet corpus (throwaway
+     store, scratchpad split_measure.py), rows / distinct widths / tier:
+
+       Oncor C-04 p3     117 / 0.2 0.4 0.7 0.8 1.1 3.3 / legend 62, colour 22
+       Oncor C-06 p5      66 / 0.2 0.4 0.7 0.8         / legend 40, colour 9
+       Oncor C-08 p7      32 / 0.2 0.4 0.7 0.8 0.9     / colour 26
+       C4.0               18 / 0.1 0.8 1.1             / width 14
+       C4.1                8 / 0.8 1.1                 / width 8
+       C4.2                7 / 0.1 0.8 1.1             / width 5
+       C4.3                8 / 0.4 0.8 1.1             / width 8
+       C4.4                9 / 0.1 0.8 1.1             / width 9
+       Belle Farms ROAD   40 / 0.5                     / NONE 40  <- abstains
+       C0.00, C2.1, C4 GRADING Rev.0: 0 rows in that run - the 300 s OCR
+         cap of the first cut fired under CPU load before anything was
+         read (C2.1 had 18 rows on 2026-09-03), which is why the cap is
+         now wide and the idle rule is what stops a no-label sheet.
+
+     Belle Farms is the only sheet that abstains; every sheet with two
+     weights keeps a width split. The reference is the whole sheet's
+     LOWER median, and when every row sits at or below it the cut drops
+     to the next weight down, so two distinct weights always separate.
+
+  4. POLARITY.  grey = existing / dark = proposed is a convention; when
+     the legend names both families and they carry ink (two or more
+     inked rows a side, _POLARITY_MIN), the legend's own polarity is used
+     for the colour-decided rows and counts["polarity"] says which.
+
 Run:  python tests/test_split_guards.py
 """
 import pathlib
@@ -125,7 +154,34 @@ rows, info, c = ink_case(39, 2)
 check(c["color"] == 0,
       "39 grey + 2 dark does NOT trip colour screening - 2 strokes is 5% of "
       "the sheet, not a population  (" + str(c) + ")")
-check(c["width"] == 41, "...all 41 rows fall through to width instead")
+# ...and width CANNOT split them either: one stroke weight on the whole
+# sheet. Until 2026-09-08 that filed all 41 as EXISTING (every width <= the
+# median) with nothing on the sheet to say so - the "labelled EXIST or
+# skipped" symptom Koby reported. Now: no surface, split_by "none".
+check(c.get("none") == 41 and c["width"] == 0,
+      "...all 41 fall through to width, which ABSTAINS on one line weight  (" + str(c) + ")")
+check(all(r["surface"] is None and r["split_by"] == "none" for r in rows),
+      "   ...every row carries surface None / split_by none for the panel")
+
+
+def width_case(widths):
+    rows, info = [], {}
+    for i, w in enumerate(widths, 1):
+        rows.append({"chain_id": i, "width": w})
+        info[i] = {"style_id": 9, "color": DARK, "width": w}
+    return rows, split_rows_surface(rows, info, {})
+
+
+rows, c = width_case([0.5, 0.5, 0.5, 1.1, 1.1])
+check(c["width"] == 5 and c.get("none", 0) == 0,
+      "two stroke weights still split by width, as before  (" + str(c) + ")")
+check([r["surface"] for r in rows] == ["existing"] * 3 + ["proposed"] * 2,
+      "   ...lighter than the median existing, heavier proposed")
+rows, c = width_case([0.7, 0.7, 0.7, 0.7])
+check(c.get("none") == 4, "one weight, four rows: none assigned  (" + str(c) + ")")
+rows, c = width_case([0.5, 0.9, 1.3])
+check(c["width"] == 3 and [r["surface"] for r in rows] == ["existing", "existing", "proposed"],
+      "three weights: median and below existing, above proposed")
 
 # C2.1's shape the other way up: 2 grey, 17 dark
 rows, info, c = ink_case(2, 17)
@@ -156,6 +212,52 @@ rows, info, c = ink_case(n - over, over)
 check(c["color"] == n,
       "a minority of %d/%d (%.0f%%) is above it and does"
       % (over, n, 100.0 * over / n))
+
+# ===========================================================================
+# 3. the ink rule's POLARITY comes from the legend when the legend can say
+# ===========================================================================
+# grey = existing / dark = proposed is a convention; a sheet whose legend
+# names both families, inked the other way round, overrides it for every
+# colour-decided row. Built so the legend decides 4 rows a side and leaves
+# 40 more to the ink rule, at a share (50%) that screens.
+
+
+def polarity_case(existing_ink, proposed_ink):
+    rows, info = [], {}
+    cid = 0
+    for k in (existing_ink,) * 4 + (proposed_ink,) * 4:
+        cid += 1
+        rows.append({"chain_id": cid, "width": 0.5})
+        info[cid] = {"style_id": 1 if cid <= 4 else 2, "color": k, "width": 0.5}
+    for k in (GRAY,) * 20 + (DARK,) * 20:
+        cid += 1
+        rows.append({"chain_id": cid, "width": 0.5})
+        info[cid] = {"style_id": 9, "color": k, "width": 0.5}
+    v = family_verdicts(styles("noise", "EXISTING CONTOUR (legend)",
+                               "PROPOSED CONTOUR (legend)"))
+    c = split_rows_surface(rows, info, v)
+    by_ink = {"gray": set(), "dark": set()}
+    for r in rows:
+        if r["split_by"] == "color":
+            by_ink["gray" if info[r["chain_id"]]["color"] == GRAY else "dark"].add(r["surface"])
+    return c, by_ink
+
+
+c, by_ink = polarity_case(GRAY, DARK)
+check(c.get("polarity") == "legend-confirmed" and by_ink == {"gray": {"existing"}, "dark": {"proposed"}},
+      "legend families inked grey-existing / dark-proposed CONFIRM the "
+      "convention and the ink rule runs as before  (" + str(c.get("polarity")) + " " + str(by_ink) + ")")
+c, by_ink = polarity_case(DARK, GRAY)
+check(c.get("polarity") == "legend-flipped" and by_ink == {"gray": {"proposed"}, "dark": {"existing"}},
+      "legend families inked the OTHER way round FLIP the ink rule for the "
+      "unnamed rows  (" + str(c.get("polarity")) + " " + str(by_ink) + ")")
+c, by_ink = polarity_case(DARK, DARK)
+check(c.get("polarity") == "convention" and by_ink == {"gray": {"existing"}, "dark": {"proposed"}},
+      "legend families that share one ink say nothing: convention stands  ("
+      + str(c.get("polarity")) + ")")
+rows, info, c = ink_case(60, 15)
+check(c.get("polarity") == "convention",
+      "no legend at all: the convention stands and is named as one")
 
 check(_POP_MIN == 2, "the absolute floor is still there as well")
 check(0 < _POP_SHARE_MIN < 0.20,

@@ -29,6 +29,9 @@ class Surface:
     name: str
     contours: list = field(default_factory=list)  # (pts Nx2 pt-space, z_ft)
     points: list = field(default_factory=list)    # (x_pt, y_pt, z_ft) spot grades
+    # why interpolator() returned None when the sample count was enough -
+    # "collinear" today; None while the surface is fine or merely short
+    degenerate: "str | None" = None
 
     def samples(self, step_pt: float = 6.0):
         """(P Nx2 page pt, Z N ft) - every contour sample plus every spot.
@@ -66,6 +69,17 @@ class Surface:
     def interpolator(self, step_pt: float = 6.0):
         P, Z = self.samples(step_pt)
         if P is None:
+            return None, None
+        # ONE LINE IS NOT A SURFACE. Three or more samples that all lie on
+        # a single straight line - one straight contour, spot grades along
+        # a kerb - pass the count floor and then blow up inside Qhull
+        # ("initial simplex is flat"), which the route served as a bare
+        # 500. Reproduced 2026-09-08 on Barn C3.0 with one straight chain a
+        # side and with three collinear spot grades. Measured here, before
+        # scipy sees it, and remembered on the surface so the refusal can
+        # name it (_floor_refusal).
+        if _collinear(P):
+            self.degenerate = "collinear"
             return None, None
         return LinearNDInterpolator(P, Z), P
 
@@ -306,6 +320,24 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
+# RMS distance, in page pt, that a sample set may sit off its own best-fit
+# line before it counts as having plan area. Qhull's own tolerance is
+# relative machine precision; anything under a millionth of a point is
+# not a drawn shape, it is one line sampled.
+_COLLINEAR_RMS_PT = 1e-6
+
+
+def _collinear(P: np.ndarray) -> bool:
+    """True when every point in P (Nx2) lies on one straight line."""
+    P = np.asarray(P, float)
+    if len(P) < 3:
+        return True
+    Q = P - P.mean(axis=0)
+    s = np.linalg.svd(Q, compute_uv=False)
+    # s[1]**2 = sum of squared perpendicular distances to the best line
+    return float(s[1]) / np.sqrt(len(P)) < _COLLINEAR_RMS_PT
+
+
 def _floor_refusal(surf: "Surface", interp_ok: bool):
     """None when this surface may produce a volume, else the refusal dict."""
     b = surface_basis(surf)
@@ -314,6 +346,15 @@ def _floor_refusal(surf: "Surface", interp_ok: bool):
                          f"spot grades assigned - there is nothing to "
                          f"interpolate",
                 "error_code": "surface_empty", "surface": b}
+    if not interp_ok and getattr(surf, "degenerate", None) == "collinear":
+        return {"error": f"the {b['name']} surface's samples "
+                         f"({_plural(b['n_contours'], 'contour')}, "
+                         f"{_plural(b['n_spots'], 'spot grade')}) all lie "
+                         f"on ONE straight line, so they enclose no area "
+                         f"and no surface can be built between them. "
+                         f"Assign {b['name']} a second contour that is not "
+                         f"on the same line, or spot grades off it.",
+                "error_code": "surface_collinear", "surface": b}
     if not interp_ok:
         return {"error": f"the {b['name']} surface has fewer than 3 sample "
                          f"points ({_plural(b['n_contours'], 'contour')}, "
@@ -1085,10 +1126,18 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
         "cut_area_sf": cut_area, "layer_area_sf": lay_area,
         "rows": rows,
         # every volume here is in-place yards between the two surfaces; see
-        # the module comment for why no swell/compaction factor is applied
-        "basis": "in-place cubic yards; no swell or compaction factor "
-                 "applied" if (ef == 1.0 and imf == 1.0) else
-                 "in-place cubic yards; user factors applied",
+        # the module comment for why no swell/compaction factor is applied.
+        # "Neat line" is the estimator's word for exactly that - the volume
+        # between the drawn surfaces, with no over-excavation, side-slope
+        # or working-room allowance added (general estimating usage, not a
+        # term any sheet here prints); the client's own Estimate #853 is
+        # priced on that basis, so the sentence names it.
+        "basis": "neat-line, in-place cubic yards between the two surfaces; "
+                 "no swell, compaction, over-excavation or working-room "
+                 "allowance applied" if (ef == 1.0 and imf == 1.0) else
+                 "neat-line, in-place cubic yards between the two surfaces; "
+                 "your export/import factors applied, no over-excavation "
+                 "or working-room allowance",
     }
 
 
@@ -1232,6 +1281,13 @@ def zone_cut_fill(existing: Surface, polygon, ft_per_pt: float,
         return {"error": "the existing surface has no contours and no spot "
                          "grades assigned - there is nothing to interpolate",
                 "error_code": "surface_empty",
+                "surface": _b, "basis": {"existing": _b}}
+    if fe is None and existing.degenerate == "collinear":
+        return {"error": "the existing surface's samples all lie on ONE "
+                         "straight line, so they enclose no area and no "
+                         "surface can be built - assign EXISTING a second "
+                         "contour off that line, or spot grades off it",
+                "error_code": "surface_collinear",
                 "surface": _b, "basis": {"existing": _b}}
     if fe is None:
         return {"error": "the existing surface needs at least 3 sample "
@@ -2258,7 +2314,10 @@ def _read_label_patch(cv2, pytesseract, re, patch) -> str | None:
 def gap_label_elevations(chains: list, page_img: np.ndarray,
                          px_per_pt: float,
                          max_patches: int = _OCR_BUDGET,
-                         exclude: set | None = None) -> dict:
+                         exclude: set | None = None,
+                         time_budget_s: float | None = None,
+                         idle_budget_s: float | None = None,
+                         diag: dict | None = None) -> dict:
     """Read elevation labels printed INSIDE breaks of their own contour.
 
     Contour elevations sit in a gap of the line, rotated to follow it.
@@ -2313,8 +2372,36 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     n_ocr = 0  # the budget counts tesseract calls; the numpy gates that
     # reject empty breaks and drawn dashes are ~free and must not starve
     # later chains the way v1's patch counter did
+    #
+    # AND A WALL CLOCK. The call budget bounds tesseract CALLS, not time:
+    # Barn C3.0 (a site plan with no contours at all) spent the whole 1,400
+    # on utility and property linework - more than ten minutes of OCR that
+    # read nothing (a 600 s probe timed out before it finished) with the
+    # panel on "finding elevations" the whole while. `time_budget_s` stops the pass, and `diag` says so - what was
+    # read out of what was planned - so a truncated read is reported as
+    # truncated rather than served as complete.
+    # Two clocks: `time_budget_s` is a wide hard cap (a runaway pass ends
+    # and diag says it was cut short); `idle_budget_s` stops a pass that
+    # has READ NOTHING by then. The idle clock is OFF on the service by
+    # default - measured 2026-09-08, Barn C3.0 (no contours) does get two
+    # raw reads at call 158 / 33 s, and under the 10x load this box sees
+    # from other tenants a 120 s idle clock would empty Belle Farms (first
+    # read 18 s unloaded) before it touched C3.0. server.py OCR_BUDGET_S
+    # has the per-sheet table. diag says which clock fired, if any.
+    import time as _time
+    t0 = _time.monotonic()
+    stopped_early = False
+    stop_reason = None
     for cid, (kind, cx, cy, ux, uy, span) in order:
         if n_ocr >= max_patches:
+            break
+        elapsed = _time.monotonic() - t0
+        if time_budget_s is not None and elapsed > time_budget_s:
+            stopped_early, stop_reason = True, "cap"
+            break
+        if (idle_budget_s is not None and elapsed > idle_budget_s
+                and not reads):
+            stopped_early, stop_reason = True, "idle"
             break
         if len(reads.get(cid, ())) >= _OCR_READS_PER_CHAIN:
             continue
@@ -2445,6 +2532,14 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
         if len(zs) == 1:
             v, cx, cy, _ = vals[0]
             found[int(cid)] = (v, cx, cy)
+    if diag is not None:
+        diag.update({"patches_planned": len(order), "ocr_calls": n_ocr,
+                     "seconds": round(_time.monotonic() - t0, 1),
+                     "stopped_early": stopped_early,
+                     "stop_reason": stop_reason,
+                     "idle_budget_s": idle_budget_s,
+                     "time_budget_s": time_budget_s,
+                     "chains_read": len(found)})
     return found
 
 
@@ -2498,6 +2593,9 @@ _POP_MIN = 2
 # "a stray got in" - an absolute count cannot, at any value, since a big
 # sheet's stray count scales with the sheet.
 _POP_SHARE_MIN = 0.15
+# inked legend rows a side before the legend's own polarity overrides the
+# grey-existing / dark-proposed convention (split_rows_surface)
+_POLARITY_MIN = 2
 
 
 def _ink_kind(color) -> str | None:
@@ -2602,25 +2700,91 @@ def split_rows_surface(rows: list, chain_info: dict,
     _ink_share = (min(n_gray, n_dark) / len(rows)) if rows else 0.0
     two_inks = (n_gray >= _POP_MIN and n_dark >= _POP_MIN
                 and _ink_share >= _POP_SHARE_MIN)
+    # WHICH INK IS WHICH. Grey = existing, dark = proposed is a drafting
+    # convention (screened existing ground under solid proposed work), not
+    # something a sheet states - and a sheet CAN say otherwise: its legend
+    # rows name the existing and proposed families, and those families
+    # carry ink. When both named families are present and inked the
+    # opposite way round, the legend wins for every colour-decided row;
+    # when they agree, the convention is confirmed by the sheet; when the
+    # legend names neither (or both carry the same ink), the convention
+    # stands alone and the panel says so. counts["polarity"] carries the
+    # verdict out to the reply.
+    ink_of = {"existing": {"gray": 0, "dark": 0},
+              "proposed": {"gray": 0, "dark": 0}}
+    for r in rows:
+        if r.get("split_by") == "legend":
+            k = kinds[r["chain_id"]]
+            if k in ("gray", "dark"):
+                ink_of[r["surface"]][k] += 1
+
+    # Two inked rows a side before the legend may flip the convention: one
+    # chain is a sample, not a family (the precedence test in
+    # tests/test_ew_suggest.py draws one contrarian chain per legend row
+    # and expects the convention to stand).
+    def _major(d):
+        if d["gray"] == d["dark"] or d["gray"] + d["dark"] < _POLARITY_MIN:
+            return None
+        return "gray" if d["gray"] > d["dark"] else "dark"
+    ex_ink, pr_ink = _major(ink_of["existing"]), _major(ink_of["proposed"])
+    gray_is = "existing"
+    if ex_ink and pr_ink and ex_ink != pr_ink:
+        gray_is = "existing" if ex_ink == "gray" else "proposed"
+        counts["polarity"] = ("legend-confirmed" if gray_is == "existing"
+                              else "legend-flipped")
+    else:
+        counts["polarity"] = "convention"
+    dark_is = "proposed" if gray_is == "existing" else "existing"
     still = []
     for r in undecided:
         k = kinds[r["chain_id"]]
         if two_inks and k in ("gray", "dark"):
-            r["surface"] = "existing" if k == "gray" else "proposed"
+            r["surface"] = gray_is if k == "gray" else dark_is
             r["split_by"] = "color"
             counts["color"] += 1
         else:
             still.append(r)
     # width fallback: the median rule the UI applies today, computed over
     # every returned row so a monochrome sheet reproduces today's split
-    # exactly
+    # exactly.
+    #
+    # ...EXCEPT WHEN IT CANNOT SPLIT. Belle Farms ROAD GRADING (40 rows) and
+    # C2.1-Grading (18 rows) carry one line weight: every row is <= the
+    # median, so every contour was filed as EXISTING with nothing on the
+    # sheet to say so - the symptom Koby reported ("it was labelled EXIST or
+    # skipped"). The same happens when the rule lands every row on ONE side
+    # for any reason. A guess that cannot distinguish is not a guess, it is
+    # a default wearing a guess's clothes; here the rows are left with NO
+    # surface (split_by "none") and the panel says the sheet gave no
+    # evidence, so the operator assigns them - or says "all existing" if
+    # that is what the sheet draws. (Corpus measurement: see
+    # tests/test_split_guards.py, which records which sheets abstain.)
+    #
+    # "Cannot split" means ONE stroke weight, not "the median landed on
+    # the heavy side". The cut is the LOWER median of the widths, and when
+    # every row still sits at or below it the cut drops to the next weight
+    # down, so two distinct weights ALWAYS separate - a two-row sheet at
+    # 0.2 / 0.9 pt puts the 0.9 on proposed rather than filing both as
+    # existing because the upper median happened to be 0.9.
+    # The reference is the WHOLE sheet's weights, as it always was - a lone
+    # leftover row is judged against the sheet, not against itself - and a
+    # sheet with one weight on every row is the one that cannot split.
     ws = sorted((r.get("width") or 0) for r in rows)
-    wmed = ws[len(ws) // 2] if ws else 0
+    distinct = sorted(set(ws))
+    separates = len(distinct) >= 2
+    wmed = ws[(len(ws) - 1) // 2] if ws else 0
+    if separates and wmed >= distinct[-1]:
+        wmed = distinct[-2]
     for r in still:
         w = r.get("width") or 0
-        r["surface"] = "existing" if w <= wmed else "proposed"
-        r["split_by"] = "width"
-        counts["width"] += 1
+        if separates:
+            r["surface"] = "existing" if w <= wmed else "proposed"
+            r["split_by"] = "width"
+            counts["width"] += 1
+        else:
+            r["surface"] = None
+            r["split_by"] = "none"
+            counts["none"] = counts.get("none", 0) + 1
     return counts
 
 
@@ -3142,6 +3306,33 @@ def _legend_blocks(boxes) -> list:
                 continue
         blocks.append(b)
     return blocks
+
+
+# A contour label inside the legend is the legend's SAMPLE, not terrain.
+# Oncor C-08 prints "468" on both its PROPOSED CONTOUR and EXISTING CONTOUR
+# swatches; the sheet's contours run 530-586 ft, and the two 468 rows
+# entered the suggest list (one existing, one proposed) 60-120 ft below
+# every real label. The per-row test the route used could not catch them:
+# the legend reader had the PROPOSED CONTOUR row's box 11 pt short of the
+# "468" and had missed the EXISTING CONTOUR row altogether (measured
+# 2026-09-08). The merged BLOCK the spot-grade reader already uses covers
+# both, because the legend's other nine rows fix where the legend is.
+_LEGEND_LABEL_PAD_X = 6.0
+_LEGEND_LABEL_PAD_Y = 8.0
+
+
+def label_in_legend(xy, legend_boxes) -> bool:
+    """True when a label position lies inside the legend: inside any
+    merged legend block (per-row boxes bridged, _legend_blocks), with the
+    same small pad the per-row test always had."""
+    if not xy or xy[0] is None or xy[1] is None:
+        return False
+    x, y = float(xy[0]), float(xy[1])
+    for b in _legend_blocks(legend_boxes):
+        if (b[0] - _LEGEND_LABEL_PAD_X <= x <= b[2] + _LEGEND_LABEL_PAD_X
+                and b[1] - _LEGEND_LABEL_PAD_Y <= y <= b[3] + _LEGEND_LABEL_PAD_Y):
+            return True
+    return False
 
 
 # Fallback legend signature for when no legend boxes are available (the

@@ -60,16 +60,16 @@ function extract(name) {
 // The row build lives inside a long async function, so mirror the exact
 // expression rather than the whole body. Guard: assert the source really
 // contains this shape, so the mirror cannot drift away from the code.
-check(/surface:\s*\(s\.split_by === "interval-infill"\)\s*\?\s*null/.test(SRC),
-  "an interval-infill row is excluded from the width fallback BY NAME, not "
-  + "merely nulled by a later pass");
+check(/surface:\s*\(s\.split_by === "interval-infill" \|\| s\.split_by === "none"\)\s*\n?\s*\?\s*null/.test(SRC),
+  "an interval-infill row - and a row the server could not split (\"none\") - "
+  + "is excluded from the width fallback BY NAME, not merely nulled by a later pass");
 check(/\?\s*s\.surface\s*\n?\s*:\s*\(\(s\.width \|\| 0\) <= wmed/.test(SRC),
   "the server's surface wins, and the width median is the fallback");
 check(/splitBy:\s*s\.split_by \|\| null/.test(SRC),
   "the row carries WHICH tier decided");
 
 const rowSurface = (s, wmed) =>
-  (s.split_by === "interval-infill") ? null
+  (s.split_by === "interval-infill" || s.split_by === "none") ? null
     : (s.surface === "existing" || s.surface === "proposed") ? s.surface
     : ((s.width || 0) <= wmed ? "existing" : "proposed");
 
@@ -93,16 +93,25 @@ check(oldRule[1] === "proposed" && oldRule[2] === "proposed",
   + "- the regression this pins  (" + oldRule.join(",") + ")");
 check(got[5] === "existing", "a colour-screened grey row reads existing");
 
-// no legend, no ink: the server returns the same width answer, and a sheet
-// where the widths do not separate still collapses to one side - this change
-// does NOT fix that, and must not pretend to
+// no legend, no ink, ONE line weight: since 2026-09-08 the server ABSTAINS
+// (split_by "none", surface null) instead of filing every row as existing,
+// and the client must honour that rather than fall through to its own width
+// median - which is exactly the rule that produced the Belle Farms
+// "labelled EXIST or skipped" symptom. The row starts on skip.
 const mono = [
-  { chain_id: 1, width: 0.5, surface: "existing", split_by: "width" },
-  { chain_id: 2, width: 0.5, surface: "existing", split_by: "width" },
+  { chain_id: 1, width: 0.5, surface: null, split_by: "none" },
+  { chain_id: 2, width: 0.5, surface: null, split_by: "none" },
 ];
-check(mono.map((s) => rowSurface(s, 0.5)).every((v) => v === "existing"),
-  "an all-equal-width sheet still puts every row on existing - unchanged, "
-  + "and the row's own note calls it a guess");
+check(mono.map((s) => rowSurface(s, 0.5)).every((v) => v === null),
+  "a one-weight sheet the server could not split leaves every row on skip - "
+  + "the client does NOT re-run the width median over it");
+// ...while a sheet whose weights DO separate still takes the server's width split
+const two = [
+  { chain_id: 1, width: 0.5, surface: "existing", split_by: "width" },
+  { chain_id: 2, width: 1.1, surface: "proposed", split_by: "width" },
+];
+check(JSON.stringify(two.map((s) => rowSurface(s, 0.5))) === JSON.stringify(["existing", "proposed"]),
+  "a two-weight sheet still takes the server's width split");
 
 check(rowSurface({ width: 0.2, surface: null, split_by: "interval-infill" },
                  wmed) === null,
@@ -180,7 +189,8 @@ if (note) {
 // ===========================================================================
 // 4. the cache buster
 // ===========================================================================
-check(/app\.js\?v=160/.test(HTML), "app.js cache buster bumped to 160");
+check(+((/app\.js\?v=(\d+)/.exec(HTML) || [])[1] || 0) >= 160,
+  "app.js cache buster at or past 160 (a later bump is fine; an older one is not)");
 
 console.log(failures ? "\n" + failures + " FAILED" : "\nall passed");
 process.exit(failures ? 1 : 0);

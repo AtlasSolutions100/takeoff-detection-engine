@@ -236,8 +236,10 @@ check(!/\.sh-suggest[^{]*\{[^}]*var\(--accent\)/.test(css),
   "and never in the accent colour reserved for a corroborated reading");
 
 // ---- the cache buster moved, or nobody sees any of this -----------------
-check(/app\.js\?v=160/.test(html), "app.js cache buster bumped to 160");
-check(/style\.css\?v=77/.test(html), "style.css cache buster bumped to 77");
+check(+((/app\.js\?v=(\d+)/.exec(html) || [])[1] || 0) >= 160,
+  "app.js cache buster at or past 160 (a later bump is fine; an older one is not)");
+check(+((/style\.css\?v=(\d+)/.exec(html) || [])[1] || 0) >= 77,
+  "style.css cache buster at or past 77");
 
 console.log();
 if (fails) { console.error(fails + " FAILED"); process.exit(1); }

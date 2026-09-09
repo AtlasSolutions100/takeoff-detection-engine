@@ -3581,6 +3581,50 @@ async def legend_sheet_upload(job_id: str, file: UploadFile, request: Request):
     return JSONResponse(out)
 
 
+@app.get("/api/job/{job_id}/page/{page}/scale/dimensions")
+def get_scale_dimensions(job_id: str, page: int):
+    """The scale in force checked against the dimensions the sheet prints
+    (takeoff_engine.dimcheck). A second witness beside the drawn bar, and
+    the one that catches a caption read off the wrong viewport: every
+    printed `60'` sits on a line whose paper length is known exactly.
+
+    Reports agreement / disagreement / could-not-tell with the witnesses
+    behind it. It never sets the scale. Cached per (page, scale in force)
+    beside the result, so a re-read after a scale pick recomputes and a
+    plain reload does not."""
+    from takeoff_engine.dimcheck import dimension_check
+
+    job = JOBS.get(job_id) or _404()
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    if not rf.exists():
+        raise HTTPException(404, "run detect first")
+    res = json.loads(rf.read_text())
+    sc = _page_scale(job_id, page, res)
+    ft = None
+    if sc:
+        try:
+            ft = float(sc.get("ft_per_paper_inch") or 0) or None
+        except (TypeError, ValueError):
+            ft = None
+    cache = _job_dir(job_id) / f"p{page}_dimcheck.json"
+    key = {"scale": ft, "engine_sig": res.get("engine_sig")}
+    try:
+        cached = json.loads(cache.read_text())
+        if cached.get("key") == key:
+            return JSONResponse(cached["check"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    doc = pymupdf.open(job["path"])
+    words = page_words(doc[page])
+    doc.close()
+    check = dimension_check(words, res.get("chains") or [], ft)
+    try:
+        cache.write_text(json.dumps({"key": key, "check": check}))
+    except OSError:
+        pass
+    return JSONResponse(check)
+
+
 @app.get("/api/job/{job_id}/page/{page}/scale")
 def get_scale_pick(job_id: str, page: int):
     """The scale decision recorded for this page: what the engine reads NOW,
@@ -4773,6 +4817,43 @@ _ELEVGAP_LOCKS: dict[tuple[str, int], threading.Lock] = {}
 _ELEVGAP_GUARD = threading.Lock()
 
 
+# The label-reading OCR pass's clocks (earthwork.gap_label_elevations).
+#
+# WHAT WAS MEASURED before choosing them (2026-09-08, this box, per sheet,
+# offline: tesseract calls made / first successful raw read at call N /
+# wall time, unloaded unless noted):
+#
+#   Oncor C-04        868 calls / first read at call 4   /  200 s
+#   C2.1-Grading      848 calls / call 5                 / 2183 s  (LOADED:
+#                     2.57 s per call against 0.23 unloaded - another
+#                     agent's detects on the same box; 10x)
+#   Belle ROAD 1of2   421 calls / call 57                /   96 s
+#   C4_ GRADING       517 calls / call 54                /  105 s
+#   C0.00             288 calls / call 5                 /   55 s
+#   Barn C3.0         382 calls / call 158 (2 raw reads, /   87 s
+#                     both rejected by consensus: 0 chains)
+#
+# So the "twenty minutes on C3.0" was the 10x load, not the sheet: unloaded
+# it is 87 s. And an idle rule ("stop when nothing has been read by T")
+# cannot separate them - C3.0 DOES read (at 33 s), and under the same 10x
+# load Belle's first read (18 s unloaded) lands at ~180 s, so a 120 s idle
+# clock would empty a real sheet before it touched the empty one. A
+# wall-clock rule is a bet on the box, and this box has other tenants.
+#
+#   TAKEOFF_OCR_IDLE_S   the idle clock - OFF by default (0) for the reason
+#                        above; available for a dedicated box.
+#   TAKEOFF_OCR_BUDGET_S the hard cap, wide: 900 s bounds a runaway pass at
+#                        fifteen minutes and the panel SAYS the read was cut
+#                        short (elevation_ocr / "Label reading stopped
+#                        early"). A cut-short read on a real sheet loses
+#                        contours, which is the worse failure, so it is not
+#                        tighter. The measured 300 s first cut, run under
+#                        load, emptied C2.1 (18 rows on 09-03) to 0.
+_idle = float(os.environ.get("TAKEOFF_OCR_IDLE_S", "0") or 0)
+OCR_IDLE_S = _idle if _idle > 0 else None
+OCR_BUDGET_S = float(os.environ.get("TAKEOFF_OCR_BUDGET_S", "900") or 900)
+
+
 def _elevgap_lock(job_id: str, page: int) -> threading.Lock:
     key = (job_id, page)
     with _ELEVGAP_GUARD:
@@ -4908,13 +4989,36 @@ def earthwork_suggest(job_id: str, page: int):
                 img = _np3.frombuffer(pix.samples, _np3.uint8).reshape(
                     pix.height, pix.width, pix.n)[:, :, :3].copy()
                 doc2.close()
+                # WALL CLOCK, not just a call cap. Barn C3.0 - a site plan
+                # with no contours - spent the whole 1,400-call budget on
+                # utility and property linework: more than ten minutes of
+                # OCR that read nothing (the probe's 600 s timeout expired
+                # first) while the panel sat on "finding elevations" - ten
+                # minutes that were the box's load, not the sheet (87 s
+                # unloaded; see OCR_BUDGET_S). The pass stops at the
+                # TAKEOFF_OCR_BUDGET_S hard cap and SAYS so:
+                # ocr_diag goes into the cache beside the values and out in
+                # the reply as `elevation_ocr`, so a truncated read is shown
+                # as truncated, never served as "this sheet has no labels".
+                ocr_diag = {}
                 gap_z = gap_label_elevations(chains, img, 150.0 / 72.0,
-                                             exclude=excl)
+                                             exclude=excl,
+                                             time_budget_s=OCR_BUDGET_S,
+                                             idle_budget_s=OCR_IDLE_S,
+                                             diag=ocr_diag)
                 try:
                     gcache.write_text(json.dumps(
                         {str(k): list(v) for k, v in gap_z.items()}))
+                    gcache.with_suffix(".diag.json").write_text(
+                        json.dumps(ocr_diag))
                 except OSError:
                     pass
+    # what the OCR pass did, whether it ran now or was read back from the
+    # cache - a cached truncated read is still a truncated read
+    try:
+        ocr_diag = json.loads(gcache.with_suffix(".diag.json").read_text())
+    except (OSError, ValueError):
+        ocr_diag = {"cached": gap_z is not None}
     # ew_diag carries what the LADDER GATE did (earthwork._ladder_gate): on a
     # page with no glyph-backed row it is the only consensus filter that can
     # run, and what it drops has to be as visible as what it keeps.
@@ -4967,13 +5071,14 @@ def earthwork_suggest(job_id: str, page: int):
         sug = [r for r in sug
                if r.get("how") != "gap-ocr"
                or min(abs(float(r["z"]) - a) for a in wit) <= 100.0]
+    # ...inside the MERGED legend block, not just a row's own box: C-08's
+    # "468" contour samples sat 11 pt past a short row box and on a row the
+    # legend reader had missed, and both reached the panel as elevations
+    # (earthwork.label_in_legend has the measurement).
+    from takeoff_engine.earthwork import label_in_legend as _label_in_legend
     boxes = res.get("legend_samples") or []
     def _in_legend(r):
-        x, y = r.get("label_xy", [None, None])
-        if x is None:
-            return False
-        return any(b[0] - 6 <= x <= b[2] + 6 and b[1] - 8 <= y <= b[3] + 8
-                   for b in boxes)
+        return _label_in_legend(r.get("label_xy"), boxes)
     kept = [r for r in sug if not _in_legend(r)]
     # cluster on GAPS, not on hundreds: a site that spans 7690-7710 is one
     # surface, and a hundreds bucket would cut it in half
@@ -5100,6 +5205,9 @@ def earthwork_suggest(job_id: str, page: int):
             # the verdict (interval, repeats, share, bands) so the panel can
             # print the sentence and the operator can disagree with it.
             "ocr_ladder": ladder,
+            # the label-reading pass itself: patches planned / read, seconds,
+            # and whether the wall clock cut it short (see TAKEOFF_OCR_BUDGET_S)
+            "elevation_ocr": ocr_diag,
             "families_excluded": fam_excluded,
             "split_counts": split_counts,
             # every inferred row is counted here as well as flagged on

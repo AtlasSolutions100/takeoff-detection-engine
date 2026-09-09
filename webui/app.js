@@ -1677,6 +1677,28 @@ function fmtQty(pt) {
   const ft = pt / 72 * sc.ft_per_paper_inch;
   return (ft >= 1000 ? (ft / 1000).toFixed(1) + "k" : ft.toFixed(0)) + " LF";
 }
+// The dimension check for the page on screen, fetched once per (job, page,
+// scale in force) and held until any of those changes. Returns null while
+// the fetch is out and repaints the sheet head when it lands, so the chip
+// appears without anything else having to know about it.
+const _dimCheck = { key: null, val: null, pending: null };
+function dimCheckFor(job, page, sc) {
+  if (!job || sc == null || !(+sc.ft_per_paper_inch > 0)) return null;
+  const key = job + ":" + page + ":" + (+sc.ft_per_paper_inch).toFixed(4);
+  if (_dimCheck.key === key) return _dimCheck.val;
+  if (_dimCheck.pending === key) return null;
+  _dimCheck.pending = key;
+  fetch(`/api/job/${job}/page/${page}/scale/dimensions`)
+    .then(r => r.ok ? r.json() : null)
+    .then(j => {
+      if (_dimCheck.pending !== key) return;   // the page moved on
+      _dimCheck.key = key; _dimCheck.val = j; _dimCheck.pending = null;
+      if (state.job === job && state.page === page) renderSheetHead();
+    })
+    .catch(() => { if (_dimCheck.pending === key) _dimCheck.pending = null; });
+  return null;
+}
+
 function renderSheetHead() {
   // The status bar's persistent half is the same set of facts this header
   // draws, so it repaints on exactly the same beats: every detect, every
@@ -1757,6 +1779,26 @@ function renderSheetHead() {
       // one source only: honest, but not corroborated
       meta.append(chip(sc.text + (sc.source === "ocr" ? " (read off a scan)" : ""),
         sc.source === "ocr" ? "warn" : "ok"));
+    }
+    // THE SECOND WITNESS: the dimensions the sheet prints, measured against
+    // their own lines (server: /scale/dimensions, takeoff_engine.dimcheck).
+    // It arrives after the head is painted and repaints it once; a sheet
+    // that prints no usable dimension gets no chip - "nothing checked" is
+    // not a verdict worth a colour, and the title on the scale chip says so.
+    const dc = dimCheckFor(state.job, state.page, sc);
+    if (dc && dc.verdict === "agrees") {
+      const c = chip(`✓ ${dc.n_agree} printed dimension${dc.n_agree === 1 ? "" : "s"} agree`, "ok");
+      c.title = dc.why;
+      meta.append(c);
+    } else if (dc && dc.verdict === "disagrees") {
+      const c = chip(`${dc.witness_consensus_n} printed dimensions say `
+        + `~${(+dc.witness_consensus_ft_per_in).toFixed(1)} ft/in — CHECK`, "bad");
+      c.title = dc.why;
+      meta.append(c);
+    } else if (dc && dc.verdict === "inconclusive") {
+      const c = chip(`printed dimensions: ${dc.n_agree} of ${dc.n_agree + dc.n_disagree} agree`, "warn");
+      c.title = dc.why;
+      meta.append(c);
     }
   }
   // THE RUN CHIP NOW COMES FROM runStateOf(), the one place that decides what
@@ -11897,7 +11939,15 @@ async function ewFetchSuggest(gen) {
         // but only while it runs second. Naming the case here means a
         // reorder cannot silently start feeding counted-not-printed
         // elevations into a surface through the back door.
-        surface: (s.split_by === "interval-infill") ? null
+        // A split_by of "none" is the server SAYING it could not split
+        // this sheet - no legend, no second ink, one stroke weight. That
+        // is a verdict, not a missing field, and the row must NOT fall
+        // through to the width median below: that median is exactly the
+        // rule that filed all 40 of Belle Farms' contours as EXISTING with
+        // nothing on the sheet to say so. The row starts on skip and the
+        // panel says why (ewSplitNote, ewUnsplitHint).
+        surface: (s.split_by === "interval-infill" || s.split_by === "none")
+          ? null
           : (s.surface === "existing" || s.surface === "proposed")
           ? s.surface
           : ((s.width || 0) <= wmed ? "existing" : "proposed"),
@@ -11957,6 +12007,15 @@ async function ewFetchSuggest(gen) {
       // renderEwDropped. Held on the panel state so a re-render keeps it.
       dropped: j.suggestions_dropped || 0,
       ladder: j.ocr_ladder || null,
+      // what the label-reading OCR pass did - patches planned / read,
+      // seconds, and whether the server's wall clock stopped it (see
+      // OCR_BUDGET_S in server.py). A cut-short read is reported on the
+      // panel as cut short, never left to read as "no labels here".
+      ocr: j.elevation_ocr || null,
+      // which way round the ink rule ran on this sheet, and on whose word
+      // (split_rows_surface): "legend-confirmed", "legend-flipped" or
+      // "convention". Read by ewSplitNote for every colour-decided row.
+      polarity: (j.split_counts && j.split_counts.polarity) || "convention",
       // HOW MUCH OF THIS SHEET'S CONTOUR LINEWORK THESE ROWS ARE.
       // takeoff_engine.earthwork.contour_coverage, computed on the route:
       // the denominator nothing in the app stated before 2026-09-02, plus
@@ -13283,9 +13342,28 @@ function renderEwDropped() {
   const n = (state.ew && state.ew.dropped) || 0;
   const lad = (state.ew && state.ew.ladder) || null;
   const laddered = lad && lad.applied && lad.verdict && !lad.verdict.laddered;
-  box.hidden = !(n > 0);
+  const ocr = (state.ew && state.ew.ocr) || null;
+  const cut = !!(ocr && ocr.stopped_early);
+  box.hidden = !(n > 0 || cut);
   if (box.hidden) { box.innerHTML = ""; return; }
-  box.innerHTML = `<b>${n} candidate row${n === 1 ? "" : "s"} `
+  // THE READ WAS CUT SHORT. Said first and on its own line: an operator
+  // looking at a short list needs to know the reader stopped before it
+  // looked at every label, which is a different fact from "the sheet has
+  // few labels" and calls for a different response (re-run later, or type
+  // the rest in by hand).
+  const cutLine = cut
+    ? `<div class="ew-ocr-cut"><b>Label reading stopped early.</b> The reader `
+      + `looked at ${ocr.ocr_calls || 0} of ${ocr.patches_planned || 0} places `
+      + `on this sheet in ${Math.round(ocr.seconds || 0)} s and `
+      + (ocr.stop_reason === "idle"
+         ? `had read no elevation by then, so it stopped: this sheet most `
+           + `likely prints no contour labels for it to find. `
+         : `hit its time limit, so some printed elevations may be missing `
+           + `from this list. `)
+      + `Add any you can read with <b>+ Add contour</b>.</div>`
+    : "";
+  if (!(n > 0)) { box.innerHTML = cutLine; return; }
+  box.innerHTML = cutLine + `<b>${n} candidate row${n === 1 ? "" : "s"} `
     + `${n === 1 ? "was" : "were"} read off this sheet and dropped.</b> `
     + (laddered
        ? esc(lad.verdict.why) + " Nothing on this page is glyph text, so "
@@ -13477,18 +13555,84 @@ function ewSplitNote(row) {
   if (row.splitBy === "legend")
     return "This sheet's own legend names the family this contour belongs "
       + "to, and that is what put it on this side.";
-  if (row.splitBy === "color")
+  if (row.splitBy === "color") {
+    // The polarity of the ink rule is the server's verdict for the whole
+    // sheet (split_counts.polarity): the legend's named families confirm
+    // it, flip it, or say nothing. Three different claims; say which.
+    // (typeof-guarded: tests run this function outside the app, with no state)
+    const pol = (typeof state !== "undefined" && state.ew && state.ew.polarity) || "convention";
+    if (pol === "legend-flipped")
+      return "Nothing in the legend named this family. It is on this side "
+        + "because of how it is inked - and on THIS sheet the legend's own "
+        + "existing and proposed families are inked the opposite way from "
+        + "the usual convention (dark existing, screened proposed), so the "
+        + "sheet's polarity was used, not the convention.";
+    if (pol === "legend-confirmed")
+      return "Nothing in the legend named this family. It is on this side "
+        + "because of how it is inked - screened grey reads as existing "
+        + "ground, solid black as proposed - a drafting convention this "
+        + "sheet's own legend families confirm: the family the legend calls "
+        + "existing is the screened one.";
     return "Nothing in the legend named this family. It is on this side "
       + "because of how it is inked - screened grey reads as existing "
       + "ground, solid black as proposed - which is a drafting convention, "
       + "not something this sheet states.";
+  }
   if (row.splitBy === "width")
     return "A GUESS. Neither the legend nor the ink separated this sheet's "
       + "contours, so the side comes from stroke weight alone: lighter than "
       + "the middle of the page reads existing, heavier reads proposed. "
       + "That premise is wrong on some drawings - check this one against "
       + "the paper before trusting the volume.";
+  if (row.splitBy === "none")
+    return "NO SIDE YET. This sheet gave us nothing to split its contours "
+      + "with: no legend row names existing or proposed, every contour is "
+      + "inked the same, and they all share one line weight. Rather than "
+      + "guess, we left it on skip - choose EXIST or PROP, or use the "
+      + "buttons above the list to put every unassigned contour on one side.";
   return "Where this contour's side came from was not recorded.";
+}
+
+// The rows the server could not put on a side (split_by "none") and the
+// operator has not yet touched. Counted, not flagged: the hint and the
+// bulk buttons both come from this one list, so they cannot disagree.
+function ewUnsplitRows() {
+  if (!state.ew) return [];
+  return state.ew.rows.filter(r => r.splitBy === "none"
+    && r.surface == null && r.surfaceBy !== "operator" && !r.noElev);
+}
+
+// One sentence above the list when the sheet could not be split, with the
+// two bulk moves an operator actually makes on such a sheet ("it is all
+// existing ground" is the common case for a survey / road-grading sheet).
+// Every row it moves is stamped as an operator decision, the same as a
+// click on the row, so the basis text and the payload say so.
+function ewUnsplitHint() {
+  const un = ewUnsplitRows();
+  if (!un.length) return null;
+  const d = document.createElement("div");
+  d.className = "ew-hint ew-unsplit";
+  d.id = "ewUnsplit";
+  const s = document.createElement("span");
+  s.textContent = un.length + (un.length === 1 ? " contour has" : " contours have")
+    + " no side yet. This sheet has no legend row naming existing or "
+    + "proposed, one ink, and one line weight, so nothing on it says which "
+    + "contours are which. They add nothing to the volume until you choose. ";
+  d.appendChild(s);
+  for (const [key, lab] of [["existing", "All existing"], ["proposed", "All proposed"]]) {
+    const b = document.createElement("button");
+    b.className = "mini";
+    b.id = key === "existing" ? "ewAllExist" : "ewAllProp";
+    b.textContent = lab;
+    b.title = "Put every unassigned contour on " + key + ". Rows you already "
+      + "chose a side for are left alone.";
+    b.onclick = () => {
+      for (const r of ewUnsplitRows()) { r.surface = key; r.surfaceBy = "operator"; }
+      renderEw(); calcStateDirty();
+    };
+    d.appendChild(b);
+  }
+  return d;
 }
 
 function renderEw() {
@@ -13523,6 +13667,8 @@ function renderEw() {
   const zk = v => Number.isFinite(v) ? v : 1e9;
   state.ew.rows.sort((a, b) => zk(a.z) - zk(b.z));
   const view = ewReviewView();
+  const unsplit = ewUnsplitHint();
+  if (unsplit) box.appendChild(unsplit);
   if (!view.shown.length) {
     const d = document.createElement("div");
     d.className = "ew-hint";

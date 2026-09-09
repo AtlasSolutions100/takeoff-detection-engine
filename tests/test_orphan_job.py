@@ -124,6 +124,7 @@ PINNED = sorted([
     # laptop can supply (and HOSTED refuses one outright)
     ("POST", J + "/legend-sheet-upload"),
     ("GET", J + "/page/{page}/scale"),
+    ("GET", J + "/page/{page}/scale/dimensions"),
     ("GET", J + "/page/{page}/calcstate"),
     ("POST", J + "/page/{page}/calcstate"),
     ("GET", J + "/page/{page}/elements"),
@@ -224,7 +225,7 @@ def test_0_every_job_route_is_enumerated():
             f"{m} {p}" for m, p in sorted(set(live) - set(PINNED)))
         + "\n  -" + "\n  -".join(
             f"{m} {p}" for m, p in sorted(set(PINNED) - set(live))))
-    assert len(live) == 28, len(live)
+    assert len(live) == 29, len(live)   # +scale/dimensions (2026-09-08)
 
 
 def test_1_gate_fails_closed_on_a_missing_row():

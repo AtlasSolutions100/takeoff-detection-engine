@@ -1,7 +1,7 @@
 {
  "_about": "EXACT cut_fill outputs for manifest case 'oncor_c04'. Written by tests/test_earthwork_regress.py --accept oncor_c04; a test run never writes here. Change it only in a commit that says which code change moved which number and why.",
  "compare": "recipe",
- "earthwork_sig": "669f03aed84de577",
+ "earthwork_sig": "c565249d4072d07a",
  "earthwork_sig_files": [
   "../provision_demo.py",
   "../server.py",
@@ -14,6 +14,7 @@
   "classify_page.py",
   "cli.py",
   "detect_page.py",
+  "dimcheck.py",
   "earthwork.py",
   "eval_layers.py",
   "extract.py",
@@ -33,7 +34,7 @@
  ],
  "earthwork_file_hashes": {
   "../provision_demo.py": "1a96cc2c0b21f70f",
-  "../server.py": "6414a2027dda55dc",
+  "../server.py": "02e6a83e9d7a4bd8",
   "__init__.py": "1c1bd33bace42bb3",
   "areas.py": "0e2584993c6ba702",
   "batch.py": "39bc6cb7960674c3",
@@ -43,7 +44,8 @@
   "classify_page.py": "e6a33f98b598c3dd",
   "cli.py": "f181be4799b0548d",
   "detect_page.py": "700cc29e2d701e6a",
-  "earthwork.py": "307fba3db7060f7e",
+  "dimcheck.py": "c88161190017b08c",
+  "earthwork.py": "eb6ae056f5ff3adc",
   "eval_layers.py": "c96529c839e82cc0",
   "extract.py": "21451b366a8fa8f3",
   "ledger.py": "c18f05889d263a67",
@@ -68,7 +70,7 @@
  ],
  "accepted": {
   "tree": "C:\\Users\\kobys\\OneDrive\\Desktop\\past\\P\\Takeoff Automation\\detection-engine",
-  "date": "2026-09-07",
+  "date": "2026-09-08",
   "contours": [
    69,
    34

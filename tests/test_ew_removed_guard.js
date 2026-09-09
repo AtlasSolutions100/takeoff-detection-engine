@@ -15,7 +15,10 @@ check(/state\.ew\.removed = state\.ew\.removed \|\| \[\]\)\.push\(row\.chain_id\
   "the row × handler records the deleted chain id");
 check(/state\.ew\.rows = state\.ew\.rows\.filter\(r => r !== row\);[\s\S]{0,400}?calcStateDirty\(\);/.test(js),
   "the row × handler marks the record dirty");
-check(/row\.surface = key; renderEw\(\); calcStateDirty\(\);/.test(js),
+// the operator stamp (row.surfaceBy = "operator") sits between the two
+// statements since the server split was adopted; the pin is that the flip
+// is followed by a repaint AND a dirty mark, not that they share a line
+check(/row\.surface = key;\s*(?:row\.surfaceBy = "operator";\s*)?renderEw\(\); calcStateDirty\(\);/.test(js),
   "the EXIST/PROP flip marks the record dirty");
 check(/removed: \(state\.ew\.removed \|\| \[\]\)\.slice\(\)/.test(js),
   "calcStatePayload persists the removed list");

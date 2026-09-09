@@ -105,7 +105,7 @@ CALLS = []
 _real_gap = earthwork.gap_label_elevations
 
 
-def slow_gap(chains, img, scale, exclude=None):
+def slow_gap(chains, img, scale, exclude=None, **kw):   # kw: time_budget_s, diag (2026-09-08)
     """Stand-in for the 217 s pytesseract loop, at 1/100th the price."""
     CALLS.append(time.time())
     time.sleep(2.0)

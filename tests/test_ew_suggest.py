@@ -118,7 +118,10 @@ def test_split_legend_beats_color_beats_width():
     assert by[31]["surface"] == "proposed" and by[31]["split_by"] == "color"
     # a real color gets no screening verdict: falls to width (9.9 > median)
     assert by[40]["surface"] == "proposed" and by[40]["split_by"] == "width"
-    assert counts == {"legend": 2, "color": 4, "width": 1}
+    # polarity: the ink rule ran the conventional way round, and nothing in
+    # this legend (no inked EXISTING/PROPOSED family) could confirm or flip it
+    assert counts == {"legend": 2, "color": 4, "width": 1,
+                      "polarity": "convention"}
 
 
 def test_split_monochrome_falls_to_width():
@@ -133,7 +136,8 @@ def test_split_monochrome_falls_to_width():
              "width": chain_info[cid]["width"]} for cid in chain_info]
     counts = split_rows_surface(rows, chain_info, {})
     by = {r["chain_id"]: r for r in rows}
-    assert counts == {"legend": 0, "color": 0, "width": 3}
+    assert counts == {"legend": 0, "color": 0, "width": 3,
+                      "polarity": "convention"}
     assert by[1]["surface"] == "existing"   # 0.5 <= median 0.5
     assert by[2]["surface"] == "existing"
     assert by[3]["surface"] == "proposed"   # 1.5 > median
