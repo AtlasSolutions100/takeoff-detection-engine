@@ -2511,24 +2511,6 @@ header #pageSel { flex: none; max-width: 220px; }
 /* OPEN BIDS. A bid card is a project card without a thumbnail: the same
    frame, the same name/meta lines, a score chip where the picture would be
    and one button at the foot. Not clickable as a whole (see pvBidCard). */
-.pv-card.pv-bid { cursor: default; }
-.pv-card.pv-bid:hover { border-color: var(--t-border, var(--line)); box-shadow: none; }
-.pv-bid-head { display: flex; align-items: center; justify-content: space-between;
-  padding: var(--t-sp-3, 12px) var(--t-sp-3, 12px) 0; }
-.pv-bid-score { font-family: var(--t-font-data, var(--mono));
-  font-variant-numeric: var(--t-numeric, tabular-nums);
-  font-size: var(--t-fs-lg, 18px); font-weight: 600;
-  color: var(--t-accent, var(--accent)); }
-.pv-bid-src { font-size: var(--t-fs-xs, 12px); text-transform: uppercase;
-  letter-spacing: .04em; color: var(--t-text-faint, var(--dim)); }
-.pv-bid-act { display: flex; align-items: center; gap: var(--t-sp-3, 12px);
-  padding: var(--t-sp-2, 8px) var(--t-sp-3, 12px) var(--t-sp-3, 12px); }
-.pv-bid-go { padding: 6px 12px; font-weight: 600; }
-.pv-bid-link { font-size: var(--t-fs-xs, 12px); color: var(--t-text-dim, var(--dim)); }
-.pv-bid-link:hover { color: var(--t-text, var(--text)); }
-.pv-bid-note { font-size: var(--t-fs-xs, 12px); line-height: 1.45;
-  padding: 0 var(--t-sp-3, 12px) var(--t-sp-3, 12px);
-  color: var(--t-danger, #c0392b); }
 .pv-from-bid { border-top: 0; margin-top: 0; padding-top: 4px; }
 /* the file chooser rows: tick, name, profile line */
 .bid-pick-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 12px; }

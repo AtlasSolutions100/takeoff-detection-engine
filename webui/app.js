@@ -22949,7 +22949,12 @@ function projShowsSharedBadge(rows) {
 // lived here (keep the liveliest job per plan, so 140 cards became 7) is GONE
 // - it existed only because the tab was built from job rows, and nothing
 // builds it from job rows any more.
-const PROJ_TABS = ["demo", "mine", "bids"];
+// "bids" was a third tab here from 2026-09-07 to 09-09: open solicitations
+// from Bid Sniper, listed inside core. Removed at Koby's call - core only
+// has to ACCEPT a "send to CORE for takeoff" from the CRM (a separate,
+// separately charged product), which is the #bid= hand-off in bootJob and
+// bidPull below; the listing lives in the CRM, not here.
+const PROJ_TABS = ["demo", "mine"];
 function projIsDemo(row) { return !!(row && row.demo); }
 function projTabRows(rows, tab) {
   const want = tab === "demo";
@@ -22992,7 +22997,6 @@ function projDemoWhy(plan) {
 // grid means the same sentence has to describe two populations, and calling
 // a demo plan "a plan on this server" is how that sentence starts lying.
 function projTabNoun(tab) {
-  if (tab === "bids") return { one: "open bid", many: "open bids" };
   return tab === "demo"
     ? { one: "demo plan", many: "demo plans" }
     : { one: "project", many: "projects" };
@@ -23021,14 +23025,12 @@ function projTabCount(loaded, total) {
   return total > loaded ? String(loaded) + " of " + total : String(total);
 }
 
-// ---- OPEN BIDS -------------------------------------------------------------
-// The third tab. Its rows are not jobs: they are open solicitations from Bid
-// Sniper (/api/bids, which proxies the sniper on the operator's own machine),
-// scored for dirt-work relevance and thin fields. A card's one action is
-// Start takeoff, which has the sniper fetch the plan set from the portal and
-// the engine pull it in as a job - the same content-addressed path an upload
-// takes, so the second press lands on the same job. Everything below is pure
-// and tested; pvBidCard/pvPullBid do the DOM and the fetch.
+// ---- BIDS: the CRM hand-off ------------------------------------------------
+// Core no longer lists open bids (the Open bids tab was removed 2026-09-09;
+// the listing is the CRM's, a separate product). What stays is the pull: the
+// CRM opens <core>/#bid=<id>, bootJob runs bidPull, the plan set comes in as
+// a job by the same content-addressed path an upload takes, and the project
+// card says "from bid:" with the two lines below.
 //
 // Dates: `due` is the portal's own local time, naive. It is compared against
 // the browser's clock as if both were UTC, which is off by the zone offset -
@@ -23052,44 +23054,6 @@ function bidMetaLine(b, nowMs) {
   const who = (b && b.agency) ? String(b.agency).replace(/^[A-Z ]+ - /, "") : "";
   const when = bidClosesText(b && b.due, nowMs);
   return who ? who + " \u00b7 " + when : when;
-}
-// what pressing Start will actually have to do, said before the press
-function bidPlansLine(b) {
-  const local = (b && b.docs_local) || 0;
-  const listed = (b && b.docs_listed) || 0;
-  if (local > 0) return "plans on hand \u00b7 opens at once";
-  if (listed > 0) return "plans on the portal \u00b7 Start downloads them first";
-  return "no document links read \u2014 open the listing and upload the set yourself";
-}
-// the sniper's competitor evidence, honestly: a count only when one was read
-function bidCompText(b) {
-  const c = b && b.competition;
-  if (c === null || c === undefined) return "competitors: none read yet";
-  return "competitors: " + c;
-}
-// Start vs Open. A bid that already has a job ON THIS BOX that this account
-// can see opens it; anything else starts one (a job on another box, or one
-// this account cannot see, is not something a button here can open).
-function bidActionText(b) {
-  return (b && b.takeoff_job && b.job_here) ? "Open takeoff" : "Start takeoff";
-}
-// the reach line for this tab: where the rows came from, and the rule
-function bidReachLine(info, matched, loaded, q) {
-  const at = info && info.url ? " from Bid Sniper at " + info.url : " from Bid Sniper";
-  const base = projReachLine(matched, loaded, loaded, q, projTabNoun("bids"));
-  return (base ? base + " " : "") + "Open, scored as our kind of work, best first"
-    + at + ". Start takeoff pulls the plan set in as a project of yours.";
-}
-// what the empty tab says, and there are three different reasons it can be
-function projEmptyBids(info) {
-  if (!info || !info.enabled)
-    return "Open bids is off on this server: no BID_SNIPER_URL is configured.";
-  if (!info.ok)
-    return "Bid Sniper is not answering at " + (info.url || "its address")
-      + (info.error ? " (" + info.error + ")" : "") + ". Start it with "
-      + "`python -m bid_sniper serve` in the bid_sniper folder and reload.";
-  return "Bid Sniper has no open bids that look like our work right now. "
-    + "Run a scan there (or let its loop run) and reload.";
 }
 // ---- THE FILE CHOOSER ------------------------------------------------------
 // A Bonfire bundle is a zip: the plan set, the RFB text, an agreement
@@ -23540,26 +23504,12 @@ async function loadProjects() {
   // every demo card.
   const demoP = fetch("/api/demo-plans")
     .then(r => r.ok ? r.json() : null).catch(() => null);
-  // ...and the open bids, a third population from a third place
-  const bidsP = fetch("/api/bids")
-    .then(r => r.ok ? r.json() : null).catch(() => null);
   try {
     const r = await fetch("/api/projects");
     if (r.ok) d = await r.json();
   } catch (e) { /* reported below */ }
   const dm = await demoP;
-  const bd = await bidsP;
   if (!pvIsOpen()) return;           // the operator moved on mid-fetch
-  pvBids = bd && Array.isArray(bd.bids) ? bd.bids : [];
-  pvBidsInfo = {
-    enabled: !!(bd && bd.enabled),
-    ok: !!(bd && bd.ok),
-    url: (bd && bd.url) || "",
-    error: (bd && bd.error) || (bd ? "" : "no reply"),
-  };
-  // the tab exists only where the feature does; a hosted box never shows it
-  if ($("pvTabBids")) $("pvTabBids").hidden = !pvBidsInfo.enabled;
-  if (pvTab === "bids" && !pvBidsInfo.enabled) pvTab = null;
   // A demo list that failed to load leaves the tab EMPTY rather than
   // pretending the manifest is short: projEmptyDemo(0,...) says "no demo set
   // configured", which is the truthful reading of "the server did not answer
@@ -23595,11 +23545,6 @@ let pvDemoPlans = [];
 // what lets the Demo tab say "this server was never seeded" instead of
 // drawing nothing. Defaults describe a server that never answered.
 let pvDemoInfo = { expected: 0, present: 0, missing: [] };
-// THE BIDS TAB'S POPULATION, from /api/bids: open solicitations, not jobs.
-// pvBidsInfo says whether the feature is on and whether the sniper answered,
-// which is what the empty tab reports instead of drawing nothing.
-let pvBids = [];
-let pvBidsInfo = { enabled: false, ok: false, url: "", error: "" };
 // Which tab is showing. Null until the first render picks one from the data;
 // after that the operator's choice sticks across refreshes of the same view.
 let pvTab = null;
@@ -23639,22 +23584,15 @@ function pvPaint() {
   // documents are held by, and a visitor has no business seeing them.
   const demoRows = pvDemoPlans;
   const mineRows = projTabRows(pvRows, "mine");
-  const bidRows = pvBids;
   const demoTotal = demoRows.length;
   const mineTotal = Math.max(mineRows.length,
                              pvTotal - projTabRows(pvRows, "demo").length);
 
-  const rows = pvTab === "demo" ? demoRows
-             : pvTab === "bids" ? bidRows : mineRows;
-  const total = pvTab === "demo" ? demoTotal
-              : pvTab === "bids" ? bidRows.length : mineTotal;
-  // Bids keep the server's order (score, then soonest close): the sort
-  // menu's modes are about jobs and none of them means anything for a bid.
-  const shown = pvTab === "bids" ? projFilter(rows, q)
-                                 : projSort(projFilter(rows, q), mode);
+  const rows = pvTab === "demo" ? demoRows : mineRows;
+  const total = pvTab === "demo" ? demoTotal : mineTotal;
+  const shown = projSort(projFilter(rows, q), mode);
 
-  pvSyncTabs(demoRows.length, demoTotal, mineRows.length, mineTotal,
-             bidRows.length);
+  pvSyncTabs(demoRows.length, demoTotal, mineRows.length, mineTotal);
 
   // #pvCount sits beside the H1 "Projects" and so keeps describing the WHOLE
   // page, unchanged: what the server sent against what it holds. Quoting the
@@ -23670,7 +23608,6 @@ function pvPaint() {
                                 projTabNoun(pvTab));
     $("pvReach").textContent = pvTab === "demo"
       ? (reach ? reach + " " + PROJ_DEMO_RULE : PROJ_DEMO_RULE)
-      : pvTab === "bids" ? bidReachLine(pvBidsInfo, shown.length, rows.length, q)
       : reach;
   }
 
@@ -23683,7 +23620,6 @@ function pvPaint() {
     empty.textContent = pvTab === "demo"
       ? projEmptyDemo(pvDemoInfo.expected, pvDemoInfo.present,
                       pvDemoInfo.missing)
-      : pvTab === "bids" ? projEmptyBids(pvBidsInfo)
       : projEmptyMine(demoTotal);
     return;
   }
@@ -23703,11 +23639,6 @@ function pvPaint() {
   empty.hidden = true;
   if (pvTab === "demo") {
     for (const p of shown) grid.appendChild(pvDemoCard(p));
-    return;
-  }
-  if (pvTab === "bids") {
-    const nowMs = Date.now();
-    for (const b of shown) grid.appendChild(pvBidCard(b, nowMs));
     return;
   }
   // The "shared demo" badge is redundant on a tab whose heading already says
@@ -23791,7 +23722,7 @@ function pvDemoCard(p) {
 // The tab strip: selected state, live counts, ARIA. Counts come from the
 // same two numbers pvPaint just used, so a tab label can never disagree with
 // the reach line under it.
-function pvSyncTabs(demoLoaded, demoTotal, mineLoaded, mineTotal, bidsN) {
+function pvSyncTabs(demoLoaded, demoTotal, mineLoaded, mineTotal) {
   const set = (btn, on) => {
     if (!btn) return;
     btn.classList.toggle("pv-tab-on", on);
@@ -23800,14 +23731,10 @@ function pvSyncTabs(demoLoaded, demoTotal, mineLoaded, mineTotal, bidsN) {
   };
   set($("pvTabDemo"), pvTab === "demo");
   set($("pvTabMine"), pvTab === "mine");
-  set($("pvTabBids"), pvTab === "bids");
   if ($("pvTabDemoN"))
     $("pvTabDemoN").textContent = projTabCount(demoLoaded, demoTotal);
   if ($("pvTabMineN"))
     $("pvTabMineN").textContent = projTabCount(mineLoaded, mineTotal);
-  // bids are never capped: the server sends every open one it kept
-  if ($("pvTabBidsN"))
-    $("pvTabBidsN").textContent = projTabCount(bidsN || 0, bidsN || 0);
 }
 
 // Switching tabs is a re-render over rows the browser already holds - no
@@ -23956,95 +23883,7 @@ function pvCard(r, sharedBadge, nowS) {
   return card;
 }
 
-// A BID CARD. Not a job: no thumbnail to show, nothing to select, nothing
-// to delete. One button. Clicking the card body does nothing on purpose -
-// starting a takeoff downloads a plan set and makes a project, which is
-// not something a stray click on a grid should do.
-function pvBidCard(b, nowMs) {
-  const card = document.createElement("div");
-  card.className = "pv-card pv-bid";
-  card.title = b.title + (b.url ? "\n" + b.url : "");
-
-  const head = document.createElement("div");
-  head.className = "pv-bid-head";
-  const score = document.createElement("span");
-  score.className = "pv-bid-score";
-  score.textContent = String(b.score);
-  score.title = "Bid Sniper score: relevance x (urgency, thin field) x proximity"
-    + (b.why && b.why.length ? "\n" + b.why.join("\n") : "");
-  const src = document.createElement("span");
-  src.className = "pv-bid-src";
-  src.textContent = String(b.source || "").split(":")[0] || "portal";
-  head.append(score, src);
-  card.appendChild(head);
-
-  const name = document.createElement("div");
-  name.className = "pv-name";
-  name.textContent = b.title;
-  name.title = b.title;
-  const meta = document.createElement("div");
-  meta.className = "pv-meta";
-  meta.textContent = bidMetaLine(b, nowMs);
-  const comp = document.createElement("div");
-  comp.className = "pv-meta";
-  comp.textContent = bidCompText(b);
-  const plans = document.createElement("div");
-  plans.className = "pv-shows";
-  plans.textContent = bidPlansLine(b);
-  card.append(name, meta, comp, plans);
-
-  const act = document.createElement("div");
-  act.className = "pv-bid-act";
-  const go = document.createElement("button");
-  go.className = "mini pv-bid-go";
-  go.textContent = bidActionText(b);
-  go.title = (b.takeoff_job && b.job_here)
-    ? "This bid already has a project here; open it"
-    : "Have Bid Sniper fetch the plan set and open it here as a project of "
-      + "yours. Detection starts on the pages that look like site work.";
-  go.onclick = (e) => {
-    e.stopPropagation();
-    if (b.takeoff_job && b.job_here) return pvOpenJob({ job_id: b.takeoff_job });
-    pvPullBid(b, go, card);
-  };
-  act.appendChild(go);
-  if (b.url) {
-    const a = document.createElement("a");
-    a.className = "pv-bid-link";
-    a.href = b.url;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.textContent = "listing \u2197";
-    a.title = "Open the solicitation on the portal";
-    a.onclick = (e) => e.stopPropagation();
-    act.appendChild(a);
-  }
-  card.appendChild(act);
-  const note = document.createElement("div");
-  note.className = "pv-bid-note";
-  note.hidden = true;
-  card.appendChild(note);
-  return card;
-}
-
-// START TAKEOFF. One POST; the server has the sniper download the set, pulls
-// the drawing PDF in, registers it, queues detection on the core pages and
-// answers with the same shape /api/upload does - so the same applyOpened()
-// takes the operator to the sheet. Errors land on the card, in words, and
-// the button comes back so the press can be retried.
-async function pvPullBid(b, btn, card) {
-  const note = card.querySelector(".pv-bid-note");
-  btn.disabled = true;
-  btn.textContent = "fetching plans\u2026";
-  const fail = await bidPull(b.id, b.title);
-  if (fail !== null) {               // "" is a cancel: re-arm, say nothing
-    btn.disabled = false;
-    btn.textContent = bidActionText(b);
-    if (fail) { note.hidden = false; note.textContent = fail; }
-  }
-}
-
-// THE PULL ITSELF, shared by the card button and the #bid= boot hook. One
+// THE PULL ITSELF, run by the #bid= boot hook (the CRM's "send to CORE"). One
 // POST with the browser's own session, so the job belongs to whoever is
 // signed in here - never to an account the sniper holds. Resolves to null
 // on success (the sheet is open) or to the sentence to show on failure;
@@ -24582,7 +24421,7 @@ $("pvSort").addEventListener("change", pvPaint);
 // Same grammar as the two controls above: a pure re-render over cached rows.
 // Arrow keys walk the strip because it is a role="tablist" and that is what a
 // screen reader user will try; the roving tabIndex is set by pvSyncTabs.
-const PV_TAB_IDS = { demo: "pvTabDemo", mine: "pvTabMine", bids: "pvTabBids" };
+const PV_TAB_IDS = { demo: "pvTabDemo", mine: "pvTabMine" };
 for (const tab of PROJ_TABS) {
   const el = $(PV_TAB_IDS[tab]);
   if (!el) continue;
@@ -24590,7 +24429,7 @@ for (const tab of PROJ_TABS) {
   el.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
-    // cycle through the tabs that are actually showing (bids may be hidden)
+    // cycle through the tabs that are actually showing
     const live = PROJ_TABS.filter(t => $(PV_TAB_IDS[t]) && !$(PV_TAB_IDS[t]).hidden);
     const i = live.indexOf(tab);
     const j = (i + (e.key === "ArrowRight" ? 1 : live.length - 1)) % live.length;
@@ -25734,9 +25573,9 @@ svGoto(BOOT_HASH);
     try { history.replaceState(null, "", location.pathname + location.search); }
     catch (err) { /* convenience only */ }
     bidPull(id, null).then((fail) => {
-      // on failure Projects is still up; land on the bids tab so the card
-      // for this bid, with its own note, is what the person is looking at
-      if (fail && pvIsOpen()) { pvTab = "bids"; loadProjects(); }
+      // on failure Projects is still up with the sentence on the status
+      // bar; the person's own projects are the honest place to land
+      if (fail && pvIsOpen()) { pvTab = "mine"; loadProjects(); }
     });
     return;
   }

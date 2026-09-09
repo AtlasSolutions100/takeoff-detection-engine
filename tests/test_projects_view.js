@@ -162,11 +162,10 @@ check(P.projCountLine(200, 320) === "showing 200 of 320",
     { name: "C8.0-STORM-LAYOUT-Rev.1.pdf", demo: false, mine: true,
       shared: false },
   ];
-  // three since Open bids (2026-09-07): demo first, bids LAST, because the
-  // bids tab is hidden on any box without a BID_SNIPER_URL and a hidden tab
-  // in the middle would leave a gap in the strip's arrow-key cycle
-  check(P.PROJ_TABS.join(",") === "demo,mine,bids",
-        "tabs: exactly three, demo first, bids last");
+  // two again since 2026-09-09: the Open bids tab was removed at Koby's call
+  // (core only accepts the CRM's hand-off; the listing lives in the CRM)
+  check(P.PROJ_TABS.join(",") === "demo,mine",
+        "tabs: exactly two, demo first");
   check(P.projTabRows(rows, "demo").length === 2, "tab: demo keeps demo rows");
   check(P.projTabRows(rows, "mine").length === 2,
     "tab: mine keeps everything that is not a demo");

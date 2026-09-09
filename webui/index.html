@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=82">
+<link rel="stylesheet" href="style.css?v=83">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -168,13 +168,6 @@
       <button id="pvTabMine" class="pv-tab" role="tab" aria-selected="true"
               aria-controls="pvGrid"
               title="Everything you have uploaded or opened on this server.">Your projects<span id="pvTabMineN" class="pv-tabn"></span></button>
-      <!-- OPEN BIDS. Drawn only when /api/bids says the feature is on (a
-           BID_SNIPER_URL is configured - never on a hosted box). Rows are
-           solicitations from Bid Sniper, not jobs; Start takeoff on a card
-           pulls the plan set in as a project of yours. -->
-      <button id="pvTabBids" class="pv-tab" role="tab" aria-selected="false"
-              aria-controls="pvGrid" hidden
-              title="Open solicitations Bid Sniper found that look like our kind of work, best first. Start takeoff fetches the plan set and opens it here.">Open bids<span id="pvTabBidsN" class="pv-tabn"></span></button>
     </div>
     <!-- Search + sort. BOTH act on the rows the server actually sent, which
          /api/projects caps at 200 of however many exist. That cap is the
@@ -1197,6 +1190,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=168"></script>
+<script src="app.js?v=169"></script>
 </body>
 </html>
