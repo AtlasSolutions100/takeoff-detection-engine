@@ -341,6 +341,10 @@ canvas#view.panning { cursor: grabbing; }
            border-radius: 6px; background: var(--hover);
            border-left: 3px solid var(--accent); }
 .ew-busy.err { border-left-color: var(--t-stop); color: var(--t-stop); }
+/* the read's progress bar: only drawn when the server has reported a
+   fraction (ewBusyPut frac), never invented */
+.ew-prog { height: 5px; margin-top: 6px; border-radius: 3px; background: rgba(128,128,128,.28); overflow: hidden; }
+.ew-prog i { display: block; height: 100%; background: var(--accent); transition: width .6s ease; }
 .ew-rows { overflow-y: auto; padding: 4px 8px; }
 .ew-row { display: grid; grid-template-columns: 60px 1fr auto; gap: 6px; align-items: center; padding: 3px 4px; border-radius: 6px; }
 /* contour rows carry a 4th column (the x remove button); .co-row reuses
@@ -419,6 +423,7 @@ canvas#view.panning { cursor: grabbing; }
   margin: 6px 12px 2px; padding: 7px 9px; border-radius: 7px;
   border: 1px solid var(--line); background: var(--t-warn-bg); }
 .ew-limit b { color: var(--text); font-weight: 600; }
+.ew-limit .ew-limit-more { display: block; margin: 6px 0 0; font-size: var(--t-fs-xs); }
 /* what the number rests on, beside the number */
 .ew-basis { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.5;
   padding: 0 12px 8px; }

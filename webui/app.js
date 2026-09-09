@@ -11566,11 +11566,55 @@ function elevReadElapsed() {
 }
 // The busy sentence, with the clock in it. Same words as EW_SUGGEST_BUSY
 // when nothing is in flight yet, so the existing callers read the same.
+//
+// AND, SINCE 2026-09-09, THE SERVER'S OWN PROGRESS when it has reported
+// any: gap_label_elevations tells the suggest route every ten regions
+// where it is, the route keeps that in a sidecar, /earthwork/progress
+// serves it, and elevProgressPoll (below) fetches it once a second while
+// the read is in flight. With a report the line says "N of M places
+// looked at, R read" and the bar under it is real; without one (the
+// first second, a cached page, a server that predates this) it is the
+// clock-only sentence it always was, byte for byte.
 function elevBusyLine() {
   const ms = elevReadElapsed();
   if (ms === null) return EW_SUGGEST_BUSY;
+  // (typeof-guarded: tests compile this function alone, without the poller)
+  const p = (typeof elevProgressNow === "function") ? elevProgressNow() : null;
+  if (p && p.phase === "render")
+    return EW_SUGGEST_HEAD + " — rendering the sheet, " + fmtElapsed(ms)
+      + " so far; " + EW_SUGGEST_WAIT;
+  if (p && p.phase === "ocr" && p.planned > 0)
+    return EW_SUGGEST_HEAD + " — looked at " + p.pos + " of " + p.planned
+      + " places, " + p.reads + " label" + (p.reads === 1 ? "" : "s")
+      + " read by OCR, " + fmtElapsed(ms) + " so far";
   return EW_SUGGEST_HEAD + " — " + fmtElapsed(ms) + " so far; "
     + EW_SUGGEST_WAIT;
+}
+// the fraction the bar shows, or null when there is nothing honest to show
+function elevProgressFrac() {
+  const p = (typeof elevProgressNow === "function") ? elevProgressNow() : null;
+  if (!p || p.phase !== "ocr" || !(p.planned > 0)) return null;
+  return Math.max(0, Math.min(1, p.pos / p.planned));
+}
+// The last progress report for THE READ IN FLIGHT, or null. It rides on
+// the request record like t0 does, so a report from a request that has
+// settled or been dropped can never paint a later one.
+function elevProgressNow() {
+  const req = (typeof state !== "undefined") ? state.suggestReq : null;
+  return req && req.progress ? req.progress : null;
+}
+// One poll a second, one in flight at a time, for the request that owns
+// the clock; the answer is parked on that request record.
+function elevProgressPoll() {
+  const req = state.suggestReq;
+  if (!req || req.polling || typeof fetch !== "function") return;
+  const job = state.job, page = state.page;
+  req.polling = true;
+  fetch(`/api/job/${job}/page/${page}/earthwork/progress`)
+    .then(r => r.ok ? r.json() : null)
+    .then(j => { if (j && state.suggestReq === req) req.progress = j; })
+    .catch(() => {})
+    .then(() => { req.polling = false; });
 }
 
 // ONE TICK, THREE SURFACES, AND IT ONLY REWRITES WHAT IT OWNS.
@@ -11589,10 +11633,12 @@ function elevTickStop() {
 }
 function elevTickPaint() {
   if (elevReadElapsed() === null) { elevTickStop(); return; }
+  if (typeof elevProgressPoll === "function") elevProgressPoll();
   const line = elevBusyLine();
   const eb = $("ewBusy");
   if (eb && !eb.hidden && eb.textContent.indexOf(EW_SUGGEST_HEAD) === 0)
-    ewBusyPut(line + "\u2026");
+    ewBusyPut(line + "\u2026", "",
+              typeof elevProgressFrac === "function" ? elevProgressFrac() : null);
   const rows = $("ewRows");
   if (rows) {
     const hint = rows.querySelector(".ew-hint");
@@ -11690,16 +11736,48 @@ function ewNotReady(what) {
   return true;
 }
 
-// the in-panel half of the same sentence, in #ewBusy under the panel head
-function ewBusyPut(txt, cls) {
+// What the read produced, in one line, for the spot the busy line held:
+// row count, how many the reader could not put on a side, and the time.
+function ewDoneLine(ms) {
+  const rows = (state.ew && state.ew.rows) || [];
+  const n = rows.length;
+  const un = rows.filter(r => r.surface == null && r.surfaceBy !== "operator").length;
+  if (!n) return "read done in " + fmtElapsed(ms) + " — no contour elevations found on this sheet (see below)";
+  return "read done in " + fmtElapsed(ms) + " — " + n + " contour" + (n === 1 ? "" : "s")
+    + " with an elevation" + (un ? ", " + un + " still to be given a side" : "")
+    + " — assign them below ↓";
+}
+// the in-panel half of the same sentence, in #ewBusy under the panel head.
+// `frac` (0..1) draws the progress bar under the sentence; null draws none,
+// so a line with no honest fraction behind it shows no bar.
+function ewBusyPut(txt, cls, frac) {
   const el = $("ewBusy");
   if (!el) return;
   el.hidden = !txt;
   el.textContent = txt || "";
+  if (txt && typeof frac === "number" && typeof document !== "undefined") {
+    const bar = document.createElement("div");
+    bar.className = "ew-prog";
+    const fill = document.createElement("i");
+    fill.style.width = Math.round(frac * 100) + "%";
+    bar.appendChild(fill);
+    el.appendChild(bar);
+  }
   el.className = "ew-busy" + (cls ? " " + cls : "");
 }
 
 $("ewClose").onclick = () => { $("ewPanel").hidden = true; state.hotChain = null; ewDisarmPick(); draw(); };
+// the disclosure block's fold (index.html #ewLimit): the claim and the cost
+// are always on the face of the panel; the two paragraphs between them open
+// on demand. Session-only, deliberately - the next open starts folded.
+if ($("ewLimitToggle")) $("ewLimitToggle").onclick = () => {
+  const more = $("ewLimitMore"), b = $("ewLimitToggle");
+  more.hidden = !more.hidden;
+  b.setAttribute("aria-expanded", more.hidden ? "false" : "true");
+  b.textContent = more.hidden
+    ? "where it applies, and what it does not have ▸"
+    : "hide where it applies, and what it does not have ▴";
+};
 $("ewBtn").onclick = async () => {
   const panel = $("ewPanel");
   // Open panel: the press means CLOSE - unless the last read failed, in
@@ -11737,6 +11815,7 @@ $("ewBtn").onclick = async () => {
     // Both halves now, and both cleared when the data lands: the stale red
     // line used to still be on the bar 102 s later with the panel loaded.
     const gen = state.gen;
+    const tRead = Date.now();
     $("ewRows").innerHTML = '<div class="ew-hint">reading elevation labels…</div>';
     ewBusyPut(EW_SUGGEST_BUSY + "…");
     setStatus(EW_SUGGEST_BUSY, "busy");
@@ -11751,7 +11830,12 @@ $("ewBtn").onclick = async () => {
       setStatus(msg, "err");
       return;
     }
-    ewBusyPut("");
+    // THE READ FINISHED - say so where the busy line was. Measured on Belle
+    // Farms ROAD GRADING p0: with the busy line simply cleared, the first
+    // screen of the panel looked identical before and after a 100 s read
+    // (the rows land below the fold), so the operator had no cue that
+    // anything had happened. One line, same place, counts from the rows.
+    ewBusyPut(ewDoneLine(Date.now() - tRead));
     setStatus("");
   }
   renderEw();

@@ -111,5 +111,26 @@ found, diag, n, secs = run(None)
 check(n == N and diag.get("stopped_early") is False,
       "with no clock set the pass runs every patch, as before  (%d calls)" % n)
 
+# --- 5. progress: the pass says where it is while it runs -------------------
+# (2026-09-09) The panel could only show a clock, because this loop reported
+# nothing until it was done. Now `progress` is told every few regions:
+# regions visited of planned, tesseract calls, raw reads, seconds - and once
+# more at the end, marked final.
+reports = []
+if "progress" in SIG:
+    found, diag, n, secs = run("545", progress=reports.append)
+check(len(reports) >= N // 10,
+      "the pass reports progress as it goes, not just at the end  (%d reports for %d regions)"
+      % (len(reports), N))
+pos = [r["pos"] for r in reports]
+check(bool(pos) and pos == sorted(pos) and pos[-1] == N and all(r["planned"] == N for r in reports),
+      "...positions climb to planned, and planned is the region count  (%s)" % pos[:6])
+check(bool(reports) and reports[-1]["final"] is True and reports[-1]["reads"] == N
+      and all(k in reports[-1] for k in ("calls", "seconds")),
+      "...the last report is marked final and carries calls, reads and seconds  (%s)"
+      % (reports[-1] if reports else None))
+check(bool(reports) and reports[0]["pos"] == 0,
+      "...and the first report lands before the first region, so a watcher sees 0 of N, not nothing")
+
 print("\n%d FAILED" % len(FAILS) if FAILS else "\nall passed")
 sys.exit(1 if FAILS else 0)

@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=78">
+<link rel="stylesheet" href="style.css?v=80">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -465,10 +465,29 @@
            own figures it was 2.3-2.5x high. That belongs on the face of the
            panel, not in a tooltip and not in a warning the operator can
            clear. -->
+      <!-- FOLDED, NOT DISMISSED (2026-09-09). Measured on Belle Farms ROAD
+           GRADING p0 at 1500x940: this block plus the grading-zone block
+           filled the panel's first screen and the 40 contour rows - the
+           surface the operator works on - sat below the fold, so when the
+           read finished nothing on screen changed. The claim ("not a
+           measured quantity") and the cost ("2.3-2.5x high, measured once")
+           stay on the face of the panel, always; the two paragraphs between
+           them fold behind a button. Nothing here can be cleared. -->
       <div class="ew-limit" id="ewLimit">
         <b>What this number is.</b> A contour interpolation: the engine builds a
         triangulated surface through the contours you assign to each side and
         subtracts one from the other. It is not a measured earthwork quantity.
+        <br><b>What that has cost, measured once.</b> On the one sheet where a
+        client estimate exists to check it against — Beaumont Barn Civil C3.0
+        (engine page index 2 = printed sheet 3) versus their Estimate #853 — cut,
+        fill and import each read <b>2.3–2.5&times; high</b>, and the region it
+        integrated over was 317,632 SF against that estimator's own 224,058 SF of
+        clear &amp; grub (<b>1.42&times;</b>). One job is a sample, not a rate;
+        treat every figure below as an order-of-magnitude check that a person
+        still has to replace.
+        <button id="ewLimitToggle" class="mini ew-limit-more" type="button"
+                aria-expanded="false">where it applies, and what it does not have ▸</button>
+        <span id="ewLimitMore" hidden>
         <br><span id="ewWhere"><b>Where it applies.</b> Each surface exists only
         inside a straight-sided envelope drawn around the contours you gave it
         (its convex hull), and the volume is integrated where the two envelopes
@@ -479,14 +498,7 @@
         <br><b>What it does not have.</b> The typical cross-section, the subgrade
         depth under each surface treatment, and a shrink/swell factor — none of
         the three is on the plans or in this calculation.
-        <br><b>What that has cost, measured once.</b> On the one sheet where a
-        client estimate exists to check it against — Beaumont Barn Civil C3.0
-        (engine page index 2 = printed sheet 3) versus their Estimate #853 — cut,
-        fill and import each read <b>2.3–2.5&times; high</b>, and the region it
-        integrated over was 317,632 SF against that estimator's own 224,058 SF of
-        clear &amp; grub (<b>1.42&times;</b>). One job is a sample, not a rate;
-        treat every figure below as an order-of-magnitude check that a person
-        still has to replace.
+        </span>
       </div>
       <!-- GRADING ZONES. For sheets that do not draw a full proposed
            surface (the Stice case, EXCAVATION-PLAN.md section 25): the
@@ -1185,6 +1197,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=164"></script>
+<script src="app.js?v=166"></script>
 </body>
 </html>

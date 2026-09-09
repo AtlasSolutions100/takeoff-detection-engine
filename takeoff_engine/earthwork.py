@@ -2211,6 +2211,9 @@ _OCR_BUDGET = 1400
 # misread (the majority rule in the conflict resolution below). A fourth
 # adds nothing that the ranking can use.
 _OCR_READS_PER_CHAIN = 3
+# regions between progress reports (gap_label_elevations `progress`): ten is
+# ~2 s unloaded at 0.23 s a call, well under the panel's poll
+_PROGRESS_EVERY = 10
 # Patch band height: label text on these sheets is 7-10 pt tall; a 12 pt
 # band clears it, while v1's 22 pt band pulled in the neighbouring contour
 # on C-04's tight strip (~10-15 pt between contours) and its labels with it.
@@ -2317,7 +2320,8 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
                          exclude: set | None = None,
                          time_budget_s: float | None = None,
                          idle_budget_s: float | None = None,
-                         diag: dict | None = None) -> dict:
+                         diag: dict | None = None,
+                         progress=None) -> dict:
     """Read elevation labels printed INSIDE breaks of their own contour.
 
     Contour elevations sit in a gap of the line, rotated to follow it.
@@ -2392,7 +2396,30 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     t0 = _time.monotonic()
     stopped_early = False
     stop_reason = None
+    # PROGRESS, for the panel. `progress` (server-side: a sidecar the panel
+    # polls) is told every _PROGRESS_EVERY regions where the pass is:
+    # regions visited of planned - the honest fraction, since a region may
+    # be skipped by the ink gates without a tesseract call - plus calls and
+    # raw reads so far. Until 2026-09-09 the panel could show only a clock,
+    # because this loop reported nothing until it was done.
+    n_seen = 0
+
+    def _tell(final=False):
+        if progress is None:
+            return
+        try:
+            progress({"pos": n_seen, "planned": len(order), "calls": n_ocr,
+                      "reads": len(reads),
+                      "seconds": round(_time.monotonic() - t0, 1),
+                      "final": final})
+        except Exception:
+            pass
+
+    _tell()
     for cid, (kind, cx, cy, ux, uy, span) in order:
+        n_seen += 1
+        if n_seen % _PROGRESS_EVERY == 0:
+            _tell()
         if n_ocr >= max_patches:
             break
         elapsed = _time.monotonic() - t0
@@ -2532,6 +2559,7 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
         if len(zs) == 1:
             v, cx, cy, _ = vals[0]
             found[int(cid)] = (v, cx, cy)
+    _tell(final=True)
     if diag is not None:
         diag.update({"patches_planned": len(order), "ocr_calls": n_ocr,
                      "seconds": round(_time.monotonic() - t0, 1),

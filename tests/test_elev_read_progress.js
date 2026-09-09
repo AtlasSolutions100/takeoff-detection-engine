@@ -135,8 +135,35 @@ function busyScope(t0) {
   check(/takes a minute or more/.test(line),
     "...and it still says what to expect");
   check(!/%|\bof\b \d|\d+\s*\/\s*\d+/.test(line),
-    "and it invents no percentage or fraction - the server reports nothing "
-    + "until the whole page is done, so there is none to report");
+    "and with NO report from the server it invents no percentage or "
+    + "fraction - a clock is all it honestly has");
+
+  // SINCE 2026-09-09 THE SERVER DOES REPORT. gap_label_elevations tells the
+  // route every ten regions where it is; /earthwork/progress serves it;
+  // elevProgressPoll parks it on the request record. With a report the
+  // line says where the read is, in the server's own numbers.
+  const progScope = (progress) => {
+    const state = { suggestReq: { t0: 1_000_000 - 72_000, progress } };
+    return new Function("state", "Date",
+      CONSTS + "\n" + fnSrc("fmtElapsed") + "\n" + fnSrc("elevReadElapsed")
+      + "\n" + fnSrc("elevProgressNow") + "\n" + fnSrc("elevProgressFrac")
+      + "\n" + fnSrc("elevBusyLine")
+      + "\nreturn { line: elevBusyLine, frac: elevProgressFrac };")
+      (state, { now: () => 1_000_000 });
+  };
+  const ocr = progScope({ phase: "ocr", pos: 156, planned: 796, calls: 90, reads: 12, seconds: 41 });
+  check(/156 of 796 places/.test(ocr.line()) && /12 labels read by OCR/.test(ocr.line()) && /1m 12s/.test(ocr.line()),
+    "with a server report the line says N of M places, reads, and the clock  (got "
+    + JSON.stringify(ocr.line()) + ")");
+  check(ocr.line().indexOf(run.HEAD) === 0, "...and still starts with the head");
+  check(Math.abs(ocr.frac() - 156 / 796) < 1e-9,
+    "...and the bar fraction is the server's pos / planned, nothing invented");
+  const rend = progScope({ phase: "render", pos: 0, planned: 0 });
+  check(/rendering the sheet/.test(rend.line()) && rend.frac() === null,
+    "while the sheet is still rendering the line says so and there is no bar");
+  const none = progScope(null);
+  check(none.line() === line && none.frac() === null,
+    "a request with no report yet reads exactly as the clock-only line");
 
   // the ceiling has to clear the slowest MEASURED read by a wide margin,
   // or it is a timeout on a working sheet

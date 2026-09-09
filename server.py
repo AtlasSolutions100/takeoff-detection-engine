@@ -4863,6 +4863,32 @@ def _elevgap_lock(job_id: str, page: int) -> threading.Lock:
         return lk
 
 
+@app.get("/api/job/{job_id}/page/{page}/earthwork/progress")
+def earthwork_progress(job_id: str, page: int):
+    """Where this page's elevation read is, for the panel's busy line.
+
+    {phase: idle | render | ocr | done, pos, planned, calls, reads,
+    seconds}. `idle` = nothing running and nothing cached; `done` = the
+    OCR cache exists (the next suggest is ~1 s). No lock, no work: it reads
+    the sidecar the suggest route writes every ten regions, so the poll is
+    cheap however many people are watching one page."""
+    JOBS.get(job_id) or _404()
+    gcache = _job_dir(job_id) / f"p{page}_elevgaps2.json"
+    pfile = gcache.with_suffix(".progress.json")
+    try:
+        d = json.loads(pfile.read_text())
+        if d.get("note") == "render":
+            d["phase"] = "render"
+        # a sidecar nobody has touched for a while is a crashed pass, not
+        # a running one: say idle rather than freeze the bar
+        if time.time() - float(d.get("at") or 0) > 600:
+            return JSONResponse({"phase": "idle", "stale": True})
+        return JSONResponse(d)
+    except (OSError, ValueError, TypeError):
+        pass
+    return JSONResponse({"phase": "done" if gcache.exists() else "idle"})
+
+
 @app.get("/api/job/{job_id}/page/{page}/earthwork/suggest")
 def earthwork_suggest(job_id: str, page: int):
     """Auto-pair elevation labels with the contours they sit on - a
@@ -4984,6 +5010,21 @@ def earthwork_suggest(job_id: str, page: int):
                 import numpy as _np3
 
                 from takeoff_engine.earthwork import gap_label_elevations
+                # PROGRESS SIDECAR. The panel polls /earthwork/progress once
+                # a second while its suggest is in flight; this is what it
+                # reads. Phase first (render -> ocr -> done), the OCR pass's
+                # own counts as they come. Written whole each time so a
+                # reader never sees half a file.
+                pfile = gcache.with_suffix(".progress.json")
+
+                def _progress(d):
+                    try:
+                        pfile.write_text(json.dumps(
+                            {"phase": "ocr", "at": time.time(), **d}))
+                    except OSError:
+                        pass
+                _progress({"pos": 0, "planned": 0, "calls": 0, "reads": 0,
+                           "seconds": 0.0, "final": False, "note": "render"})
                 doc2 = pymupdf.open(job["path"])
                 pix = doc2[page].get_pixmap(dpi=150)
                 img = _np3.frombuffer(pix.samples, _np3.uint8).reshape(
@@ -5005,12 +5046,17 @@ def earthwork_suggest(job_id: str, page: int):
                                              exclude=excl,
                                              time_budget_s=OCR_BUDGET_S,
                                              idle_budget_s=OCR_IDLE_S,
-                                             diag=ocr_diag)
+                                             diag=ocr_diag,
+                                             progress=_progress)
                 try:
                     gcache.write_text(json.dumps(
                         {str(k): list(v) for k, v in gap_z.items()}))
                     gcache.with_suffix(".diag.json").write_text(
                         json.dumps(ocr_diag))
+                except OSError:
+                    pass
+                try:
+                    pfile.unlink()
                 except OSError:
                     pass
     # what the OCR pass did, whether it ran now or was read back from the

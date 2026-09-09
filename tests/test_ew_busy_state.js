@@ -523,8 +523,29 @@ check(/setStatus\(EW_SUGGEST_BUSY, "busy"\)/.test(btn),
 check(btn.indexOf("setStatus(EW_SUGGEST_BUSY") < btn.indexOf("await ewEnsure()"),
   "...before, not after - the await is 94-204 s wide");
 check(/ewBusyPut\(EW_SUGGEST_BUSY/.test(btn), "and an in-panel line above the fold");
-check(/ewBusyPut\(""\);\s*\n\s*setStatus\(""\);/.test(btn),
-  "both lines are cleared when the data lands - the stale red line used to survive it");
+// (2026-09-09) the panel line is REPLACED, not cleared: with the busy line
+// simply gone, the first screen of the panel looked identical before and
+// after a 100 s read (the rows land below the fold - measured, Belle Farms
+// ROAD GRADING p0), so ewDoneLine says what the read produced, in the same
+// spot, without the error class. The status bar is still cleared.
+check(/ewBusyPut\(ewDoneLine\([^;]*\);\s*\n\s*setStatus\(""\);/.test(btn),
+  "when the data lands the panel line becomes the done line and the status "
+  + "bar is cleared - the stale red line used to survive it");
+check(!/ewBusyPut\(ewDoneLine\([^;]*\),\s*"err"/.test(btn),
+  "...and the done line does not wear the error class");
+{
+  const done = new Function("state", "fmtElapsed",
+    fnSrc("ewDoneLine") + "\nreturn ewDoneLine;")
+    ({ ew: { rows: [{ surface: null }, { surface: "existing" }, { surface: null, surfaceBy: "operator" }] } },
+     (ms) => Math.round(ms / 1000) + "s")(97_000);
+  check(/3 contours/.test(done) && /1 still to be given a side/.test(done) && /97s/.test(done),
+    "ewDoneLine counts the rows, the ones with no side yet (operator-chosen skips "
+    + "excluded), and the time  (got " + JSON.stringify(done) + ")");
+  const empty = new Function("state", "fmtElapsed",
+    fnSrc("ewDoneLine") + "\nreturn ewDoneLine;")({ ew: { rows: [] } }, () => "5s")(5000);
+  check(/no contour elevations found/.test(empty),
+    "...and an empty read says so rather than counting to zero");
+}
 check(/if \(gen !== state\.gen\) return;/.test(btn),
   "a page switch during the wait leaves the new page's status bar alone");
 check(/EW_SUGGEST_BUSY[\s\S]{0,120}grading zones will recompute/.test(fnSrc("gzRestoreCompute")),
