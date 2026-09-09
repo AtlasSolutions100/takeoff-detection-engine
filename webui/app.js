@@ -11744,10 +11744,10 @@ function ewDoneLine(ms) {
   const rows = (state.ew && state.ew.rows) || [];
   const n = rows.length;
   const un = rows.filter(r => r.surface == null && r.surfaceBy !== "operator").length;
-  if (!n) return "read done in " + fmtElapsed(ms) + " — no contour elevations found on this sheet (see below)";
+  if (!n) return "read done in " + fmtElapsed(ms) + " — no contour heights found on this sheet (see below)";
   return "read done in " + fmtElapsed(ms) + " — " + n + " contour" + (n === 1 ? "" : "s")
-    + " with an elevation" + (un ? ", " + un + " still to be given a side" : "")
-    + " — assign them below ↓";
+    + " with a height" + (un ? ", " + un + " still need a side" : "")
+    + " — go through them below ↓";
 }
 // the in-panel half of the same sentence, in #ewBusy under the panel head.
 // `frac` (0..1) draws the progress bar under the sentence; null draws none,
@@ -12231,12 +12231,28 @@ function ewBoundClear() {
   renderEwBound();
   calcStateDirty();
 }
+// The one work-area box as a limit-of-work polygon, or null when there is
+// no work area, more than one box, or a limit of work already set.
+function ewWorkAreaBoundary() {
+  if (typeof wzActive !== "function" || !wzActive()) return null;
+  if (state.ewBound) return null;
+  const z = wzNorm(state.workZones);
+  if (z.length !== 1) return null;
+  const [x0, y0, x1, y1] = z[0];
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+}
+
 function renderEwBound() {
   const box = $("ewBound"), st = $("ewBoundState"), clr = $("ewBoundClear");
   if (!box) return;
-  const b = state.ewBound;
+  const b = state.ewBound
+    || (function () {
+         const p = ewWorkAreaBoundary();
+         return p ? { pts: p, src: "work area box", gap: 0, fromWz: true } : null;
+       })();
   box.classList.toggle("on", !!b);
-  if (clr) clr.hidden = !b;
+  // a limit that IS the work-area box is cleared with the work area, not here
+  if (clr) clr.hidden = !b || !!b.fromWz;
   const ftPerPt = (state.result && state.result.scale
     && state.result.scale.ft_per_paper_inch)
     ? state.result.scale.ft_per_paper_inch / 72 : null;
@@ -12635,9 +12651,10 @@ function ewBody() {
       return o;
     });
   return {
-    existing: state.ew.rows.filter(r => r.surface === "existing" && isFinite(r.z))
+    // rows outside the work area never reach a surface (ewInWorkArea)
+    existing: state.ew.rows.filter(r => r.surface === "existing" && isFinite(r.z) && ewInWorkArea(r))
       .map(r => ({ chain_id: r.chain_id, z: r.z })),
-    proposed: state.ew.rows.filter(r => r.surface === "proposed" && isFinite(r.z))
+    proposed: state.ew.rows.filter(r => r.surface === "proposed" && isFinite(r.z) && ewInWorkArea(r))
       .map(r => ({ chain_id: r.chain_id, z: r.z })),
     cell_ft: 2.0,
     // Which surface runs between the contours. Sent every time so the
@@ -12645,7 +12662,10 @@ function ewBody() {
     surface_model: ($("ewModelSel") && $("ewModelSel").value) || "auto",
     // The limit of work, if the operator set one. Omitted when they have not,
     // so the server takes the original path and every existing number stands.
-    boundary: state.ewBound ? state.ewBound.pts : null,
+    // ...a limit of work you set wins; else ONE work-area box is the limit
+    // (several boxes are not one outline - then the rows filter alone
+    // shrinks the surfaces, and the panel says which)
+    boundary: state.ewBound ? state.ewBound.pts : ewWorkAreaBoundary(),
     existing_layers: lay("existing"),
     proposed_layers: lay("proposed"),
     // #853 reuses site cut against site fill 1:1 (import 11,581 against
@@ -12655,7 +12675,10 @@ function ewBody() {
     export_factor: ewFactor("ewFacExp"),
     import_factor: ewFactor("ewFacImp"),
     ...(function () {
-      const pts = ewActiveSpots().map(g => ({ x: g.x, y: g.y, z: g.z }));
+      const pts = ewActiveSpots()
+        .filter(g => typeof wzActive !== "function" || !wzActive()
+                     || wzPtIn(g.x, g.y, state.workZones))
+        .map(g => ({ x: g.x, y: g.y, z: g.z }));
       const key = state.ew.spotSide === "existing" ? "existing_points" : "proposed_points";
       const o = pts.length ? { [key]: pts } : {};
       if (isFinite(state.ew.areaSf) && state.ew.areaSf > 0) o.strip_area_sf = state.ew.areaSf;
@@ -12810,7 +12833,7 @@ function renderEwSpots() {
   const note = document.createElement("div");
   note.className = "sp-note";
   note.textContent = n
-    ? `${n} of ${sp.length} will be used as ${state.ew.spotSide} surface points. RIM / TW / BW / TS / BS are structure tops, not ground — leave them off unless you mean them.`
+    ? `${n} of ${sp.length} will be used as ${state.ew.spotSide} points. RIM, TW, BW, TS and BS are the tops of walls and pipes, not ground. Leave them off unless you mean them.`
     : `None selected. FG is finished ground; the rest are structure tops.`;
   box.appendChild(note);
 }
@@ -12932,40 +12955,35 @@ const EW_REVIEW = {
     badge: "off interval",
     short: "not on this sheet's contour interval",
     why: "This number is not a step on the contour interval this sheet's "
-       + "own labels march by, so it cannot be one of its contour "
-       + "elevations. Most often it is a spot height - a wall top, a match "
-       + "point - that the reader picked up as the nearest number to the "
-       + "line. Check the drawing and correct it or drop the row; nothing "
-       + "has been changed for you." },
+       + "labels go by. So it is not a contour height. It is most often a "
+       + "spot height, like a wall top, that sat close to the line. Check "
+       + "the drawing. Fix the number or drop the row. We changed nothing." },
   nearby: { rank: 1, chip: "Printed nearby", badge: "nearby",
     short: "nearest printed number, not this line's own label",
-    why: "The number is printed on the sheet but not in this line's own "
-       + "break - it is the nearest printed number, and that it belongs to "
-       + "this contour is our assumption, not the sheet's statement." },
+    why: "The number is printed on the sheet, but not in this line's own "
+       + "break. It is just the closest number. We think it belongs to this "
+       + "line. The sheet does not say so." },
   machine: { rank: 2, chip: "Read by machine", badge: "machine-read",
     short: "digits read by machine off a picture",
-    why: "The sheet does print a label in this line's break, but the "
-       + "drafter drew it as line work, so the digits here were recognised "
-       + "off a picture of the sheet and can disagree with what is "
-       + "printed." },
+    why: "The sheet has a label in this line's break, but it is drawn, not "
+       + "typed. A machine read the digits off a picture. It can get them "
+       + "wrong." },
   inferred: { rank: 3, chip: "Inferred", badge: "inferred",
     short: "nobody printed this - it was worked out",
-    why: "Nothing is printed on this line. The elevation was either "
-       + "carried along the contour from another piece of it or counted "
-       + "between two other contours at this sheet's interval." },
+    why: "Nothing is printed on this line. We worked the number out. Either "
+       + "we carried it along the line from another piece, or we counted it "
+       + "between two other lines." },
   unknown: { rank: 4, chip: "Source not recorded", badge: "source?",
     short: "we did not record where this came from",
-    why: "The reader did not say where this number came from, so we cannot "
-       + "tell you whether the sheet prints it or whether we worked it "
-       + "out." },
+    why: "We did not record where this number came from. We cannot say if "
+       + "the sheet prints it or if we worked it out." },
   none: { rank: 5, chip: "No elevation", badge: "no elevation",
     short: "no elevation at all",
-    why: "This contour line carries no elevation. It is drawn on the sheet "
-       + "and it holds no height, so it contributes nothing to the volume. "
-       + "Type the elevation you read on the drawing to bring it in." },
+    why: "This line has no height yet. It counts for nothing. Read the "
+       + "number on the drawing and type it in." },
   typed: { rank: 6, chip: "Typed by you", badge: "typed",
     short: "typed in by you",
-    why: "You typed this elevation. Nothing here second-guesses it." },
+    why: "You typed this number. We do not change it." },
   // THE DIGITS ARE THE SHEET'S; THE PAIRING IS STILL OURS.
   //
   // This tooltip used to end "real text in the PDF, not a reading of ours",
@@ -13395,7 +13413,7 @@ function ewRowSource(row) {
   // panel had already been trimmed once for being too busy. Long enough to
   // be true, short enough not to bury the EXIST/PROP buttons.
   if (how === "inherited")
-    return "NO label on this line — carried along the contour";
+    return "NO label on this line — carried along the contour from another piece";
   if (how === "interval-infill" || (row.inferred && !how))
     return "elevation INFERRED, not printed";
   if (how === "gap-ocr")
@@ -13518,10 +13536,31 @@ function ewCovNow() {
 // Rows + stubs, classified, filtered and ordered - one function so the chip
 // counts, the list and the card count can never disagree about what is on
 // screen.
+// THE WORK AREA REACHES THIS PANEL (2026-09-09). The boxes drawn with the
+// work-area tool already mask every other quantity on the sheet; the
+// earthwork rows ignored them, so a box around the pad still listed - and
+// put into the surfaces - every contour on the sheet (Koby, live). A
+// contour with NONE of its length inside the boxes is out of this panel:
+// not listed, not sent to the volume. One with any length inside stays
+// whole (a surface needs the line, not a clipped piece of it).
+function ewInWorkArea(row) {
+  if (typeof wzActive !== "function" || !wzActive()) return true;
+  const ch = chainById(row.chain_id);
+  if (!ch) return true;                  // a typed-in row with no chain: keep
+  return wzChainFrac(ch) > 0;
+}
+// how many of the panel's contours the work area leaves out, for the hint
+function ewOutsideWorkArea() {
+  const st = state.ew;
+  if (!st || !Array.isArray(st.rows) || typeof wzActive !== "function" || !wzActive()) return 0;
+  return st.rows.filter(r => !ewInWorkArea(r)).length
+    + ewStubs().filter(s => !ewInWorkArea(s)).length;
+}
+
 function ewReviewView() {
   const st = state.ew;
-  const rows = (st && st.rows) || [];
-  const stubs = ewStubs();
+  const rows = ((st && st.rows) || []).filter(ewInWorkArea);
+  const stubs = ewStubs().filter(ewInWorkArea);
   const iv = (st && st.cov && st.cov.interval) || null;
   const r = ewReviewClasses(rows, 0, iv);
   const items = rows.map((row, i) => ({ row: row, cls: r.cls[i] }))
@@ -13635,12 +13674,12 @@ function ewSplitNote(row) {
   if (row.surfaceBy === "operator")
     return "You put this contour on this side.";
   if (row.splitBy === "interval-infill")
-    return "No printed elevation - this one was counted between two "
-      + "labelled contours, so it starts on skip and adds nothing to a "
-      + "volume until you choose a side.";
+    return "No number is printed on this line. We counted it between two "
+      + "labelled lines. It starts on skip and adds nothing until you pick "
+      + "a side.";
   if (row.splitBy === "legend")
-    return "This sheet's own legend names the family this contour belongs "
-      + "to, and that is what put it on this side.";
+    return "The sheet's legend names this kind of line. That is why it is "
+      + "on this side.";
   if (row.splitBy === "color") {
     // The polarity of the ink rule is the server's verdict for the whole
     // sheet (split_counts.polarity): the legend's named families confirm
@@ -13648,35 +13687,28 @@ function ewSplitNote(row) {
     // (typeof-guarded: tests run this function outside the app, with no state)
     const pol = (typeof state !== "undefined" && state.ew && state.ew.polarity) || "convention";
     if (pol === "legend-flipped")
-      return "Nothing in the legend named this family. It is on this side "
-        + "because of how it is inked - and on THIS sheet the legend's own "
-        + "existing and proposed families are inked the opposite way from "
-        + "the usual convention (dark existing, screened proposed), so the "
-        + "sheet's polarity was used, not the convention.";
+      return "The legend does not name this line. It is on this side because "
+        + "of its ink. On this sheet the legend's own lines are inked the "
+        + "other way round (dark is existing, grey is new), so we went by "
+        + "the sheet, not the usual rule.";
     if (pol === "legend-confirmed")
-      return "Nothing in the legend named this family. It is on this side "
-        + "because of how it is inked - screened grey reads as existing "
-        + "ground, solid black as proposed - a drafting convention this "
-        + "sheet's own legend families confirm: the family the legend calls "
-        + "existing is the screened one.";
-    return "Nothing in the legend named this family. It is on this side "
-      + "because of how it is inked - screened grey reads as existing "
-      + "ground, solid black as proposed - which is a drafting convention, "
-      + "not something this sheet states.";
+      return "The legend does not name this line. It is on this side because "
+        + "of its ink: light grey is the ground now, solid black is the new "
+        + "ground. This sheet's legend agrees with that rule.";
+    return "The legend does not name this line. It is on this side because "
+      + "of its ink: light grey is the ground now, solid black is the new "
+      + "ground. That is the usual drafting rule. The sheet does not say it.";
   }
   if (row.splitBy === "width")
-    return "A GUESS. Neither the legend nor the ink separated this sheet's "
-      + "contours, so the side comes from stroke weight alone: lighter than "
-      + "the middle of the page reads existing, heavier reads proposed. "
-      + "That premise is wrong on some drawings - check this one against "
-      + "the paper before trusting the volume.";
+    return "A GUESS. The legend did not help and the ink did not help. We "
+      + "went by how thick the line is: thin is the ground now, thick is "
+      + "the new ground. Some drawings do not follow that. Check this one "
+      + "on the paper before you trust the number.";
   if (row.splitBy === "none")
-    return "NO SIDE YET. This sheet gave us nothing to split its contours "
-      + "with: no legend row names existing or proposed, every contour is "
-      + "inked the same, and they all share one line weight. Rather than "
-      + "guess, we left it on skip - choose EXIST or PROP, or use the "
-      + "buttons above the list to put every unassigned contour on one side.";
-  return "Where this contour's side came from was not recorded.";
+    return "NO SIDE YET. The sheet gave us no way to tell. No legend row, "
+      + "one ink, one line thickness. So we did not guess. Pick EXIST or "
+      + "PROP, or use the buttons above the list to set them all at once.";
+  return "We did not record where this side came from.";
 }
 
 // The rows the server could not put on a side (split_by "none") and the
@@ -13701,9 +13733,8 @@ function ewUnsplitHint() {
   d.id = "ewUnsplit";
   const s = document.createElement("span");
   s.textContent = un.length + (un.length === 1 ? " contour has" : " contours have")
-    + " no side yet. This sheet has no legend row naming existing or "
-    + "proposed, one ink, and one line weight, so nothing on it says which "
-    + "contours are which. They add nothing to the volume until you choose. ";
+    + " no side yet. The sheet gives no clue which lines are the ground now "
+    + "and which are new. They count for nothing until you choose. ";
   d.appendChild(s);
   for (const [key, lab] of [["existing", "All existing"], ["proposed", "All proposed"]]) {
     const b = document.createElement("button");
@@ -13753,6 +13784,17 @@ function renderEw() {
   const zk = v => Number.isFinite(v) ? v : 1e9;
   state.ew.rows.sort((a, b) => zk(a.z) - zk(b.z));
   const view = ewReviewView();
+  const nOut = ewOutsideWorkArea();
+  if (nOut > 0) {
+    const d = document.createElement("div");
+    d.className = "ew-hint ew-wz-note";
+    d.id = "ewWzNote";
+    d.textContent = nOut + (nOut === 1 ? " contour is" : " contours are")
+      + " outside the work area, so " + (nOut === 1 ? "it is" : "they are")
+      + " left out of this list and out of the volume. Clear the work area to get "
+      + (nOut === 1 ? "it" : "them") + " back.";
+    box.appendChild(d);
+  }
   const unsplit = ewUnsplitHint();
   if (unsplit) box.appendChild(unsplit);
   if (!view.shown.length) {
@@ -17513,16 +17555,23 @@ function vertexAt(e) {
 // The pick radius is the OLD merge radius (24 px), so a loose click still
 // finds the run it is aimed at; what changed is where it connects, not how
 // hard it is to hit.
+// JOIN IS END TO END, WHEREVER ON THE OTHER PIECE THE CLICK LANDS. From
+// 330d7e9 (2026-09-0x) to 2026-09-09 a click on the other piece's BODY -
+// which is where a person clicks a line - teed into it instead: the
+// selected line grew a connector to the click point and the two pieces
+// stayed two lines. Koby: "it just extends to where the user clicks, it
+// doesn't actually join as one line". The tee still exists where it
+// belongs, in Extend (extendClick / snapWeld); Join does one thing.
 function mergeClick(px, py) {
   const sel = chainById(state.selected);
   if (!sel) { cancelMerge(); return; }
+  // snap first (an end within reach), else whatever line is under the click
   const hit = snapToChain(px, py, state.selected);
-  const tgt = hit && chainById(hit.chain_id);
-  if (!tgt) {
-    setStatus("join: click the line you want to connect to", "err");
+  const tgt = (hit && chainById(hit.chain_id)) || chainHitAt(px, py);
+  if (!tgt || tgt.chain_id === sel.chain_id) {
+    setStatus("join: click the other piece of this line", "err");
     return;
   }
-  if (!hit.isEnd) { connectToPoint(sel, hit); return; }
   mergeEnds(sel, tgt);
 }
 
@@ -17646,8 +17695,8 @@ $("mergeBtn").onclick = () => {
   }
   state.tool = "merge";
   $("mergeBtn").classList.add("active");
-  setStatus("join: click the other half of this run to merge end-to-end, or "
-    + "click anywhere on another line to tee into it (Esc cancels)", "busy");
+  setStatus("join: click the other piece of this line. The two pieces "
+    + "become one line, end to end (Esc cancels)", "busy");
   draw();
 };
 
@@ -21898,6 +21947,8 @@ function wzChanged() {
   wzSyncUi();
   calcStateDirty();
   renderStyles(); renderChips(); renderItemized(); renderMiniLegend();
+  // the earthwork panel lists and integrates only what is inside the boxes
+  if (state.ew && $("ewPanel") && !$("ewPanel").hidden) { renderEw(); renderEwBound(); }
   draw();
 }
 

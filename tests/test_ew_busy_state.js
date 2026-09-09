@@ -538,12 +538,12 @@ check(!/ewBusyPut\(ewDoneLine\([^;]*\),\s*"err"/.test(btn),
     fnSrc("ewDoneLine") + "\nreturn ewDoneLine;")
     ({ ew: { rows: [{ surface: null }, { surface: "existing" }, { surface: null, surfaceBy: "operator" }] } },
      (ms) => Math.round(ms / 1000) + "s")(97_000);
-  check(/3 contours/.test(done) && /1 still to be given a side/.test(done) && /97s/.test(done),
+  check(/3 contours/.test(done) && /1 still need a side/.test(done) && /97s/.test(done),
     "ewDoneLine counts the rows, the ones with no side yet (operator-chosen skips "
     + "excluded), and the time  (got " + JSON.stringify(done) + ")");
   const empty = new Function("state", "fmtElapsed",
     fnSrc("ewDoneLine") + "\nreturn ewDoneLine;")({ ew: { rows: [] } }, () => "5s")(5000);
-  check(/no contour elevations found/.test(empty),
+  check(/no contour heights found/.test(empty),
     "...and an empty read says so rather than counting to zero");
 }
 check(/if \(gen !== state\.gen\) return;/.test(btn),

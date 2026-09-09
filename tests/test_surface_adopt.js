@@ -177,12 +177,12 @@ if (note) {
     "a colour-decided row says it is a drafting convention, not a statement "
     + "of the sheet");
   const w = F({ splitBy: "width" });
-  check(/guess/i.test(w) && /check this one against/i.test(w),
+  check(/guess/i.test(w) && /check this one on the paper/i.test(w),
     "a width-decided row is called a GUESS and tells the operator to check "
-    + "it against the paper  (" + w.slice(0, 60) + "...)");
-  check(/counted between/i.test(F({ splitBy: "interval-infill" })),
+    + "it on the paper  (" + w.slice(0, 60) + "...)");
+  check(/counted it between/i.test(F({ splitBy: "interval-infill" })),
     "an infill row explains why it starts on skip");
-  check(F(null) === "" && /not recorded/i.test(F({})),
+  check(F(null) === "" && /did not record/i.test(F({})),
     "no row, and a row with no provenance, both degrade honestly");
 }
 

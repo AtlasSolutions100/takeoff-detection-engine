@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=83">
+<link rel="stylesheet" href="style.css?v=84">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -442,9 +442,20 @@
            The status bar carries the same sentence; this is the in-panel
            half. -->
       <div class="ew-busy" id="ewBusy" hidden></div>
-      <div class="ew-hint" id="ewHint">Each row is a contour with the elevation read off the sheet.
-        Set which surface it belongs to; fix any elevation the sheet reader got wrong.
-        Volumes only compute where both surfaces overlap.</div>
+      <!-- THE HOW-TO, in plain words (2026-09-09, Koby: "3rd grade level
+           English, explain how to go through the earthwork process"). Each
+           step is one short sentence. -->
+      <div class="ew-hint ew-howto" id="ewHint">
+        <b>How to do this</b>
+        <ol>
+          <li>Each row is one contour line. Click a row and the line lights up on the sheet.</li>
+          <li>Ask: is this a real contour? If not, press <b>&times;</b> to drop it.</li>
+          <li>Pick a side. <b>EXIST</b> is the ground now. <b>PROP</b> is the new ground. <b>skip</b> means do not use it.</li>
+          <li>Is the number right? If not, type the right one.</li>
+          <li>Draw a work area, or set the limit of work, so only that part counts.</li>
+          <li>Press <b>Calculate cut &amp; fill</b>.</li>
+        </ol>
+      </div>
       <!-- WHAT THE READER THREW AWAY. /earthwork/suggest has reported
            suggestions_dropped since the route existed and no screen ever
            rendered it, so a page whose every candidate row was filtered out
@@ -467,30 +478,26 @@
            stay on the face of the panel, always; the two paragraphs between
            them fold behind a button. Nothing here can be cleared. -->
       <div class="ew-limit" id="ewLimit">
-        <b>What this number is.</b> A contour interpolation: the engine builds a
-        triangulated surface through the contours you assign to each side and
-        subtracts one from the other. It is not a measured earthwork quantity.
-        <br><b>What that has cost, measured once.</b> On the one sheet where a
-        client estimate exists to check it against — Beaumont Barn Civil C3.0
-        (engine page index 2 = printed sheet 3) versus their Estimate #853 — cut,
-        fill and import each read <b>2.3–2.5&times; high</b>, and the region it
-        integrated over was 317,632 SF against that estimator's own 224,058 SF of
-        clear &amp; grub (<b>1.42&times;</b>). One job is a sample, not a rate;
-        treat every figure below as an order-of-magnitude check that a person
-        still has to replace.
+        <b>What this number is.</b> We make one surface from the EXIST lines
+        and one from the PROP lines. Then we take one away from the other.
+        That is a guess made from the lines. It is not a measured dig.
+        <br><b>What it cost once.</b> We checked it on one job (Beaumont Barn
+        C3.0, printed sheet 3) against the real Estimate #853. Our cut, fill
+        and import were each <b>2.3 to 2.5 times too high</b>. The area it
+        used was <b>1.42 times too big</b> (317,632 SF against 224,058 SF).
+        That was one job, not a rule. Treat every number below as a rough
+        check. A person still has to do the real one.
         <button id="ewLimitToggle" class="mini ew-limit-more" type="button"
-                aria-expanded="false">where it applies, and what it does not have ▸</button>
+                aria-expanded="false">where it counts, and what it leaves out ▸</button>
         <span id="ewLimitMore" hidden>
-        <br><span id="ewWhere"><b>Where it applies.</b> Each surface exists only
-        inside a straight-sided envelope drawn around the contours you gave it
-        (its convex hull), and the volume is integrated where the two envelopes
-        overlap. That envelope cuts straight across every bay and notch in the
-        real limit of disturbance and reaches out to the furthest contour, so
-        <b>the region is not the graded area</b>. Set a limit of work below and
-        it will be.</span>
-        <br><b>What it does not have.</b> The typical cross-section, the subgrade
-        depth under each surface treatment, and a shrink/swell factor — none of
-        the three is on the plans or in this calculation.
+        <br><span id="ewWhere"><b>Where it counts.</b> Each surface only
+        reaches as far as its own lines. The volume is counted where the two
+        surfaces overlap. That shape is a straight-sided box around the
+        lines, so <b>it is not the real graded area</b>. Set a limit of work
+        below and it will be.</span>
+        <br><b>What it leaves out.</b> The road section, the dig depth under
+        each surface, and how much dirt swells or shrinks. None of the three is
+        on the plans or in this number.
         </span>
       </div>
       <!-- GRADING ZONES. For sheets that do not draw a full proposed
@@ -511,11 +518,11 @@
         </div>
         <div id="gzRows" class="gz-rows"></div>
         <div id="gzTotals" class="gz-totals" hidden></div>
-        <div class="gz-hint">For a design the sheet does not draw: outline a
-          region and declare it &mdash; a pad elevation, a sloping plane, a
-          balanced pad, or a strip. Volumes are the declared design against
-          the detected existing ground inside the zone, and reach the takeoff
-          only via each zone's own Add button.</div>
+        <div class="gz-hint">Use this when the sheet does not draw the new
+          ground. Outline a region. Then say what goes there: a flat pad, a
+          sloping plane, a balanced pad, or a strip. We compare that to the
+          ground now, inside the region only. Press the zone's own Add button
+          to put it in the takeoff.</div>
       </div>
       <!-- Limit of work. Without one the volume is integrated over the
            intersection of the two surfaces' CONVEX HULLS, which bulges wherever
@@ -1190,6 +1197,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=169"></script>
+<script src="app.js?v=170"></script>
 </body>
 </html>

@@ -332,6 +332,10 @@ canvas#view.panning { cursor: grabbing; }
 .ew-rows { max-height: 32vh; }
 .ew-hint { color: var(--dim); font-size: var(--t-fs-xs); padding: 6px 12px 2px; }
 .ew-hint.ew-unsplit { color: var(--fg); }
+.ew-howto { color: var(--text); }
+.ew-howto ol { margin: 4px 0 0; padding-left: 20px; }
+.ew-howto li { margin: 2px 0; }
+.ew-howto b { font-weight: 600; }
 .ew-hint.ew-unsplit button { margin: 4px 6px 0 0; }
 .ew-ocr-cut { margin-bottom: 4px; }
 /* the in-flight line for /earthwork/suggest - sits under the panel HEAD,
