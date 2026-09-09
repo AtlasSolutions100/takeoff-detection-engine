@@ -62,5 +62,18 @@ check(/meta\.title = state\.docName \|\| "";/.test(head), "C: ...the full name r
 check(/ph\.textContent = "no preview yet";/.test(js) && !/textContent = "not opened yet"/.test(js),
   "D: the project card placeholder says what is true - no preview render - not 'not opened yet'");
 
+// ---- E (reported with a screenshot): the header belongs to the view on screen ----
+check(/function viewChromeSync\(\)/.test(js)
+   && /document\.body\.classList\.toggle\("view-open", pv \|\| sv\);/.test(js),
+  "E: opening Projects or Settings puts view-open on the body, where CSS can reach the header");
+check(/viewChromeSync\(\);/.test(fnSrc("showProjects")) && /viewChromeSync\(\);/.test(fnSrc("showSettings")),
+  "E: both full-screen views call it, opening and closing");
+check(/body\.view-open header #docName, body\.view-open header #pageSel,\s*\n\s*body\.view-open header #detectBtn, body\.view-open header #toolsBtn,\s*\n\s*body\.view-open \.status-bar #docRemoveBtn \{ display: none !important; \}/.test(css),
+  "E: the last sheet's name, page select, Detect, Tools and Remove-from-server stand down while a view is up");
+check(/setStatus\(""\)/.test(fnSrc("viewChromeSync")),
+  "E: the transient status line about the sheet that just left the screen is cleared");
+check(/pl\.setAttribute\("aria-current", "page"\)/.test(fnSrc("viewChromeSync")) && /\.projects-link\[aria-current\]/.test(css),
+  "E: the open view's nav link is marked current");
+
 if (fails) { console.error("\n" + fails + " check(s) failed"); process.exit(1); }
 console.log("\nall ui-audit checks passed");

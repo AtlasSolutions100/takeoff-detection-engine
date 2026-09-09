@@ -2597,6 +2597,14 @@ header #pageSel { flex: none; max-width: 220px; }
    not: "uploading…" and "could not reopen" are reported from those views. */
 main.pv-open ~ .status-bar .sb-facts,
 main.sv-open ~ .status-bar .sb-facts { display: none; }
+/* ...and the HEADER's sheet-scoped controls stand down with them. The header
+   sits before main, out of any sibling selector's reach, so the body carries
+   the view state (app.js viewChromeSync). The brand, the nav links, the BETA
+   pill and the theme button stay: they belong to every view. */
+body.view-open header #docName, body.view-open header #pageSel,
+body.view-open header #detectBtn, body.view-open header #toolsBtn,
+body.view-open .status-bar #docRemoveBtn { display: none !important; }
+.projects-link[aria-current] { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 
 /* --- "Where does this line go?" ------------------------------------------
    The family question a draw asks when it started with nothing selected.

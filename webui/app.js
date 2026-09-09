@@ -23483,6 +23483,23 @@ function pvDupeNotes(rows) {
 
 function pvIsOpen() { return !$("projectsView").hidden; }
 
+// THE HEADER BELONGS TO THE VIEW ON SCREEN. main.pv-open / main.sv-open
+// hide the workbench columns and (through a sibling selector) the status
+// bar's sheet facts - but the header sits BEFORE main and no selector from
+// main reaches it, so the last sheet's name, its page selector, Detect and
+// Tools stayed up over the Projects page (Koby, 2026-09-09, screenshot).
+// The body carries the view state now, so CSS can reach every surface;
+// the transient status line is cleared (it described the sheet that just
+// left the screen); and the nav link for the open view says so.
+function viewChromeSync() {
+  const pv = pvIsOpen(), sv = typeof svIsOpen === "function" && svIsOpen();
+  document.body.classList.toggle("view-open", pv || sv);
+  const pl = $("projectsLink"), sl = $("settingsLink");
+  if (pl) { if (pv) pl.setAttribute("aria-current", "page"); else pl.removeAttribute("aria-current"); }
+  if (sl) { if (sv) sl.setAttribute("aria-current", "page"); else sl.removeAttribute("aria-current"); }
+  if ((pv || sv) && typeof setStatus === "function") setStatus("");
+}
+
 function showProjects(on) {
   on = !!on;
   if (on === pvIsOpen()) {
@@ -23497,6 +23514,7 @@ function showProjects(on) {
   $("projectsView").hidden = !on;
   document.querySelector("main").classList.toggle("pv-open", on);
   $("pvBack").hidden = !(on && state.job);
+  viewChromeSync();
   if (on) {
     loadProjects();
   } else {
@@ -24889,6 +24907,7 @@ function showSettings(on) {
   $("settingsView").hidden = !on;
   document.querySelector("main").classList.toggle("sv-open", on);
   $("svBack").hidden = !(on && state.job);
+  viewChromeSync();
   if (on) {
     // A failed branding read is retried on the next OPEN, not on every
     // render: renderSettings() also runs on every price keystroke, and a
