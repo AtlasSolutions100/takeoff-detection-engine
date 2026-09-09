@@ -1713,12 +1713,14 @@ function renderSheetHead() {
   if (!state.job) { el.hidden = true; return; }
   el.hidden = false;
   el.innerHTML = "";
-  const name = document.createElement("div");
-  name.className = "sh-name";
-  name.title = state.docName || "";
-  name.textContent = state.docName || "";
+  // The document's name is in the top bar, 60 px above this card; it was
+  // printed here too, truncated with an ellipsis, and said nothing the bar
+  // did not (removal test, 2026-09-09). The card is the chips; the full
+  // name rides on the card as a tooltip for the narrow-window case where
+  // the bar truncates it.
   const meta = document.createElement("div");
   meta.className = "sh-meta";
+  meta.title = state.docName || "";
   const chip = (txt, cls) => {
     const s = document.createElement("span");
     s.className = "sh-chip" + (cls ? " " + cls : "");
@@ -13397,7 +13399,7 @@ function ewRowSource(row) {
   if (how === "interval-infill" || (row.inferred && !how))
     return "elevation INFERRED, not printed";
   if (how === "gap-ocr")
-    return "label in its own break, read from a picture";
+    return "label in its own break, read by OCR";
   if (how === "inline") return "label printed in this line's own break";
   if (how === "radius") {
     const d = row.dist === EW_DIST_INHERITED ? null : row.dist;
@@ -13803,8 +13805,18 @@ function renderEw() {
     // app already uses for one chain (the selection bar's "in list" button
     // reveals "line #168"), so the review list, the canvas and the style
     // list name the same object the same way.
-    meta.textContent = `line ${row.chain_id} · w ${row.width} · `
-      + ewRowSource(row);
+    //
+    // TWO LINES, NOT FIVE (2026-09-09). The provenance sentence used to
+    // ride in this same column beside the buttons, and in a 200 px column
+    // it wrapped to three lines: measured on Oncor C-04, every row was
+    // 4-5 lines tall and three rows fit a screen of 150. The identity
+    // stays here, one line, beside the buttons; the sentence gets the
+    // whole width of the row underneath (.ew-src) - still on the row, not
+    // in a tooltip, the same words as before.
+    meta.textContent = `line ${row.chain_id} · w ${row.width}`;
+    const src = document.createElement("div");
+    src.className = "ew-src";
+    src.textContent = ewRowSource(row);
     // WHICH CLASS OF EVIDENCE, on the row and in the filter chips, from one
     // table (EW_REVIEW) - so a row can never be sorted into a group whose
     // name it does not wear.
@@ -13817,7 +13829,12 @@ function renderEw() {
       + (it.cls === "inferred" ? " ew-inf-tag" : "");
     cb.textContent = EW_REVIEW[it.cls].badge;
     cb.title = EW_REVIEW[it.cls].why;
-    meta.prepend(cb);
+    // The badge leads the PROVENANCE line, not the identity: beside the
+    // elevation the column has room for the line number or for a wide
+    // badge ("off interval"), not both, and the badge is the class of the
+    // sentence it now sits in front of. Still on the row, still the first
+    // thing read after the number.
+    src.prepend(cb);
     if (ewRowInferred(row)) {
       // The badge and the sentence, on the row, not in a tooltip: an
       // inferred elevation must never be able to pass for a read one.
@@ -13827,7 +13844,7 @@ function renderEw() {
         const why = document.createElement("div");
         why.className = "ew-inf-why";
         why.textContent = row.inferredWhy;
-        meta.appendChild(why);
+        src.appendChild(why);
       }
     }
     const seg = document.createElement("div");
@@ -13867,7 +13884,7 @@ function renderEw() {
       draw();
       calcStateDirty();
     };
-    div.append(z, meta, seg, x);
+    div.append(z, meta, seg, x, src);
     div.onmouseenter = () => hotChainSet(row.chain_id);
     div.onmouseleave = () => hotChainSet(null);
     box.appendChild(div);
@@ -13924,14 +13941,16 @@ function ewStubRow(stub) {
   };
   const meta = document.createElement("div");
   meta.className = "ew-meta";
-  meta.textContent = `line ${stub.chain_id} · `
-    + "no elevation read on this line — type the one you read on the drawing";
+  meta.textContent = `line ${stub.chain_id}`;
   const cb = document.createElement("span");
   cb.className = "ew-cls k-none";
   cb.textContent = EW_REVIEW.none.badge;
   cb.title = EW_REVIEW.none.why;
-  meta.prepend(cb);
-  div.append(z, meta);
+  const src = document.createElement("div");
+  src.className = "ew-src";
+  src.textContent = "no elevation read on this line — type the one you read on the drawing";
+  src.prepend(cb);
+  div.append(z, meta, src);
   div.onmouseenter = () => hotChainSet(stub.chain_id);
   div.onmouseleave = () => hotChainSet(null);
   return div;
@@ -21267,12 +21286,26 @@ function setStatus(t, cls) { const el = $("status"); el.textContent = t; el.clas
 // readings are waiting unchecked. The page that has neither says the same
 // two things - no scale is SET, and the engine read none - rather than the
 // old "found" wording, which read as a fact about the sheet.
+// The scale as the status bar says it. A text reading is already short
+// (`1"=20'`) and is quoted as printed. A GRAPHIC-BAR reading's `text` is the
+// provenance sentence - "graphic bar 0-60 ft over 144.0pt (1" = 30', ticks)"
+// - which the sheet-head chip carries in full; repeated verbatim on the
+// status bar it was the same sentence twice on one screen and clipped the
+// bar at 1180 px (measured 2026-09-09). The bar gets the number; the chip
+// keeps the sentence.
+function scaleShort(sc) {
+  if (!sc) return "";
+  const t = String(sc.text || "");
+  const ft = +sc.ft_per_paper_inch;
+  if (t.length <= 24 || !(ft > 0)) return t;
+  return `1" = ${Number.isInteger(ft) ? ft : ft.toFixed(2)}'`;
+}
 function sheetFactsText() {
   if (!state.result) return "";
   const sc = state.result.scale;
   const nsug = sc ? 0 : scaleSuggestions().length;
   return `${state.result.chains.length} lines in ${state.result.styles.length} styles`
-    + (sc ? ` · scale ${sc.text} (${sc.source}`
+    + (sc ? ` · scale ${scaleShort(sc)} (${sc.source}`
         + (sc.agrees === true ? ", matches the drawn bar"
           : sc.agrees === false ? `, but the drawn bar says ${sc.bar_ft_per_paper_inch} ft/in`
           : "") + ")"
@@ -23804,7 +23837,10 @@ function pvCard(r, sharedBadge, nowS) {
     // page just to draw a card, so a quiet placeholder instead
     const ph = document.createElement("span");
     ph.className = "pv-ph";
-    ph.textContent = "not opened yet";
+    // "not opened yet" read as a contradiction under "all detected" on a job
+    // registered by API and never opened in a browser; what is true is that
+    // no preview render exists on this box
+    ph.textContent = "no preview yet";
     thumb.appendChild(ph);
   }
   card.appendChild(thumb);

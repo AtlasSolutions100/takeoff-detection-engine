@@ -371,7 +371,12 @@ canvas#view.panning { cursor: grabbing; }
 .ew-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
 #ewCalc { background: var(--accent-deep); border-color: var(--accent); color: #fff; font-weight: 600; }
 .ew-result { font-size: var(--t-fs-xs); color: var(--text); }
-.ew-meta { color: var(--dim); font-size: var(--t-fs-xs); }
+.ew-meta { color: var(--dim); font-size: var(--t-fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the row's second line: where the elevation came from, full width under the
+   identity and the buttons (see renderEw: two lines, not five) */
+.ew-src { grid-column: 1 / -1; color: var(--t-text-faint); font-size: var(--t-fs-xs); line-height: 1.45; padding: 0 4px 2px; }
+.ew-src .ew-cls { margin-right: 6px; vertical-align: baseline; }
+.ew-row.ew-inferred .ew-src { color: var(--dim); }
 /* layer stacks: what comes off the existing side, what goes on the proposed */
 .ew-layers { padding: 4px 8px 6px; border-top: 1px solid var(--line); }
 .ew-layers-head { display: flex; gap: 6px; align-items: center; font-size: var(--t-fs-xs); color: var(--dim); padding: 5px 4px 2px; }
