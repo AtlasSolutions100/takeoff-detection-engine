@@ -38,8 +38,14 @@ check(/div\.append\(z, meta, seg, x, src\);/.test(renderEw),
   "A: the source line is appended after the buttons, so the grid puts it on the next line");
 check(/\.ew-src \{[^}]*grid-column: 1 \/ -1/.test(css),
   "A: .ew-src spans the row's full width in the grid");
-check(/\.ew-meta \{[^}]*white-space: nowrap/.test(css),
-  "A: the identity column no longer wraps");
+check(/\.ew-row \.ew-meta \{[^}]*white-space: nowrap/.test(css) && !/^\.ew-meta \{[^}]*white-space: nowrap/m.test(css),
+  "A: the identity column no longer wraps - scoped to the contour row, so the cut/fill result line and callout targets still wrap (smoke find, 2026-09-10)");
+check(/\.co-row \{ grid-template-columns: 1fr auto; \}/.test(css),
+  "F: a callout row's text gets the row, not the contour row's 60 px first column");
+check(/Set a limit of work, or draw a work area, to bound it\./.test(js) && !/disturbance\. No input on this panel can bound it/.test(js),
+  "F: the basis text no longer claims nothing can bound the region");
+check(/bounded by <b>" \+ \(state\.ewBound \? "your limit of work" : "the work-area box"\)/.test(js),
+  "F: ...and names what bounded it when something did");
 
 // ---- B ----
 const short = new Function(fnSrc("scaleShort") + "\nreturn scaleShort;")();

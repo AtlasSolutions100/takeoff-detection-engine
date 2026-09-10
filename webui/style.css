@@ -375,7 +375,12 @@ canvas#view.panning { cursor: grabbing; }
 .ew-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
 #ewCalc { background: var(--accent-deep); border-color: var(--accent); color: #fff; font-weight: 600; }
 .ew-result { font-size: var(--t-fs-xs); color: var(--text); }
-.ew-meta { color: var(--dim); font-size: var(--t-fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ew-meta { color: var(--dim); font-size: var(--t-fs-xs); }
+/* the contour row's identity column stays one line beside the buttons; the
+   same class elsewhere (the cut/fill result line, a callout's target) wraps */
+.ew-row .ew-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.co-row { grid-template-columns: 1fr auto; }
+.co-row .ew-meta { white-space: normal; overflow: visible; text-overflow: clip; }
 /* the row's second line: where the elevation came from, full width under the
    identity and the buttons (see renderEw: two lines, not five) */
 .ew-src { grid-column: 1 / -1; color: var(--t-text-faint); font-size: var(--t-fs-xs); line-height: 1.45; padding: 0 4px 2px; }

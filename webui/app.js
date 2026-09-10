@@ -14375,11 +14375,18 @@ function renderEwBasis(j, body) {
        + "printed. Check them against the drawing before pricing.")
       .className = "ew-basis-ocr";
   }
-  const u = line("That region is <b>not the graded area</b>: it is where the "
-    + "two convex hulls overlap — a straight-sided envelope round each set of "
-    + "contours — so it cuts across every notch in the real limit of "
-    + "disturbance. No input on this panel can bound it.");
-  u.className = "unbounded";
+  // WHAT BOUNDED THE REGION, if anything. Until 2026-09-10 this sentence
+  // ended "No input on this panel can bound it" - stale since the limit of
+  // work landed, and wrong again once the work area reached this panel.
+  const bnd = body && body.boundary;
+  const u = line(bnd
+    ? "That region is bounded by <b>" + (state.ewBound ? "your limit of work" : "the work-area box")
+      + "</b> (" + bnd.length + " points): only ground inside it is counted."
+    : "That region is <b>not the graded area</b>: it is where the "
+      + "two convex hulls overlap — a straight-sided envelope round each set of "
+      + "contours — so it cuts across every notch in the real limit of "
+      + "disturbance. Set a limit of work, or draw a work area, to bound it.");
+  u.className = bnd ? "bounded" : "unbounded";
   // WHICH SURFACE PRODUCED THIS NUMBER. The two models differ by tens of
   // percent on a sparse sheet, so the model rides beside the volume and
   // not in a tooltip: an operator must never be unable to tell which one
