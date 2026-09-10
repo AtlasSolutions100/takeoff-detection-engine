@@ -17491,13 +17491,18 @@ addEventListener("mouseup", (e) => {
     return;
   }
   if (state.dragPt) {
+    const moved = dragCap;          // the snapshot happens on the first real move
     state.dragPt = false;
     dragCap = false;
     const ch = chainById(state.selected);
-    if (ch) {
+    if (ch && moved) {
       ch.length_pt = polyLen(ch.points);
       updateSelBar(ch);
       afterEdit(`point moved — line now ${fmtLen(ch.length_pt)}`);
+    } else if (ch) {
+      // a click on a vertex with no drag: the point is picked, nothing moved
+      updateSelBar(ch);
+      setStatus(`point ${state.selPt + 1} of ${ch.points.length} picked — drag it, or Delete removes it`);
     }
     return;
   }
@@ -17582,17 +17587,21 @@ function mergeClick(px, py) {
   mergeEnds(sel, tgt);
 }
 
-// end-to-end, unchanged from the tool that shipped
+// end-to-end. ACROSS FAMILIES IN ONE PRESS since 2026-09-10: the detector
+// files the two halves of one contour under two families often enough that
+// Pierce's demo needed R then J on "all 50" of a sheet's contours. The
+// other piece is moved into the SELECTED line's family (the one the
+// operator started from) and then merged - one gesture, one undo step -
+// and the status line says which family lost the footage, because a merge
+// that moves feet between priced items must never be silent.
 function mergeEnds(sel, tgt) {
-  // Refuse across families rather than silently picking a winner: a merge
-  // that moved footage from one priced item to another without saying so is
-  // the kind of quiet wrong number this project keeps having to hunt down.
+  let moved = null;
   if (tgt.style_id !== sel.style_id) {
-    const la = state.labels.get(sel.style_id) || "this family";
-    const lb = state.labels.get(tgt.style_id) || "that family";
-    setStatus(`those are different families (${la} / ${lb}) \u2014 `
-      + "use Reclassify (R) first, then merge", "err");
-    return;
+    const la = state.labels.get(sel.style_id) || familyName(
+      state.result.styles.find(s => s.style_id === sel.style_id)) || "this family";
+    const lb = state.labels.get(tgt.style_id) || familyName(
+      state.result.styles.find(s => s.style_id === tgt.style_id)) || "that family";
+    moved = { from: lb, to: la, ft: tgt.length_pt || 0 };
   }
 
   // Join the two NEAREST ends, whichever they are, reversing as needed. The
@@ -17623,8 +17632,9 @@ function mergeEnds(sel, tgt) {
     }
   }
 
-  captureUndo(`merge of 2 lines — ${fmtQty(combined + best.d)}`,
-    [sel.chain_id, tgt.chain_id]);
+  captureUndo((moved ? `join across families — ` : `merge of 2 lines — `)
+    + fmtQty(combined + best.d), [sel.chain_id, tgt.chain_id]);
+  if (moved) tgt = reclassCore(tgt, sel.style_id, sel);   // one undo covers it
   const c = materialize(sel);
   const pa = c.points.map(p => p.slice());
   if (best.revA) pa.reverse();
@@ -17640,7 +17650,9 @@ function mergeEnds(sel, tgt) {
   state.selPt = null;
   updateSelBar(c);
   afterEdit(`merged 2 lines into 1 \u2014 ${fmtLen(c.length_pt)} total, `
-    + `${fmtLen(best.d)} bridged`);
+    + `${fmtLen(best.d)} bridged`
+    + (moved ? ` \u2014 ${fmtLen(moved.ft)} moved from ${moved.from} into ${moved.to}`
+               + ` to join (Ctrl+Z puts it back)` : ""));
   renderStyles(); renderChips(); renderMiniLegend();
 }
 
@@ -19552,8 +19564,12 @@ function updateSelBar(ch) {
 function deleteVertex() {
   const ch = chainById(state.selected);
   if (!ch || state.selPt === null) return false;
-  if (ch.points.length <= 3) {
-    setStatus("too few points left — remove the whole line instead", "err");
+  // A line needs TWO points to exist, so a point can go from any line with
+  // three or more. The guard sat at three (2026-09-10): a short line with a
+  // bad kink refused the point delete, and the operator's next Delete, with
+  // no point picked, took the whole line (Pierce call, on screen).
+  if (ch.points.length <= 2) {
+    setStatus("a line needs two points — remove the whole line instead", "err");
     return true;
   }
   captureUndo("point delete", [ch.chain_id]);
