@@ -54,6 +54,7 @@ const BINDINGS = {
   "X":             /k === "x"/,
   "E":             /k === "e"/,
   "D":             /k === "d"/,
+  "T":             /k === "t"/,                                     // trim at a match line
   "R":             /e\.key === "r" \|\| e\.key === "R"/,
   "J":             /e\.key === "j" \|\| e\.key === "J"/,
   "Del / ⌫":  /e\.key === "Delete" \|\| e\.key === "Backspace"/,

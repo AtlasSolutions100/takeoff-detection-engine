@@ -102,6 +102,7 @@ const state = window.state = {
   snapMsg: "",              // last hint printed for it, so hovering does not
                             // rewrite the status line on every mousemove
   extendEnd: null,          // index (0 or last) of the end Extend will grow
+  trim: null,               // match-line trim in progress: { cut, first, chain }
   extendAnchor: null,       // spur anchor picked on the selected line's own
                             // body: {chain_id, segIndex, point, isVertex}
   drawPend: null,           // a finished draw waiting for its family pick
@@ -12437,6 +12438,174 @@ addEventListener("keydown", (e) => {
   }
 }, true);
 
+
+// ============== TRIM AT A MATCH LINE (T) ====================================
+// Pierce Site Work call, 2026-09-03: Jacob trims every run at the sheet's
+// match line so a pipe that carries on to the next sheet is not counted
+// twice. Before this the operator split each crossing line by hand (S,
+// then Delete the far piece) - one line at a time.
+//
+// Grammar: T arms the tool. First click: on a printed line -> that line is
+// the match line (it must be straight; a bent line is refused); on empty
+// sheet -> the first point of a drawn match line, second click finishes it.
+// Next click: the side to KEEP. Every SHOWN, included line is then cut at
+// the (infinite) match line: pieces on the keep side stay as new lines in
+// the same family, pieces beyond it and lines wholly beyond it leave the
+// count. Hidden families are untouched - the operator cannot see what
+// would go. One undo step covers all of it. The match line itself, when
+// picked, is never cut.
+function trimStraight(pts) {
+  const a = pts[0], b = pts[pts.length - 1];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (L < 5) return null;
+  let worst = 0;
+  for (const p of pts) worst = Math.max(worst, distToSeg(p[0], p[1], a, b));
+  return worst <= Math.max(2, 0.02 * L) ? [a.slice(), b.slice()] : null;
+}
+// signed side of p relative to the line a->b: >0 one side, <0 the other
+function trimSideOf(cut, p) {
+  const [a, b] = cut;
+  return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+}
+// split a polyline at every crossing of the match line into runs on the
+// keep side and runs beyond it; the crossing point is interpolated, so the
+// kept piece ends exactly ON the match line. A point on the line counts as
+// kept (nothing is lost to a tie).
+function trimPieces(pts, cut, keepSign) {
+  const keep = [], drop = [];
+  const s = pts.map(p => trimSideOf(cut, p));
+  let cur = [pts[0]], curKeep = s[0] * keepSign >= 0;
+  for (let i = 1; i < pts.length; i++) {
+    const k1 = s[i] * keepSign >= 0;
+    if (k1 !== curKeep && s[i - 1] !== s[i]) {
+      const t = s[i - 1] / (s[i - 1] - s[i]);
+      const q = [pts[i - 1][0] + t * (pts[i][0] - pts[i - 1][0]),
+                 pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1])];
+      cur.push(q);
+      (curKeep ? keep : drop).push(cur);
+      cur = [q]; curKeep = k1;
+    }
+    cur.push(pts[i]);
+  }
+  (curKeep ? keep : drop).push(cur);
+  return { keep, drop };
+}
+// a kept piece becomes its own line in the same family (splitSelected's
+// clone, so a trimmed piece behaves like a split piece everywhere)
+function trimClone(ch, p, full) {
+  const c = JSON.parse(JSON.stringify(ch));
+  c.chain_id = state.nextChainId++;
+  c.custom = true;
+  delete c.seg_counts; delete c._scOK;
+  c.points = p;
+  c.length_pt = ch.length_pt * polyLen(p) / full;
+  if (state.chainLabels.has(ch.chain_id))
+    state.chainLabels.set(c.chain_id, state.chainLabels.get(ch.chain_id));
+  state.result.chains.push(c);
+  return c;
+}
+function trimRemove(ch) {
+  if (ch.custom) state.result.chains.splice(state.result.chains.indexOf(ch), 1);
+  else state.excluded.add(ch.chain_id);
+  if (state.multiSel) state.multiSel.delete(ch.chain_id);
+}
+function trimApply(cut, keepSign, cutterId) {
+  const work = state.result.chains.filter(c => !state.excluded.has(c.chain_id)
+    && famShown(c.style_id) && c.chain_id !== cutterId && c.points.length >= 2);
+  const crossing = [], beyond = [];
+  for (const ch of work) {
+    const s = ch.points.map(p => trimSideOf(cut, p) * keepSign);
+    const anyDrop = s.some(v => v < 0), anyKeep = s.some(v => v >= 0);
+    if (!anyDrop) continue;
+    (anyKeep ? crossing : beyond).push(ch);
+  }
+  if (!crossing.length && !beyond.length) {
+    trimDisarm("nothing crosses or lies beyond that match line \u2014 nothing changed");
+    return null;
+  }
+  captureUndo(`trim at a match line \u2014 ${crossing.length} cut, ${beyond.length} removed`,
+    crossing.concat(beyond).map(c => c.chain_id));
+  let dropped = 0, kept = 0;
+  for (const ch of beyond) { dropped += chainLenPt(ch); trimRemove(ch); }
+  for (const ch of crossing) {
+    const full = polyLen(ch.points) || 1;
+    const pieces = trimPieces(ch.points, cut, keepSign);
+    for (const p of pieces.keep)
+      if (polyLen(p) >= 0.5) { trimClone(ch, p, full); kept++; }
+    dropped += pieces.drop.reduce((t, p) => t + polyLen(p), 0) * (ch.length_pt / full);
+    trimRemove(ch);
+  }
+  state.selected = null; state.selPt = null; state.clickPt = null;
+  updateSelBar(null);
+  trimDisarm();
+  afterEdit(`trimmed at the match line \u2014 ${crossing.length} line(s) cut `
+    + `(${kept} piece(s) kept), ${beyond.length} removed beyond it, `
+    + `${fmtQty(dropped)} dropped (Ctrl+Z puts it all back)`);
+  renderStyles(); renderChips(); renderMiniLegend();
+  return { crossing: crossing.length, beyond: beyond.length, kept, dropped };
+}
+function trimDisarm(msg) {
+  if (state.tool === "trim") state.tool = null;
+  state.trim = null;
+  $("trimBtn").classList.remove("active");
+  if (msg !== undefined) setStatus(msg);
+  draw();
+}
+function trimClick(px, py) {
+  const t = state.trim;
+  if (!t.cut) {
+    if (!t.first) {
+      const hit = chainHitAt(px, py);
+      if (hit) {
+        const line = trimStraight(hit.points);
+        if (!line) return setStatus("that line is not straight enough to be a match "
+          + "line \u2014 click two points on the empty sheet to draw one instead", "err");
+        t.cut = line; t.chain = hit.chain_id;
+        setStatus(`match line: chain ${hit.chain_id} \u2014 now click the side to KEEP; `
+          + "every shown line on the other side is trimmed away (Esc cancels)", "busy");
+      } else {
+        t.first = [px, py];
+        setStatus("match line: first point set \u2014 click its second point (Esc cancels)", "busy");
+      }
+      draw(); return;
+    }
+    if (Math.hypot(px - t.first[0], py - t.first[1]) < 2)
+      return setStatus("click further away for the second point", "err");
+    t.cut = [t.first, [px, py]]; t.first = null;
+    setStatus("match line drawn \u2014 now click the side to KEEP; every shown line "
+      + "on the other side is trimmed away (Esc cancels)", "busy");
+    draw(); return;
+  }
+  const sgn = Math.sign(trimSideOf(t.cut, [px, py])) || 1;
+  return trimApply(t.cut, sgn, t.chain);
+}
+$("trimBtn").onclick = () => {
+  if (!state.result) return setStatus("run Detect first", "err");
+  if (state.tool === "trim") { trimDisarm("trim cancelled \u2014 nothing changed"); return; }
+  if (state.tool) return setStatus("finish or Esc the current tool first", "err");
+  state.tool = "trim";
+  state.trim = { cut: null, first: null, chain: null };
+  $("trimBtn").classList.add("active");
+  setStatus("trim at a match line: click the match line on the sheet \u2014 or click "
+    + "two points to draw one \u2014 then click the side to KEEP (Esc cancels)", "busy");
+  draw();
+};
+const _trimClickBefore = handleCanvasClick;
+handleCanvasClick = function (e) {
+  if (state.tool === "trim" && state.trim) {
+    const [px, py] = ptFromEvent(e);
+    return trimClick(px, py);
+  }
+  return _trimClickBefore(e);
+};
+addEventListener("keydown", (e) => {
+  if (typing() || state.tool !== "trim") return;
+  if (e.key === "Escape") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    trimDisarm("trim cancelled \u2014 nothing changed");
+  }
+}, true);
+
 function ewDisarmPick(msg) {
   if (state.tool !== "ew-pick") return;
   state.tool = null;
@@ -17251,6 +17420,31 @@ function draw() {
       ctx.lineWidth = 2 / k; ctx.strokeStyle = CV_SELECT; ctx.stroke();
     }
   }
+  // the match line being trimmed at: its first point, then the whole cut
+  // line run out across the sheet in both directions
+  if (state.tool === "trim" && state.trim) {
+    const fT = IMG_DPI / 72;
+    const t = state.trim;
+    if (t.first) {
+      ctx.beginPath();
+      ctx.arc(t.first[0] * fT, t.first[1] * fT, 5 / k, 0, Math.PI * 2);
+      ctx.fillStyle = CV_SELECT; ctx.fill();
+    }
+    if (t.cut) {
+      const [a, b] = t.cut;
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+      const R = 50000;
+      ctx.save();
+      ctx.setLineDash([14 / k, 8 / k]);
+      ctx.lineWidth = 2.5 / k; ctx.strokeStyle = CV_SELECT;
+      ctx.beginPath();
+      ctx.moveTo((a[0] - ux * R) * fT, (a[1] - uy * R) * fT);
+      ctx.lineTo((b[0] + ux * R) * fT, (b[1] + uy * R) * fT);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
   // the spur anchor, once picked: the tee the branch will grow from
   if (state.extendAnchor && state.tool === "extend") {
     const fSa = IMG_DPI / 72;
@@ -21232,6 +21426,8 @@ addEventListener("keydown", (e) => {
     }
     // D no longer needs a selection - it is the "draw at any time" tool
     if (state.result && k === "d") { e.preventDefault(); $("drawBtn").click(); return; }
+    // T needs no selection either: trim every shown line at a match line
+    if (state.result && k === "t") { e.preventDefault(); $("trimBtn").click(); return; }
     if (state.result && state.selected !== null) {
       if (k === "s") { e.preventDefault(); $("splitBtn").click(); return; }
       if (k === "x") { e.preventDefault(); $("cutSpanBtn").click(); return; }

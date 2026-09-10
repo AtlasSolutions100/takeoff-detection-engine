@@ -946,6 +946,7 @@
         <kbd>D</kbd><span>Draw a new line in the same family</span>
         <kbd>R</kbd><span>Reclassify into another family (click the target family)</span>
         <kbd>J</kbd><span>Merge with the other half of the same run</span>
+        <kbd>T</kbd><span>Trim at a match line &mdash; click the line (or two points), then the side to keep; no selection needed</span>
         <kbd>Del / &#9003;</kbd><span>Delete the picked point, the whole line, or every multi-selected line (Ctrl+Z restores)</span>
         <kbd>Ctrl+Z</kbd><span>Undo the last edit (Ctrl+Shift+Z or Ctrl+Y redoes)</span>
       </div>
@@ -1020,6 +1021,7 @@
       <span class="tk-sep"></span>
       <button id="wzBtn" class="tk" title="Work area &mdash; drag one or more boxes around the part of the sheet that counts. The takeoff lists (style rows, itemized rows, CSV, approve export) count only length inside your boxes; detection is untouched and Clear restores everything. The earthwork and trench calculators keep their own limit-of-work boundary and are not masked."><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2.6"/></svg></button>
       <button id="wzClearBtn" class="tk danger" hidden title="Clear the work area &mdash; every line counts in full again"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="12" height="12" rx="2" stroke-dasharray="3 2.6"/><path d="m14.6 14.6 6.4 6.4M21 14.6l-6.4 6.4"/></svg></button>
+      <button id="trimBtn" class="tk" title="Trim at a match line (T) &mdash; click the match line on the sheet (or two points to draw one), then click the side to keep. Every shown line is cut there and the part beyond it leaves the count, so a run that continues on the next sheet is not counted twice. Ctrl+Z puts it all back."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="3 2.4"/><path d="M3 8h9M3 16h9"/><path d="M15 8h3M15 16h3" opacity=".35"/></svg></button>
       <span class="tk-sep"></span>
       <button id="faithfulBtn" class="tk active" title="Line rendering (F): ON draws every line with its true dash pattern and printed weight; OFF draws bold uniform strokes that are easier to see. Display only — no count or length changes."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h6M12 8h3M18 8h3M3 16h18"/></svg></button>
       <button id="kbdBtn" class="tk" title="Keyboard shortcuts — every key and gesture the app answers to (?)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a3 3 0 1 1 4.5 2.6c-1 .6-1.5 1.2-1.5 2.4"/><circle cx="12" cy="18" r=".9" fill="currentColor" stroke="none"/></svg></button>
@@ -1197,6 +1199,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=173"></script>
+<script src="app.js?v=174"></script>
 </body>
 </html>
