@@ -101,6 +101,7 @@ const state = window.state = {
                             // extend / join is armed - what the click WILL use
   snapMsg: "",              // last hint printed for it, so hovering does not
                             // rewrite the status line on every mousemove
+  extendEnd: null,          // index (0 or last) of the end Extend will grow
   extendAnchor: null,       // spur anchor picked on the selected line's own
                             // body: {chain_id, segIndex, point, isVertex}
   drawPend: null,           // a finished draw waiting for its family pick
@@ -17238,6 +17239,18 @@ function draw() {
       ctx.lineWidth = 1.2 / k; ctx.strokeStyle = CV_VERTEX_ON_RG; ctx.stroke();
     }
   }
+  // the end that will grow, ringed, while extend is armed and no spur picked
+  if (state.tool === "extend" && !state.extendAnchor && state.extendEnd !== null
+      && state.extendEnd !== undefined && state.selected !== null) {
+    const chE = chainById(state.selected);
+    const e = chE && chE.points[state.extendEnd];
+    if (e) {
+      const fE = IMG_DPI / 72;
+      ctx.beginPath();
+      ctx.arc(e[0] * fE, e[1] * fE, 7 / k, 0, Math.PI * 2);
+      ctx.lineWidth = 2 / k; ctx.strokeStyle = CV_SELECT; ctx.stroke();
+    }
+  }
   // the spur anchor, once picked: the tee the branch will grow from
   if (state.extendAnchor && state.tool === "extend") {
     const fSa = IMG_DPI / 72;
@@ -18321,17 +18334,45 @@ function splitSelected() {
 }
 $("splitBtn").onclick = splitSelected;
 
+// WHICH END GROWS. Until 2026-09-10 extendTo grew whichever end was nearer
+// the DESTINATION click, so a short line flipped ends depending on where
+// the operator pointed ("it goes to the closest end point... funky" -
+// Pierce call, on screen). The end is decided from what the operator did
+// to the line, in this order: a picked vertex that IS an end; else the end
+// nearer where the line was clicked to select it; else (nothing known) the
+// end nearer the destination, as before. Returns 0 or last index.
+function extendEndIndex(ch, dest) {
+  const n = ch.points.length;
+  if (state.selPt === 0 || state.selPt === n - 1) return state.selPt;
+  const ref = state.clickPt || dest;
+  if (!ref) return n - 1;
+  const d0 = Math.hypot(ref[0] - ch.points[0][0], ref[1] - ch.points[0][1]);
+  const d1 = Math.hypot(ref[0] - ch.points[n - 1][0], ref[1] - ch.points[n - 1][1]);
+  return d0 <= d1 ? 0 : n - 1;
+}
+// a word for the end, from where it sits on the sheet
+function extendEndWord(ch, idx) {
+  const a = ch.points[idx], b = ch.points[idx === 0 ? ch.points.length - 1 : 0];
+  const dx = a[0] - b[0], dy = a[1] - b[1];
+  return Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "top" : "bottom");
+}
+
 $("extendBtn").onclick = () => {
   if (state.selected === null) return;
+  const ch = chainById(state.selected);
   state.tool = "extend";
   state.extendAnchor = null;
-  setStatus("extend: click where the line should reach \u2014 or click a point "
-    + "on this line's own body to start a spur (Esc cancels)", "busy");
+  state.extendEnd = ch ? extendEndIndex(ch, null) : null;
+  const word = ch && state.extendEnd !== null ? extendEndWord(ch, state.extendEnd) : "nearer";
+  setStatus(`extend: the ${word} end (ringed) grows to your next click \u2014 `
+    + "pick the other end's point to swap ends; click this line's body for "
+    + "a spur; Esc cancels", "busy");
   draw();
 };
 function cancelExtend() {
   state.tool = null;
   state.extendAnchor = null;
+  state.extendEnd = null;
   state.snapHit = null; state.snapMsg = "";
 }
 
@@ -18380,18 +18421,24 @@ function extendTo(px, py) {
   const dest = hit ? hit.point.slice() : [px, py];
   const ch0 = chainById(state.selected);
   const p0 = ch0.points;
-  const dFirst = Math.hypot(dest[0] - p0[0][0], dest[1] - p0[0][1]);
-  const dLast = Math.hypot(dest[0] - p0[p0.length-1][0], dest[1] - p0[p0.length-1][1]);
-  const add = Math.min(dFirst, dLast);
+  const endIdx = state.extendEnd !== null && state.extendEnd !== undefined
+    ? state.extendEnd : extendEndIndex(ch0, dest);
+  const atFirst = endIdx === 0;
+  const end = atFirst ? p0[0] : p0[p0.length - 1];
+  const add = Math.hypot(dest[0] - end[0], dest[1] - end[1]);
   captureUndo(`extend \u2014 ${fmtQty(add)}`,
     [state.selected, hit ? hit.chain_id : null]);
   const ch = materialize(ch0);
   const pts = ch.points;
-  if (dFirst < dLast) pts.unshift(dest); else pts.push(dest);
+  if (atFirst) pts.unshift(dest); else pts.push(dest);
   ch.length_pt += add;
   const w = hit ? snapWeld(hit) : null;
   state.selected = ch.chain_id;
   cancelExtend();
+  // the SAME end stays the one that grows next: E, click, E, click walks
+  // one end along the sheet instead of flipping to whichever is nearer
+  state.selPt = atFirst ? 0 : pts.length - 1;
+  state.clickPt = dest.slice();
   updateSelBar(ch);
   afterEdit(w
     ? `chain ${ch.chain_id} +${fmtQty(add)} to reach the connection \u2014 `
