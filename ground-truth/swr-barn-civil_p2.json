@@ -1,0 +1,50 @@
+{
+  "sheet": "SWR_Barn_Residence_-_Civil_4.7.26.pdf",
+  "page_index": 2,
+  "printed_page": "C3.0 (page 3 of 15)",
+  "feature": "site earthwork and limits rows (blank run with the sheet's limit of disturbance and an 8 in topsoil strip) against the client's own bid lines",
+  "source": "CLIENT-ASSERTED, not a CAD truth and not human-confirmed against the drawing: Beaumont Excavating Estimate #853 (dated 4/29/2026, SWR Barn Residence, 3 pages), the client's priced bid for this set; plus his on-screen limits markup of C3.0 read from the 2026-09-15 recording (142,760.6 SF). His quantities were produced by hand from the whole set, so a line here can draw on sheets other than C3.0 - each row says which. Ours: CORE engine at commit 77b7ce9 (engine_sig c41c8cd6), scale 1 inch = 30 ft (printed caption, matches the drawn bar), headed run 2026-09-16 recorded in out/verify/2026-09-16/c30-recon/.",
+  "convention": "Beaumont's own (call 2026-09-15, 05:48-06:27 and 28:00-31:17): the limit-of-disturbance line gives the silt fence LF, the Clear & Grub SF and the strip area; strip depth comes from the soils report; his Site Fill is figured to the proposed grade with topsoil respread carried on its own lines (Rough Place Topsoil 2,865 CY + Export Topsoil 2,865 CY = the 5,730 CY stripped). Inference, flagged for him: the silt fence runs the DOWNHILL side of the limits only, not the whole ring, which is why his 1,161 LF is about half the ring.",
+  "his_lines_on_this_sheet": [
+    {"item": "Clear & Grub", "his_qty": 224058, "unit": "SF", "ours_qty": 312044, "ours_basis": "the sheet's BG-Limit of disturbance ring, 10 lines stitched, 329 points, 247.8 ft of gaps bridged", "ratio_ours_to_his": 1.39, "note": "his C3.0 screen markup measured 142,760.6 SF; three different areas for one line - the ring, his bid, his markup"},
+    {"item": "Strip Topsoil", "his_qty": 5730, "unit": "CY", "ours_qty": 7705, "ours_basis": "8 in over the ring's 312,044 SF", "ratio_ours_to_his": 1.34, "note": "his 5,730 CY over 224,058 SF is 8.29 in; at 8 in over HIS area we would say 5,532 CY - the strip reconciles once the area does"},
+    {"item": "Silt Fence / Straw Waddles", "his_qty": 1161, "unit": "LF", "ours_qty": 2159, "ours_basis": "the ring's perimeter", "ratio_ours_to_his": 1.86, "note": "about half the ring: downhill side only (inference, ask him)"},
+    {"item": "Site Cut", "his_qty": 5551, "unit": "CY", "ours_qty": 8793, "ours_basis": "existing (9 contours) vs proposed (8 rows) inside the ring, existing lowered 0.67 ft", "ratio_ours_to_his": 1.58, "note": "without the strip 10,131 CY"},
+    {"item": "Site Fill", "his_qty": 17123, "unit": "CY", "ours_qty": 47028, "ours_basis": "same run", "ratio_ours_to_his": 2.75, "note": "without the strip 40,991 CY; 25,372 CY of it is fill deeper than 8 ft over 62,308 SF"},
+    {"item": "Import Structural (net)", "his_qty": 11581, "unit": "CY", "ours_qty": 38235, "ours_basis": "fill - cut", "ratio_ours_to_his": 3.30, "note": "his fill - cut = 11,572, self-consistent with his import line"}
+  ],
+  "his_lines_from_other_sheets_not_scored_here": [
+    {"item": "Perimeter Drain 4in", "his_qty": 3395, "unit": "LF", "note": "C4.3 footer drain family measured 1,449.6 LF on 2026-09-08 (FINDINGS section 5); the structure calculator's Perimeter Drain row reads the drawn outline - not run on the Barn outline yet"},
+    {"item": "Storm Drain dig/install", "his_qty": 1645, "unit": "LF", "note": "C3.0 SE-P-STORM-PIPE family 1,000.45 LF (trench run 2026-09-16); the rest of the storm is on the C4.x drainage sheets"},
+    {"item": "4in Sewer", "his_qty": 270, "unit": "LF", "note": "C2.0 utility sheet, not measured in this run"},
+    {"item": "2in Water", "his_qty": 200, "unit": "LF", "note": "C2.0; note the 10in water main on C3.0 (SE-P-UT-WATER-10'') is a different line"},
+    {"item": "Electric/Phone/TV common trench", "his_qty": 141, "unit": "LF", "note": "C2.0; bid buckets Gas / Electric-Comm exist since f98fa27"},
+    {"item": "Gas Trench", "his_qty": 191, "unit": "LF", "note": "C2.0"},
+    {"item": "Slab Prep", "his_qty": 9237, "unit": "SF", "note": "structural sheets; the structure calculator's Slab Prep row = footprint"},
+    {"item": "Outside Slab Prep", "his_qty": 20342, "unit": "SF", "note": "hardscape; C3.6 / landscaping"},
+    {"item": "Structural Excavation / Backfill / Over-ex", "his_qty": [5234, 7767, 3919], "unit": "CY", "note": "Beaumont's rule is in stCalc since 92f2d84; needs the Barn outline + footing callouts (S1-1.3) to score"}
+  ],
+  "diagnosis": {
+    "highest_confidence_root_cause": "THE DESIGN SURFACE IS ALMOST EMPTY AND ONE OF ITS EIGHT ROWS IS A WATER MAIN. The elevation read assigned a height to 17 contours: 9 existing (6,122 ft of the 51,605 ft of drawn existing contour linework, 11.9%) and 8 proposed (6,981 ft of 37,458 ft, 18.6%). Seven of the eight proposed rows are C-TOPO index contours at a 5 ft interval; the eighth, chain 6152 at z 7720, is the 10 in water main (style 168 SE-P-UT-WATER-10'', 1,756 ft - a quarter of the proposed surface's length) picked up by the radius label read. The 88-chain PROPOSED CONTOUR family (25,028 ft) and the 73-chain PROPOSED 1-FT CONTOURS family (11,337 ft) carry NO elevation. A TIN over eight far-apart index contours plus a pipe interpolates a 4-12 ft fill blanket across the ring: 43,800 of the 47,028 CY of fill sits in cells 4 ft or deeper (over about 150,000 SF), and 28,543 CY (61%) lies more than 25 ft from any proposed contour that has an elevation.",
+    "second": "THE AREA. Our ring (312,044 SF) is 39% larger than his Clear & Grub (224,058 SF) and 2.2x his C3.0 limits markup (142,760.6 SF). The ring is open by 247.8 ft and bridged in 7 places (largest 153 ft); the bridging may enclose ground the drawn limit does not. Strip and fence follow the area.",
+    "third": "THE STRIP TERM. Lowering the existing surface 0.67 ft adds 6,037 CY of fill and takes 1,338 CY of cut (47,028 vs 40,991 fill; 8,793 vs 10,131 cut). His Site Fill carries the topsoil respread on its own lines (Rough Place Topsoil 2,865 CY), so an apples-to-apples fill against his line is closer to our no-strip figure.",
+    "what_would_confirm": [
+      "give the PROPOSED CONTOUR family elevations (label read or typed) and rerun: if the fill drops toward 17,000 CY the first cause is proven",
+      "drop chain 6152 (the water main) from the proposed rows and rerun: measures the pipe's share of the phantom fill",
+      "close the ring by hand on the drawn limit and read the SF: the bridging's share of the 88,000 SF gap",
+      "ask Beaumont which line his 224,058 SF came from (the C3.0 limit, C1.0/C2.0, or a hand outline) and whether the fence is downhill-only"
+    ],
+    "engine_defects_to_file": [
+      "a utility-layer chain (WATER / SEWER / STORM / GAS / ELEC in the layer or label) must never be an elevation-read candidate for a contour surface - chain 6152 is a silent wrong number of the first-writer-wins shape (CLAUDE.md section 5)",
+      "0 of 88 PROPOSED CONTOUR chains and 0 of 73 PROPOSED 1-FT chains got a height on this sheet: the proposed-contour label read is the accuracy ceiling here, not the volume math"
+    ]
+  },
+  "measured_2026_09_16": {
+    "run": {"cut_yd3": 8793.1, "fill_yd3": 47028.3, "net_yd3": 38235.2, "overlap_area_sf": 298704, "ring_area_sf": 312044, "ring_perim_ft": 2159, "ring_gap_ft": 247.8, "strip_in": 8, "strip_yd3": 7704.8, "surface_model": "clamped_ct", "max_cut_ft": 19.33, "max_fill_ft": 15.67},
+    "variants": {"no_strip": {"cut": 10130.9, "fill": 40990.7}, "no_limit": {"cut": 13690.7, "fill": 49409.8, "area_sf": 317632}, "no_limit_no_strip": {"cut": 15315.4, "fill": 43191.8}},
+    "fill_by_depth_band_ft": {"0-1": 2072, "1-2": 108, "2-4": 1049, "4-8": 18427, "8-12": 22270, "12+": 3102},
+    "fill_by_distance_to_a_proposed_contour_with_z_ft": {"0-25": 18486, "25-50": 12799, "50-100": 13946, "100-200": 1798},
+    "elevation_coverage": {"existing_rows": 9, "existing_ft_with_z": 6122, "existing_ft_drawn": 51605, "proposed_rows": 8, "proposed_ft_with_z": 6981, "proposed_ft_drawn": 37458, "proposed_row_that_is_a_water_main": {"chain_id": 6152, "style_id": 168, "layer": "SE-P-UT-WATER-10''", "z": 7720, "length_ft": 1756}}
+  },
+  "status": "DIAGNOSIS ONLY (Wave 1 #8) - no engine change made for this record; the two defects above are filed as open"
+}
