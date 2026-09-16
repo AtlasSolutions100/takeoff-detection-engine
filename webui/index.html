@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=94">
+<link rel="stylesheet" href="style.css?v=95">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -626,6 +626,15 @@
           <button id="ewStrip" class="mini" title="Topsoil comes off first; thickness is from the soils report, not the plans">Strip topsoil</button>
           <button id="ewAddEx" class="mini">+ add layer</button></div>
         <div id="ewExLayers" class="ew-layer-rows"></div>
+        <div class="ew-place" id="ewPlace" title="Beaumont's rule (bid sheet line 12): topsoil goes back 6-8 in deep over the green area - the limit of work less the building footprints and the paving. What was stripped and not placed exports; placing more than was stripped imports. Blank = the respread % rule.">
+          <span>Rough place topsoil</span>
+          <input id="ewPlaceDepth" type="number" min="0" max="24" step="1" placeholder="0">
+          <span>in deep over the limit less</span>
+          <input id="ewPlaceLess" type="number" min="0" step="100" placeholder="0">
+          <span>SF of footprints &amp; paving</span>
+          <button id="ewPlaceUse" class="mini" hidden>use 0 SF</button>
+          <div class="ew-meta" id="ewPlaceNote"></div>
+        </div>
         <div class="ew-layers-head"><span>Proposed layers (fill stack)</span>
           <button id="ewAddPr" class="mini" title="What gets built on the proposed side (base, paving): the dig stops this much below the finish grade drawn">+ add layer</button></div>
         <div id="ewPrLayers" class="ew-layer-rows"></div>
@@ -1286,6 +1295,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=189"></script>
+<script src="app.js?v=190"></script>
 </body>
 </html>

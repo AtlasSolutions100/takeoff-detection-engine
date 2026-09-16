@@ -5001,6 +5001,8 @@ class EarthworkBody(BaseModel):
     # (where both surfaces are defined) - override with the clear & grub
     # area when the strip extends beyond the graded region.
     strip_area_sf: float | None = None
+    place_depth_in: float | None = None     # Rough Place Topsoil: depth over the green area (Beaumont)
+    place_less_sf: float | None = None      # footprints + paving taken off the limit of work
     # --- material balance (F87 B7) -------------------------------------
     # Each existing_layers row may also carry {reuse_pct, respread_pct,
     # destination}: what share of that removal is reused as structural
@@ -5750,7 +5752,8 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
         cut_reuse_pct=body.cut_reuse_pct,
         export_factor=body.export_factor,
         import_factor=body.import_factor,
-        cut_area_sf=result.get("area_sf") or area, layer_area_sf=area)
+        cut_area_sf=result.get("area_sf") or area, layer_area_sf=area,
+        place_depth_in=body.place_depth_in, place_less_sf=body.place_less_sf)
     # The scale this volume was computed at. Since 2026-08-23 the route
     # honours a scale the reviewer typed, which means the answer can now
     # depend on a number they are free to change afterwards - and a cubic

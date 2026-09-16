@@ -1,0 +1,138 @@
+{
+ "errors": [],
+ "needed_detect": false,
+ "appJs": "v=190",
+ "before": {
+  "layers": [
+   [
+    "Topsoil",
+    8,
+    null
+   ]
+  ],
+  "depth": "6",
+  "less": "8110",
+  "use": "use 8,110 SF",
+  "note": "with a depth: Rough Place Topsoil = (strip area \u2212 this SF) \u00d7 depth; what was stripped and not placed exports, a shortfall imports \u2014 press Calculate",
+  "areaSf": null,
+  "bound": false
+ },
+ "typed": {
+  "depth": 6,
+  "less": 8110,
+  "lessField": "8110",
+  "note": "with a depth: Rough Place Topsoil = (strip area \u2212 this SF) \u00d7 depth; what was stripped and not placed exports, a shortfall imports \u2014 press Calculate",
+  "useTitle": "8,110 SF of structure outlines on this sheet + 0 SF of zones named like paving"
+ },
+ "rect_e1": {
+  "place": [
+   145,
+   359.984375,
+   345,
+   114
+  ]
+ },
+ "balance": {
+  "rough": {
+   "depth_in": 6,
+   "base_sf": 175444,
+   "less_sf": 8110,
+   "green_sf": 167334,
+   "placed_yd3": 3098.8,
+   "stripped_yd3": 4332,
+   "rule": "green area x depth (Beaumont, bid sheet line 12)"
+  },
+  "rows": [
+   [
+    "Export Topsoil",
+    1233.2,
+    "CY",
+    "export",
+    "4,332.0 CY stripped - 3,098.8 CY rough placed at 6 in"
+   ],
+   [
+    "Rough Place Topsoil",
+    3098.8,
+    "CY",
+    "respread",
+    "175,444.0 SF strip area - 8,110.0 SF footprints & paving = 167,334.0 SF x 6 in"
+   ],
+   [
+    "Import Structural",
+    8066.8,
+    "CY",
+    "import",
+    "fill 14,400.8 CY - reused 6,334.0 CY"
+   ]
+  ],
+  "respread_total": 3098.8,
+  "export_total": 1233.2,
+  "layers": [
+   [
+    "Topsoil",
+    4332
+   ]
+  ],
+  "area": 175444,
+  "shown": [
+   "Export Topsoil4,332 CY stripped - 3,099 CY rough placed at 6 in \u00b7 over 175,444 SF (layer area) \u00b7 on site1,233 CY",
+   "Rough Place Topsoil175,444.0 SF strip area - 8,110.0 SF footprints & paving = 167,334.0 SF x 6 in \u00b7 over 167,334 SF (limit of work less footprints and paving) \u00b7 on site3,099 CY",
+   "Import Structuralfill 14,401 CY - reused 6,334 CY \u00b7 over 175,444 SF (cut/fill area) \u00b7 on site8,067 CY"
+  ]
+ },
+ "rect_e2": {
+  "bal": [
+   145,
+   278.703125,
+   345,
+   276.578125
+  ]
+ },
+ "items": [
+  [
+   "Strip Topsoil",
+   4332,
+   "CY"
+  ],
+  [
+   "Export Topsoil",
+   1233,
+   "CY"
+  ],
+  [
+   "Rough Place Topsoil",
+   3099,
+   "CY"
+  ]
+ ],
+ "bid_lines": [
+  [
+   "3. Strip Topsoil",
+   "4.5k CY \u00b7 2 rows"
+  ],
+  [
+   "12. Rough Place Topsoil",
+   "3.1k CY \u00b7 1 row"
+  ],
+  [
+   "Not on the bid sheet",
+   "68 rows no line names / 166.4k ft \u00b7 9.4k CY \u2014 add a word to a line in Settings, or leave them out on purpose"
+  ]
+ ],
+ "rect_e3": {
+  "line12": [
+   147,
+   403.28125,
+   331,
+   28
+  ]
+ },
+ "after_reload": {
+  "error": "Page.wait_for_function: Timeout 120000ms exceeded."
+ },
+ "persist": {
+  "placeDepthIn": 6,
+  "placeLessSf": 8110,
+  "added": true
+ }
+}

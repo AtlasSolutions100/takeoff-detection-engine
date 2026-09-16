@@ -983,8 +983,21 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
                      export_factor: float = 1.0,
                      import_factor: float = 1.0,
                      cut_area_sf: float | None = None,
-                     layer_area_sf: float | None = None) -> dict:
+                     layer_area_sf: float | None = None,
+                     place_depth_in: float | None = None,
+                     place_less_sf: float | None = None) -> dict:
     """Split the computed volumes into export / reuse / import.
+
+    ROUGH PLACE TOPSOIL, Beaumont's rule (bid sheet line 12, his notes
+    2026-09-15): topsoil goes back `place_depth_in` deep (6-8 in on the
+    printed sheet, 1 ft in his notes - the depth is his to type) over the
+    GREEN AREA = the limit of work less `place_less_sf` (building
+    footprints and paving). With a depth given, the Topsoil layer's
+    percent-based respread row is replaced by this one; what was stripped
+    and not placed exports ("Export Topsoil" = stripped - placed) and
+    placing more than was stripped imports ("Import Topsoil"). Estimate
+    #853: Strip 5,730 CY, Rough Place 2,865 CY, Export Topsoil 2,865 CY.
+    Without a depth, nothing here changes.
 
         reuse_pool  = cut x cut_reuse%  +  SUM(layer x layer.reuse%)
         fill_demand = fill
@@ -1075,6 +1088,24 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
 
     cut_area = float(cut_area_sf) if cut_area_sf else None
     lay_area = float(layer_area_sf) if layer_area_sf else None
+    # Beaumont's rough-place rule: green area x depth
+    try:
+        depth_in = float(place_depth_in) if place_depth_in not in (None, "") else None
+    except (TypeError, ValueError):
+        depth_in = None
+    if depth_in is not None and depth_in <= 0:
+        depth_in = None
+    try:
+        less_sf = max(float(place_less_sf or 0.0), 0.0)
+    except (TypeError, ValueError):
+        less_sf = 0.0
+    base_sf = lay_area or cut_area or 0.0
+    rough = None
+    if depth_in is not None and base_sf > 0:
+        green_sf = max(base_sf - less_sf, 0.0)
+        rough = {"depth_in": depth_in, "base_sf": r1(base_sf), "less_sf": r1(less_sf),
+                 "green_sf": r1(green_sf), "placed_yd3": r1(green_sf * (depth_in / 12.0) / 27.0),
+                 "stripped_yd3": 0.0, "rule": "green area x depth (Beaumont, bid sheet line 12)"}
     rows = []
     for rm in removals:
         # "Export Topsoil" and "Rough Place Topsoil" are #853's own line
@@ -1085,6 +1116,23 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
         # any offered share the fill did not actually need
         spare = r1(rm["offer_yd3"] - rm["used_yd3"])
         base = r1(rm["volume_yd3"] * rm["export_pct"] / 100.0)
+        if rough is not None and "TOPSOIL" in str(rm["name"]).upper():
+            # the depth rule owns this layer: placed by area, the rest exports,
+            # a shortfall imports - the percent rows below do not apply
+            rough["stripped_yd3"] = r1(rough["stripped_yd3"] + rm["volume_yd3"])
+            left_over = r1(rm["volume_yd3"] - rm["used_yd3"] - rough["placed_yd3"])
+            if left_over > 0:
+                rows.append({
+                    "label": f'Export {rm["name"]}'.strip(),
+                    "qty": r1(left_over * ef), "unit": _BALANCE_UNIT, "kind": "export",
+                    "basis": f'{r1(rm["volume_yd3"]):,} CY stripped - '
+                             f'{rough["placed_yd3"]:,} CY rough placed at {depth_in:g} in'
+                             + (f' - {r1(rm["used_yd3"]):,} CY reused as fill' if rm["used_yd3"] > 0 else '')
+                             + (f' x {ef:g}' if ef != 1.0 else ''),
+                    "area_sf": lay_area, "area_source": "layer area",
+                    "destination": rm["destination"],
+                })
+            continue
         if base + spare > 0:
             q = r1((base + spare) * ef)
             if q > 0:
@@ -1110,6 +1158,25 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
                     "area_sf": lay_area, "area_source": "layer area",
                     "destination": rm["destination"],
                 })
+    if rough is not None:
+        rows.append({
+            "label": "Rough Place Topsoil", "qty": rough["placed_yd3"], "unit": _BALANCE_UNIT,
+            "kind": "respread",
+            "basis": f'{rough["base_sf"]:,} SF strip area'
+                     + (f' - {rough["less_sf"]:,} SF footprints & paving' if rough["less_sf"] > 0 else '')
+                     + f' = {rough["green_sf"]:,} SF x {depth_in:g} in',
+            "area_sf": rough["green_sf"], "area_source": "limit of work less footprints and paving",
+            "destination": "on site",
+        })
+        short = r1(rough["placed_yd3"] - rough["stripped_yd3"])
+        if short > 0:
+            rows.append({
+                "label": "Import Topsoil", "qty": r1(short * imf), "unit": _BALANCE_UNIT, "kind": "import",
+                "basis": f'{rough["placed_yd3"]:,} CY rough placed - {rough["stripped_yd3"]:,} CY stripped'
+                         + (f' x {imf:g}' if imf != 1.0 else ''),
+                "area_sf": rough["green_sf"], "area_source": "limit of work less footprints and paving",
+                "destination": "on site",
+            })
     if cut_export_r > 0:
         # PROVISIONAL NAME - not Beaumont's. #853's nearest line is
         # "Allowances- Export rocks and boulders to lower field". Open
@@ -1154,6 +1221,7 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
         "cut_reuse_pct": cut_reuse,
         "export_factor": ef, "import_factor": imf,
         "cut_area_sf": cut_area, "layer_area_sf": lay_area,
+        "rough_place": rough,
         "rows": rows,
         # every volume here is in-place yards between the two surfaces; see
         # the module comment for why no swell/compaction factor is applied.

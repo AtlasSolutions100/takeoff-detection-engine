@@ -7259,6 +7259,8 @@ function calcStatePayload() {
       spotSide: state.ew.spotSide,
       spotDatum: calcNum(state.ew.spotDatum),
       areaSf: calcNum(state.ew.areaSf),
+      placeDepthIn: calcNum(state.ew.placeDepthIn),
+      placeLessSf: calcNum(state.ew.placeLessSf),
       added: !!state.ew.added,
     };
     // Picked/stitched boundary: the SEED chain, not the ring - geometry
@@ -7525,6 +7527,8 @@ function ewApplySaved() {
     if (sv.spotSide === "existing" || sv.spotSide === "proposed") state.ew.spotSide = sv.spotSide;
     if (calcNum(sv.spotDatum) !== null) state.ew.spotDatum = sv.spotDatum;
     if (calcNum(sv.areaSf) !== null && sv.areaSf > 0) state.ew.areaSf = sv.areaSf;
+    if (calcNum(sv.placeDepthIn) !== null && sv.placeDepthIn > 0) state.ew.placeDepthIn = sv.placeDepthIn;
+    if (calcNum(sv.placeLessSf) !== null && sv.placeLessSf >= 0) state.ew.placeLessSf = sv.placeLessSf;
     state.ew.added = !!sv.added;
   }
   const bd = saved.ew_bound;
@@ -9768,7 +9772,7 @@ const BID_RULES = [
   //    are matched exactly rather than by keyword - and BEFORE everything
   //    else, so "Export Asphalt" stays earthwork rather than paving.
   { bucket: "Earthwork",
-    re: /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|(Cut|Fill) \(earthwork\))/ },
+    re: /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|Import Topsoil$|(Cut|Fill) \(earthwork\))/ },
   { bucket: "Earthwork",
     tokens: ["MASS EXCAVATION", "STRUCTURE EXCAVATION",
              "STRUCTURE BACKFILL"] },
@@ -12242,6 +12246,8 @@ async function ewFetchSuggest(gen) {
       spotSide: "proposed",
       spotDatum: null,
       areaSf: null,
+      placeDepthIn: null,   // Rough Place Topsoil: depth over the green area (Beaumont)
+      placeLessSf: null,    // footprints + paving taken off the strip area
       map: null,   // {img, bbox} once "Show cut/fill map" is on
       // Consent, not a cache. Calculating is LOOKING at the number;
       // putting it in the priced takeoff is a decision the estimator makes
@@ -12929,6 +12935,48 @@ function renderEwLayers() {
       if (side === "existing") box.appendChild(ewDispRow(lay, i));
     });
   }
+  ewPlaceSync();
+}
+
+// ---- Rough Place Topsoil by area x depth (Wave 2 item 6; Beaumont's bid sheet line 12) ----
+// Topsoil goes back 6-8 in deep over the GREEN AREA - the limit of work
+// less the building footprints and the paving. With a depth typed the
+// server's material balance places by area (Rough Place Topsoil), exports
+// what was stripped and not placed, imports a shortfall; blank = the
+// percent-based respread as before. The subtraction is typed; the
+// structures drawn on this sheet and the zones named like paving are
+// offered as the number, never assumed.
+function ewPlaceLessSuggest() {
+  let fp = 0, pav = 0;
+  try {
+    for (const it of ((state.st && state.st.items) || [])) fp += Number(stCalc(it).area_sf) || 0;
+  } catch (e) { fp = 0; }
+  for (const z of (state.gzones || [])) {
+    if (!/DRIVE|PAV|PATIO|WALK|PARK|SLAB|GRAVEL/i.test(z.name || "")) continue;
+    const j = z.result;
+    pav += Number((j && (j.zone_area_sf || j.area_sf)) || 0);
+  }
+  return { fp: Math.round(fp), pav: Math.round(pav) };
+}
+function ewPlaceSync() {
+  const dIn = $("ewPlaceDepth"), lIn = $("ewPlaceLess"), use = $("ewPlaceUse"), note = $("ewPlaceNote");
+  if (!dIn || !state.ew) return;
+  if (document.activeElement !== dIn)
+    dIn.value = isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0 ? state.ew.placeDepthIn : "";
+  if (document.activeElement !== lIn)
+    lIn.value = isFinite(state.ew.placeLessSf) && state.ew.placeLessSf > 0 ? state.ew.placeLessSf : "";
+  dIn.oninput = () => { const v = parseFloat(dIn.value); state.ew.placeDepthIn = isFinite(v) && v > 0 ? v : null; calcStateDirty(); ewPlaceSync(); };
+  lIn.oninput = () => { const v = parseFloat(lIn.value); state.ew.placeLessSf = isFinite(v) && v >= 0 ? v : null; calcStateDirty(); ewPlaceSync(); };
+  const s = ewPlaceLessSuggest();
+  const tot = s.fp + s.pav;
+  use.hidden = !(tot > 0);
+  use.textContent = `use ${tot.toLocaleString()} SF`;
+  use.title = `${s.fp.toLocaleString()} SF of structure outlines on this sheet + ${s.pav.toLocaleString()} SF of zones named like paving`;
+  use.onclick = () => { state.ew.placeLessSf = tot; calcStateDirty(); ewPlaceSync(); };
+  const on = isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0;
+  note.textContent = on
+    ? "with a depth: Rough Place Topsoil = (strip area \u2212 this SF) \u00d7 depth; what was stripped and not placed exports, a shortfall imports \u2014 press Calculate"
+    : "blank: the topsoil layer's respread % rule as before";
 }
 
 // ---------- material balance: where each removal goes ----------
@@ -13065,6 +13113,10 @@ function ewBody() {
       const key = state.ew.spotSide === "existing" ? "existing_points" : "proposed_points";
       const o = pts.length ? { [key]: pts } : {};
       if (isFinite(state.ew.areaSf) && state.ew.areaSf > 0) o.strip_area_sf = state.ew.areaSf;
+      if (isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0) {
+        o.place_depth_in = state.ew.placeDepthIn;
+        o.place_less_sf = isFinite(state.ew.placeLessSf) && state.ew.placeLessSf > 0 ? state.ew.placeLessSf : 0;
+      }
       return o;
     })(),
   };
@@ -13254,7 +13306,7 @@ function ewItemLabel(layer) {
 // every earthwork row is replaced on each Calculate, so this has to match
 // the material-balance rows too. "Rough Place " does NOT start with
 // "Place ", so it needs its own alternative.
-const EW_ITEM_RE = /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|(Cut|Fill) \(earthwork\))/;
+const EW_ITEM_RE = /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|Import Topsoil$|(Cut|Fill) \(earthwork\))/;
 
 // THE PANEL AND THE SELECTION CHIP MUST NOT CONTRADICT EACH OTHER.
 //

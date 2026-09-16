@@ -830,6 +830,11 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .wl-item:hover { color: inherit; }
 .wl-item.oos { text-decoration: line-through; }
 .ps-row .wl-line { flex-wrap: wrap; }
+/* the earthwork panel's rough-place line (area x depth) */
+.ew-place { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 4px; font-size: var(--t-fs-xs); }
+.ew-place input[type=number] { width: 64px; padding: 2px 6px; font-size: var(--t-fs-xs); }
+.ew-place #ewPlaceLess { width: 84px; }
+.ew-place .ew-meta { flex-basis: 100%; }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }
