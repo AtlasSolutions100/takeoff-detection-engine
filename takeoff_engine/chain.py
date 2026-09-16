@@ -1033,8 +1033,9 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
         cid += 1
 
     # structural grid lines (centerline dashes anchored at lettered grid
-    # bubbles) are annotation, not takeoff linework
-    _grid_annotation(chains, units)
+    # bubbles) are annotation, not takeoff linework. Words: a bubble whose
+    # letter is live page text (Ellis S1.02) has no vector glyph inside.
+    _grid_annotation(chains, units, words)
 
     # exploded-glyph labels drawn inline (no text layer to bridge across)
     _mark_glyph_text_chains(chains, glyph_blobs)
@@ -1510,13 +1511,22 @@ def _demote_frame_lines(chains: list) -> None:
         c.dash_signature = label
 
 
-def _grid_annotation(chains: list, units: list) -> None:
+def _grid_annotation(chains: list, units: list, words: list | None = None) -> None:
     """Structural grid lines -> annotation.
 
     A grid axis is a long straight dashed centerline that TERMINATES at a
     lettered grid bubble (small perfect circle with a glyph inside). Grid
     ink was landing in wall-family style pools and getting boxed as
     objects (Belle Structural p2, grid D boxed as a shear wall).
+
+    "Lettered" is either vector glyph ink inside the circle (Belle: the
+    letters are outlined geometry) OR a short page-text word centred inside
+    it (Ellis Foundation S1.02, 2026-09-16: the 1-15 / A-O labels are live
+    text, so no vector ink sat inside any bubble, glyph_bubbles came back
+    empty, the pass returned early and 13,368 pt of dashed grid axes -
+    27.9% of the sheet's takeoff length - stayed in the takeoff as walls).
+    `words` are the page's (x0, y0, x1, y1, text) tuples; None keeps the
+    vector-only behaviour.
 
     Measured on Belle Structural p2 (2026-08-19): bubbles are perfect
     circles (len/(pi*d) = 1.00) of uniform d 26.9-28.7 pt, >=40 per
@@ -1572,19 +1582,40 @@ def _grid_annotation(chains: list, units: list) -> None:
         # to begin with - measured on Belle p2, bubble D failed at >=2.
         if len(mtree.query_ball_point(c, r * 0.8)) >= 1:
             glyph_bubbles.append((c, r))
+    # live-text letters: a 1-3 character alphanumeric word whose centre
+    # sits inside the circle (0.8 r, the same reach as the ink test). Longer
+    # words are callout text passing over a circle, not a grid letter.
+    if words:
+        short = [w for w in words
+                 if 0 < len(str(w[4]).strip()) <= 3 and str(w[4]).strip().isalnum()]
+        if short:
+            wc = np.array([[(w[0] + w[2]) / 2.0, (w[1] + w[3]) / 2.0] for w in short], float)
+            have = {(round(float(c[0]), 1), round(float(c[1]), 1)) for c, _ in glyph_bubbles}
+            for c, r in bubbles:
+                key = (round(float(c[0]), 1), round(float(c[1]), 1))
+                if key in have:
+                    continue
+                if bool((np.hypot(wc[:, 0] - c[0], wc[:, 1] - c[1]) <= 0.8 * r).any()):
+                    glyph_bubbles.append((c, r))
     if len(glyph_bubbles) < 3:
         return
-    # endpoints of ALL dash chains, for the terminal (through-line) test
-    ends, dirs = [], []
+    # endpoints of ALL dash chains, for the terminal (through-line) test.
+    # `owners` remembers whose endpoint each one is: the tested chain's OWN
+    # far-side endpoint must not count as "something continues beyond" -
+    # with r = 8 pt bubbles (Ellis S1.02) it sits 2 r + 20 = 36 pt from the
+    # probe point, inside the 45 pt ball and pointing the right way, so no
+    # axis was ever terminal there (Belle's r = 14 put it at 48 pt, outside).
+    ends, dirs, owners = [], [], []
     for c in dash_chains:
         for e, inner in ((c.pts[0], c.pts[1]), (c.pts[-1], c.pts[-2])):
             v = np.asarray(e, float) - np.asarray(inner, float)
             n = float(np.hypot(*v))
             ends.append(np.asarray(e, float))
             dirs.append(v / n if n > 1e-9 else np.array([0.0, 0.0]))
+            owners.append(c)
     etree = cKDTree(np.array(ends))
 
-    def lateral_ok(c):
+    def lateral_ok(c, tol=3.0):
         a, b = c.pts[0], c.pts[-1]
         v = np.asarray(b, float) - np.asarray(a, float)
         n = float(np.hypot(*v))
@@ -1593,13 +1624,24 @@ def _grid_annotation(chains: list, units: list) -> None:
         u_ = v / n
         rel = c.pts - a
         lat = np.abs(rel[:, 0] * u_[1] - rel[:, 1] * u_[0])
-        return u_ if float(np.percentile(lat, 90)) <= 3.0 else None
+        return u_ if float(np.percentile(lat, 90)) <= tol else None
 
     axes = []
     for c in dash_chains:
         u_ = lateral_ok(c)
+        # A JOGGED AXIS: Ellis S1.02 grid 1 steps 8 pt sideways on its way
+        # down the sheet (lateral 90th percentile 7.3 pt), so it failed the
+        # 3 pt gate and 583 pt of it stayed in the takeoff as a wall. Up to
+        # 12 pt is allowed ONLY when BOTH ends terminate at lettered
+        # bubbles: a wall never ends inside two grid bubbles, while a
+        # one-ended anchor keeps the strict rule (a wall can end at one).
+        need_both = False
         if u_ is None:
-            continue
+            u_ = lateral_ok(c, 12.0)
+            need_both = True
+            if u_ is None:
+                continue
+        hits = []
         for e, outd in ((c.pts[0], -u_), (c.pts[-1], u_)):
             for (bc, br) in glyph_bubbles:
                 tv = bc - e
@@ -1612,17 +1654,21 @@ def _grid_annotation(chains: list, units: list) -> None:
                 beyond = bc + outd * (br + 20.0)
                 through = False
                 for k in etree.query_ball_point(beyond, 45.0):
+                    if owners[k] is c:
+                        continue
                     if abs(float(np.dot(dirs[k], outd))) > 0.9:
                         through = True
                         break
                 if through:
                     continue
-                axes.append((bc, outd, c.color, _weight_class(c.width)))
-                c.klass = "annotation"
-                c.dash_signature = "grid"
+                hits.append((bc, outd))
                 break
-            if c.klass == "annotation":
-                break
+        if not hits or (need_both and len(hits) < 2):
+            continue
+        for bc, outd in hits:
+            axes.append((bc, outd, c.color, _weight_class(c.width)))
+        c.klass = "annotation"
+        c.dash_signature = "grid"
     # bubbles that never anchor a terminal chain still mark grid axes:
     # mid-sheet bubbles sit ON their line (it continues both ways), which
     # the terminal test rightly refuses. The grid-vs-manhole discriminator

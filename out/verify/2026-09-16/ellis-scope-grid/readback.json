@@ -1,0 +1,138 @@
+{
+ "errors": [
+  "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ],
+ "reused_job": null,
+ "job": "41cff518a862",
+ "appJs": "v=182",
+ "styles": {
+  "n": 21,
+  "on": 13,
+  "len_on_pt": 33741.59999999999,
+  "len_all_pt": 51777.39999999999,
+  "anno": 5,
+  "anno_len": 17675.299999999996,
+  "anno_on": 0,
+  "grid": [
+   [
+    19,
+    "annotation",
+    "grid",
+    13501,
+    33,
+    false,
+    "annotation grid"
+   ],
+   [
+    13,
+    "annotation",
+    "grid",
+    2689,
+    52,
+    false,
+    "annotation grid"
+   ],
+   [
+    15,
+    "annotation",
+    "grid",
+    155,
+    3,
+    false,
+    "annotation grid"
+   ]
+  ],
+  "scale": 8
+ },
+ "status_bar": "done",
+ "big": "3.7k ft",
+ "scope_bar": {
+  "hidden": false,
+  "text": "Whose scope is this?\u00d7Earthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkOpenings - glazed (windows / storefront)Openings - doors, hollow metal / woodNothing declared, so nothing is filtered. All 21 line types on this sheet are listed, and th",
+  "controls": [
+   "BUTTON:\u00d7",
+   "BUTTON:Earthwork & Grading",
+   "BUTTON:Wet Utilities",
+   "BUTTON:Dry Utilities",
+   "BUTTON:Paving & Concrete",
+   "BUTTON:Footing & Foundation",
+   "BUTTON:Structures",
+   "BUTTON:Fencing & Sitework",
+   "BUTTON:Openings - glazed (windows / stor",
+   "BUTTON:Openings - doors, hollow metal / "
+  ]
+ },
+ "scope_click": "clicked BUTTON",
+ "scope_after": {
+  "rec": {
+   "trades": [
+    "Footing & Foundation"
+   ],
+   "showAside": false,
+   "from": "document"
+  },
+  "verdicts": {
+   "unknown": 21
+  },
+  "bar": "Counting forshow everything\u00d7Earthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkOpenings - glazed (windows / storefront)Openings - doors, holl"
+ },
+ "itemized": [
+  [
+   "solid solidEarthwork & GradingWet Utilit",
+   "Footing & Foundation"
+  ],
+  [
+   "dash1 d4.2 g2.1Earthwork & GradingWet Ut",
+   "Footing & Foundation"
+  ],
+  [
+   "dash2 d4.1 d16.5 g24.7Earthwork & Gradin",
+   "Footing & Foundation"
+  ],
+  [
+   "dash2 d2.3 d4.1 g2.1Earthwork & GradingW",
+   "Footing & Foundation"
+  ],
+  [
+   "dash1 d3.8 g55.6Earthwork & GradingWet U",
+   "Footing & Foundation"
+  ],
+  [
+   "dash1 miscEarthwork & GradingWet Utiliti",
+   "Footing & Foundation"
+  ],
+  [
+   "dash2 miscEarthwork & GradingWet Utiliti",
+   "Footing & Foundation"
+  ],
+  [
+   "dash2 d4.1 d17.0 g2.1Earthwork & Grading",
+   "Footing & Foundation"
+  ],
+  [
+   "dash1 d4.2 g39.2Earthwork & GradingWet U",
+   "Footing & Foundation"
+  ],
+  [
+   "dash2 d4.1 d39.0 g2.1Earthwork & Grading",
+   "Footing & Foundation"
+  ]
+ ],
+ "trade_counts": {
+  "Footing & Foundation": 10
+ },
+ "rects": {
+  "bar": [
+   145,
+   -400.234375,
+   345,
+   299.28125
+  ],
+  "first_row": [
+   149,
+   453.640625,
+   140,
+   19
+  ]
+ }
+}

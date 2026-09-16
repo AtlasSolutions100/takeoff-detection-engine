@@ -8638,7 +8638,22 @@ function tradeFor(label, layers) {
           "JOIST", "TRUSS", "MOMENT FRAME")) return "Structures";
   if (has("FENCE", "WALL", "RAIL", "GATE", "BARRIER", "LANDSCAP", "TREE",
           "SILT", "PROPERTY", "EASEMENT", "SETBACK")) return "Fencing & Sitework";
-  return "General";
+  // THE DECLARED SCOPE FILES WHAT NOTHING ELSE NAMES (Jeff Ellis, ECI
+  // Foundations, 2026-08-24 / plan J15). A foundation sheet with no CAD
+  // layers and no legend leaves every wall row nameless; the ladder above
+  // filed them all as General, so his export said "General" on his own
+  // work. When the operator has declared exactly ONE trade for this
+  // document, an unnamed row they keep ticked is that trade - they said
+  // so. Two declared trades stay General (which one it is, nobody said),
+  // and a row that names another trade above was never here. Read inline
+  // and guarded: a harness that lifts this function alone has no scopeRec,
+  // and that must read as "nothing declared", not throw.
+  let declared = "";
+  try {
+    const t = (scopeRec().trades || []).filter(x => TRADES.includes(x));
+    if (t.length === 1) declared = t[0];
+  } catch (e) {}
+  return declared || "General";
 }
 
 // label -> the CAD layers behind it, which is what tradeFor()'s annotation
