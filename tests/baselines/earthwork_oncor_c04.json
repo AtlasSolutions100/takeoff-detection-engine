@@ -1,7 +1,7 @@
 {
  "_about": "EXACT cut_fill outputs for manifest case 'oncor_c04'. Written by tests/test_earthwork_regress.py --accept oncor_c04; a test run never writes here. Change it only in a commit that says which code change moved which number and why.",
  "compare": "recipe",
- "earthwork_sig": "2e77a49262e2ec24",
+ "earthwork_sig": "187989f23dd53347",
  "earthwork_sig_files": [
   "../provision_demo.py",
   "../server.py",
@@ -34,7 +34,7 @@
  ],
  "earthwork_file_hashes": {
   "../provision_demo.py": "1a96cc2c0b21f70f",
-  "../server.py": "78fb4e3c7d2204a9",
+  "../server.py": "539e477bababa9c4",
   "__init__.py": "1c1bd33bace42bb3",
   "areas.py": "0e2584993c6ba702",
   "batch.py": "39bc6cb7960674c3",
@@ -59,7 +59,7 @@
   "scale_detect.py": "d426a14420133a6c",
   "sweep.py": "7f995d17c54ba7be",
   "text_detect.py": "c8b112dada6b18da",
-  "users.py": "971e4763adce0f94",
+  "users.py": "636e4236fc300419",
   "visibility.py": "c1ce18f1be7d64f4"
  },
  "earthwork_closure": [
@@ -70,7 +70,7 @@
  ],
  "accepted": {
   "tree": "C:\\Users\\kobys\\OneDrive\\Desktop\\past\\P\\Takeoff Automation\\detection-engine",
-  "date": "2026-09-09",
+  "date": "2026-09-16",
   "contours": [
    69,
    34
