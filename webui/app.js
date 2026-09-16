@@ -7298,12 +7298,12 @@ function calcStatePayload() {
         gap_pt: it.gap_pt || 0, depth_ft: it.depth_ft,
         fill_depth_ft: isFinite(+it.fill_depth_ft) && it.fill_depth_ft !== null ? +it.fill_depth_ft : null,
         footing_ft: it.footing_ft, footing_w_ft: it.footing_w_ft, layback_hv: it.layback_hv,
-        wall_in: it.wall_in,
+        wall_in: it.wall_in, datum_ft: Number.isFinite(+it.datum_ft) ? +it.datum_ft : null,
       })),
       seq: st.seq, depth_ft: st.depth_ft,
       fill_depth_ft: isFinite(+st.fill_depth_ft) && st.fill_depth_ft !== null ? +st.fill_depth_ft : null,
       footing_ft: st.footing_ft, footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv,
-      wall_in: st.wall_in,
+      wall_in: st.wall_in, datum_ft: Number.isFinite(+st.datum_ft) ? +st.datum_ft : null,
     };
   } else if (saved.st) out.st = saved.st;
   // WORK AREA boxes (additive key "zones"): plain page-pt rects, keyed to
@@ -7605,6 +7605,7 @@ function stApplySaved() {
         footing_w_ft: calcNum(it.footing_w_ft) !== null ? it.footing_w_ft : 2,
         layback_hv: calcNum(it.layback_hv) !== null ? it.layback_hv : 1,
         wall_in: calcNum(it.wall_in) !== null ? it.wall_in : 8,
+        datum_ft: calcNum(it.datum_ft) !== null ? +it.datum_ft : NaN,
       });
     }
   }
@@ -7615,6 +7616,7 @@ function stApplySaved() {
   if (calcNum(sv.footing_w_ft) !== null) st.footing_w_ft = sv.footing_w_ft;
   if (calcNum(sv.layback_hv) !== null) st.layback_hv = sv.layback_hv;
   if (calcNum(sv.wall_in) !== null) st.wall_in = sv.wall_in;
+  if (calcNum(sv.datum_ft) !== null) st.datum_ft = +sv.datum_ft;
   if (st.items.length && stFtPerPt()) {
     stApplyItems();
     if (!$("stPanel").hidden) renderSt();
@@ -21870,7 +21872,7 @@ function stSync() {
   if (!state.st || state.st.result !== state.result) {
     state.st = { result: state.result, items: [], draft: null, drawPts: [], hover: null,
                  hot: null, seq: 1, depth_ft: 8, fill_depth_ft: NaN, footing_ft: 0,
-                 footing_w_ft: 2, layback_hv: 1, wall_in: 8 };
+                 footing_w_ft: 2, layback_hv: 1, wall_in: 8, datum_ft: NaN };
     if (state.tool === "st-pick" || state.tool === "st-draw") state.tool = null;
     $("stPanel").hidden = true;
     $("stResult").textContent = "";
@@ -22042,7 +22044,8 @@ function stPickAt(px, py) {
   const st = stSync();
   st.draft = { name: `Structure ${st.seq}`, pts, source: "line", chain_id: best.chain_id, gap_pt: gap,
                depth_ft: st.depth_ft, fill_depth_ft: st.fill_depth_ft, footing_ft: st.footing_ft,
-               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv, wall_in: st.wall_in };
+               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv, wall_in: st.wall_in,
+               datum_ft: st.datum_ft };
   state.tool = null;
   const c = stCalc(st.draft);
   setStatus(c.area_sf !== null
@@ -22081,7 +22084,8 @@ function stFinishDraw() {
   }
   st.draft = { name: `Structure ${st.seq}`, pts, source: "drawn", chain_id: null, gap_pt: 0,
                depth_ft: st.depth_ft, fill_depth_ft: st.fill_depth_ft, footing_ft: st.footing_ft,
-               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv, wall_in: st.wall_in };
+               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv, wall_in: st.wall_in,
+               datum_ft: st.datum_ft };
   state.tool = null; st.drawPts = []; st.hover = null;
   polySnapClear();
   const c = stCalc(st.draft);
@@ -22218,6 +22222,73 @@ function stMk(tag, cls, text) {
   return el;
 }
 function stFt(v) { return v == null ? "?" : (Math.round(v * 100) / 100) + " ft"; }
+function stCivil(archFt, datumFt) {
+  const v = datumFt + (archFt - 100);
+  return (Math.round(v * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "\u2032";
+}
+function stDatumBlock(st) {
+  const box = stMk("div", "st-datum");
+  const lab = stMk("div", "ew-meta", "Datum: 100\u2032-0\u2033 on the structural sheets equals (civil ft)");
+  const inp = document.createElement("input");
+  inp.type = "number"; inp.step = "0.01"; inp.name = "st-datum_ft"; inp.className = "gz-num";
+  inp.placeholder = "e.g. 7732";
+  inp.value = Number.isFinite(+st.datum_ft) ? String(st.datum_ft) : "";
+  inp.oninput = () => {
+    const v = parseFloat(inp.value);
+    st.datum_ft = Number.isFinite(v) ? v : NaN;
+    if (st.draft && !Number.isFinite(+st.draft.datum_ft)) st.draft.datum_ft = st.datum_ft;
+    calcStateDirty();
+  };
+  inp.onchange = () => renderSt();
+  lab.appendChild(inp);
+  box.appendChild(lab);
+  const f = st.datum;
+  if (!f || f.job !== state.job) {
+    st.datum = { job: state.job, loading: true, data: null, err: null };
+    stFetchDatum();
+    box.appendChild(stMk("div", "ew-meta", "looking for a datum note in this set\u2026"));
+    return box;
+  }
+  if (f.loading) { box.appendChild(stMk("div", "ew-meta", "looking for a datum note in this set\u2026")); return box; }
+  if (f.err) { box.appendChild(stMk("div", "ew-meta", "datum notes: " + f.err)); return box; }
+  const notes = (f.data && f.data.notes) || [];
+  if (!notes.length) {
+    box.appendChild(stMk("div", "ew-meta", "this set prints no datum statement or FFE summary - the civil set usually does ([100'=7732'] on Barn C3.0); type the value here"));
+    return box;
+  }
+  const row = stMk("div", "st-chips");
+  for (const n of notes) {
+    const chip = stMk("button", "mini st-chip");
+    const v = n.value_ft != null ? `${n.value_ft}\u2032` : "no number";
+    chip.textContent = `${n.label || n.kind}: ${v} (page ${n.page + 1})`;
+    chip.title = `printed: ${n.text}` + (n.value_ft == null ? " \u2014 says what the datum is, not what it equals" : "");
+    if (n.value_ft == null) { chip.classList.add("st-chip-guess"); chip.disabled = true; }
+    else chip.onclick = () => {
+      st.datum_ft = +n.value_ft;
+      if (st.draft) st.draft.datum_ft = +n.value_ft;
+      calcStateDirty(); renderSt();
+      setStatus(`datum set: 100\u2032-0\u2033 = ${n.value_ft}\u2032 (${n.label || n.kind}, page ${n.page + 1}) \u2014 footing elevations now read both ways; change it per structure if a building sits on another datum`);
+    };
+    row.appendChild(chip);
+  }
+  box.appendChild(row);
+  return box;
+}
+async function stFetchDatum() {
+  const st = state.st, f = st && st.datum, gen = state.gen;
+  if (!f) return;
+  try {
+    const r = await fetch(`/api/job/${state.job}/datum`);
+    if (!r.ok) throw new Error("failed (" + r.status + ")");
+    const j = await r.json();
+    if (gen !== state.gen || state.st !== st) return;
+    f.loading = false; f.data = j;
+  } catch (e) {
+    if (gen !== state.gen || state.st !== st) return;
+    f.loading = false; f.err = String((e && e.message) || e);
+  }
+  renderSt();
+}
 function stFootingsBlock(st) {
   const box = stMk("div", "st-footings");
   const f = st.footings;
@@ -22239,13 +22310,16 @@ function stFootingsBlock(st) {
   box.appendChild(stMk("div", "ew-meta", "Footing marks printed on this sheet \u2014 click one to set the draft's footing width and depth"
     + (sch.rows ? ` \u00b7 schedule read from page ${(sch.pages || []).map(p => p + 1).join(", ")}`
                 : " \u00b7 no footing schedule found in this set, widths come from the marks' own digits")));
+  // BOF shown both ways once a datum is known: the draft's, else the panel's
+  const dat = (st.draft && Number.isFinite(+st.draft.datum_ft)) ? +st.draft.datum_ft
+            : (Number.isFinite(+st.datum_ft) ? +st.datum_ft : null);
   const row = stMk("div", "st-chips");
   for (const [mark, m] of marks) {
     const s = m.schedule || {};
     const chip = stMk("button", "mini st-chip");
     const dims = s.kind === "spread" && s.length_ft != null ? `${stFt(s.length_ft)} \u00d7 ${stFt(s.width_ft)}` : `${stFt(s.width_ft)} wide`;
     const depth = s.depth_ft != null ? ` \u00d7 ${stFt(s.depth_ft)} deep` : "";
-    const bof = Object.entries(m.bof || {}).map(([z, n]) => `${z}\u2032${n > 1 ? " \u00d7" + n : ""}`).join(", ");
+    const bof = Object.entries(m.bof || {}).map(([z, n]) => `${z}\u2032${dat != null ? ` (${stCivil(+z, dat)} civil)` : ""}${n > 1 ? " \u00d7" + n : ""}`).join(", ");
     chip.textContent = `${mark} \u00d7${m.count} \u00b7 ${dims}${depth}` + (bof ? ` \u00b7 BOF ${bof}` : "");
     chip.title = (s.from === "schedule" ? `from the footing schedule (page ${(s.page || 0) + 1})` : "no schedule row: width from the mark's digits, depth unknown")
       + (s.reinf ? ` \u00b7 ${s.reinf}` : "") + (m.unpaired ? ` \u00b7 ${m.unpaired} with no elevation beside it` : "");
@@ -22317,6 +22391,11 @@ function renderSt() {
   // number always wins, and a mark with no schedule row says its width
   // came from its digits.
   body.appendChild(stFootingsBlock(st));
+  // THE ARCHITECTURAL DATUM (Beaumont, call 2026-09-15: "the arch 100 datum
+  // can differ per building; typed per structure, read only as a
+  // suggestion, never blind"). The set's own [100'=7732'] / FFE SUMMARY /
+  // datum note as chips; the typed value is the only thing that applies.
+  body.appendChild(stDatumBlock(st));
 
   // draft: the outline just taken, with its inputs and live numbers
   const d = st.draft;
@@ -22339,6 +22418,7 @@ function renderSt() {
     const upd = () => {
       st.depth_ft = d.depth_ft; st.fill_depth_ft = d.fill_depth_ft; st.footing_ft = d.footing_ft;
       st.footing_w_ft = d.footing_w_ft; st.layback_hv = d.layback_hv; st.wall_in = d.wall_in;
+      if (Number.isFinite(+d.datum_ft)) st.datum_ft = +d.datum_ft;
       $("stResult").textContent = stResultText(stCalc(d));
       draw();
     };
@@ -22354,6 +22434,8 @@ function renderSt() {
                 stNumInput(d, "layback_hv", "0.25", upd));
     grid.append(mk("div", null, "Wall thickness (in): the radon pipe runs along the inside face of the exterior walls, this far inside the outline"),
                 stNumInput(d, "wall_in", "1", upd));
+    grid.append(mk("div", null, "Datum (civil ft): what 100'-0\u2033 on the structural sheets equals for this building - from the civil set's [100'=...] or FFE summary; blank until you type it"),
+                stNumInput(d, "datum_ft", "0.01", upd));
     box.appendChild(grid);
     const acts = mk("div", "st-draft-acts");
     const discard = mk("button", "mini", "discard outline");
@@ -22392,7 +22474,8 @@ function renderSt() {
              mk("span", null, "ftg below"), stNumInput(it, "footing_ft", "0.5", upd),
              mk("span", null, "ftg width"), stNumInput(it, "footing_w_ft", "0.5", upd),
              mk("span", null, "layback h:v"), stNumInput(it, "layback_hv", "0.25", upd),
-             mk("span", null, "wall in"), stNumInput(it, "wall_in", "1", upd));
+             mk("span", null, "wall in"), stNumInput(it, "wall_in", "1", upd),
+             mk("span", null, "datum"), stNumInput(it, "datum_ft", "0.01", upd));
     row.appendChild(g);
     row.appendChild(mk("div", "ew-meta", c.mass_cy !== null
       ? `mass ${stFmt(stR1(c.mass_cy))} · dig ${stFmt(stR1(c.struct_cy))} · backfill ${stFmt(stR1(c.backfill_cy))} CY`
@@ -22427,7 +22510,8 @@ $("stAdd").onclick = async () => {
       body: JSON.stringify({ structures: [{ name: d.name, points: d.pts, depth_ft: d.depth_ft,
                                             fill_depth_ft: isFinite(+d.fill_depth_ft) && d.fill_depth_ft !== null ? +d.fill_depth_ft : null,
                                             footing_ft: d.footing_ft, footing_w_ft: d.footing_w_ft,
-                                            layback_hv: d.layback_hv, wall_in: d.wall_in }] }),
+                                            layback_hv: d.layback_hv, wall_in: d.wall_in,
+                                            datum_ft: Number.isFinite(+d.datum_ft) ? +d.datum_ft : null }] }),
     });
     if (!r.ok) { $("stResult").textContent += ` · server check failed (${r.status})`; return; }
     const j = await r.json();

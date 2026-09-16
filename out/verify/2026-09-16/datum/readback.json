@@ -1,0 +1,125 @@
+{
+ "errors": [],
+ "appJs": "v=184",
+ "civil_block": {
+  "text": "Datum: 100\u2032-0\u2033 on the structural sheets equals (civil ft)100'-0\" equals: 7732\u2032 (page 3)T.O. FFE: 7735.25\u2032 (page 3)MAIN LEVEL ENTRY: 7733.25\u2032 (page 3)MAIN LEVEL: 7732.25\u2032 (page 3)LOWER LEVEL FFE: 7719.125\u2032 (page 3)",
+  "chips": [
+   [
+    "100'-0\" equals: 7732\u2032 (page 3)",
+    "printed: [100'=7732']",
+    false
+   ],
+   [
+    "T.O. FFE: 7735.25\u2032 (page 3)",
+    "printed: T.O. FFE:7735.25'",
+    false
+   ],
+   [
+    "MAIN LEVEL ENTRY: 7733.25\u2032 (page 3)",
+    "printed: MAIN LEVEL ENTRY:7733.25'",
+    false
+   ],
+   [
+    "MAIN LEVEL: 7732.25\u2032 (page 3)",
+    "printed: MAIN LEVEL:7732.25'",
+    false
+   ],
+   [
+    "LOWER LEVEL FFE: 7719.125\u2032 (page 3)",
+    "printed: LOWER LEVEL FFE: 7719.125'",
+    false
+   ]
+  ],
+  "input": "",
+  "panel": NaN
+ },
+ "rects_c": {
+  "datum": [
+   149,
+   326,
+   337,
+   182
+  ]
+ },
+ "civil_after_click": {
+  "block": {
+   "text": "Datum: 100\u2032-0\u2033 on the structural sheets equals (civil ft)100'-0\" equals: 7732\u2032 (page 3)T.O. FFE: 7735.25\u2032 (page 3)MAIN LEVEL ENTRY: 7733.25\u2032 (page 3)MAIN LEVEL: 7732.25\u2032 (page 3)LOWER LEVEL FFE: 7719.125\u2032 (page 3)",
+   "chips": [
+    [
+     "100'-0\" equals: 7732\u2032 (page 3)",
+     "printed: [100'=7732']",
+     false
+    ],
+    [
+     "T.O. FFE: 7735.25\u2032 (page 3)",
+     "printed: T.O. FFE:7735.25'",
+     false
+    ],
+    [
+     "MAIN LEVEL ENTRY: 7733.25\u2032 (page 3)",
+     "printed: MAIN LEVEL ENTRY:7733.25'",
+     false
+    ],
+    [
+     "MAIN LEVEL: 7732.25\u2032 (page 3)",
+     "printed: MAIN LEVEL:7732.25'",
+     false
+    ],
+    [
+     "LOWER LEVEL FFE: 7719.125\u2032 (page 3)",
+     "printed: LOWER LEVEL FFE: 7719.125'",
+     false
+    ]
+   ],
+   "input": "7732",
+   "panel": 7732
+  },
+  "status": ""
+ },
+ "struct_block_before": {
+  "text": "Datum: 100\u2032-0\u2033 on the structural sheets equals (civil ft)this set prints no datum statement or FFE summary - the civil set usually does ([100'=7732'] on Barn C3.0); type the value here",
+  "chips": [],
+  "input": "",
+  "panel": NaN
+ },
+ "chip_before": "CF2.0 \u00d714 \u00b7 2 ft wide \u00d7 1 ft deep \u00b7 BOF 86\u2032 \u00d74, 87\u2032, 96\u2032 \u00d72, 84.1667\u2032 \u00d73, 86.5\u2032 \u00d72, 85.1667\u2032, 94.5\u2032",
+ "struct_block_after": {
+  "text": "Datum: 100\u2032-0\u2033 on the structural sheets equals (civil ft)this set prints no datum statement or FFE summary - the civil set usually does ([100'=7732'] on Barn C3.0); type the value here",
+  "chips": [],
+  "input": "7732",
+  "panel": 7732
+ },
+ "chip_after": "CF2.0 \u00d714 \u00b7 2 ft wide \u00d7 1 ft deep \u00b7 BOF 86\u2032 (7,718\u2032 civil) \u00d74, 87\u2032 (7,719\u2032 civil), 96\u2032 (7,728\u2032 civil) \u00d72, 84.1667\u2032 (7,716.17\u2032 civil) \u00d73, 86.5\u2032 (7,718.5\u2032 civil) \u00d72, 85.1667\u2032 (7,717.17\u2032 civil), 94.5\u2032 (7,726.5\u2032 civil)",
+ "rects_s": {
+  "footings": [
+   149,
+   52,
+   337,
+   776
+  ],
+  "datum": [
+   149,
+   840,
+   337,
+   100
+  ]
+ },
+ "fpp": 0.07407407407407407,
+ "draft": {
+  "n": 3,
+  "datum_ft": 7732,
+  "input": "7732"
+ },
+ "committed": {
+  "items": [
+   {
+    "name": "Structure 1",
+    "datum_ft": 7732,
+    "footing_w_ft": 2,
+    "footing_ft": 1,
+    "footing_mark": "CF2.0"
+   }
+  ],
+  "result": "mass 88.9 CY \u00b7 structure dig 186.5 CY \u00b7 backfill 186.5 CY (fill depth assumed = dig) \u00b7 slab prep 300 SF \u00b7 perimeter drain 86 LF \u00b7 radon 78 LF \u00b7 server agrees \u2713"
+ }
+}

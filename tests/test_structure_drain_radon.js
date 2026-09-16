@@ -44,7 +44,7 @@ check(/"Perimeter Drain": "LF", "Radon": "LF"/.test(js), "in LF");
 check(/sum\["Perimeter Drain"\] \+= c\.drain_lf;\s*sum\["Radon"\] \+= c\.radon_lf;/.test(js), "stApplyItems sums them");
 check(/stNumInput\(d, "wall_in", "1", upd\)/.test(js) && /stNumInput\(it, "wall_in", "1", upd\)/.test(js), "the draft and the row ask for the wall thickness");
 check(/wall_in: calcNum\(it\.wall_in\) !== null \? it\.wall_in : 8,/.test(js) && /if \(calcNum\(sv\.wall_in\) !== null\) st\.wall_in = sv\.wall_in;/.test(js), "saved work keeps the wall thickness");
-check(/layback_hv: d\.layback_hv, wall_in: d\.wall_in \}\] \}\),/.test(js) && /"drain_lf", "radon_lf"\]\.some/.test(js), "the server cross-check sends and compares the new numbers");
+check(/layback_hv: d\.layback_hv, wall_in: d\.wall_in(,\s*datum_ft: [^}]*)? \}\] \}\),/.test(js) && /"drain_lf", "radon_lf"\]\.some/.test(js), "the server cross-check sends and compares the new numbers");
 check(/perimeter drain \$\{stFmt\(c\.drain_lf, 0\)\} LF · radon \$\{stFmt\(c\.radon_lf, 0\)\} LF/.test(fnSrc("stResultText")), "the result line reads both");
 check(/"INFILTR", "DRAIN", "RADON"\]/.test(js), "RADON files under Storm Drainage beside PERIMETER DRAIN");
 check(/<b>Perimeter Drain<\/b> is the length around the outside/.test(html) && /<b>Radon<\/b> is the\s+inside face/.test(html), "the hint explains both rows");

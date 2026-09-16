@@ -794,6 +794,9 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .st-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .st-chip { font-size: var(--t-fs-xs); text-align: left; white-space: normal; }
 .st-chip.st-chip-guess { border-style: dashed; color: var(--t-warn); }
+.st-datum { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.st-datum .ew-meta input { margin-left: 6px; width: 88px; }
+.st-chip:disabled { opacity: .7; cursor: default; }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }

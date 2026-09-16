@@ -5906,6 +5906,39 @@ def _doc_footing_schedule(job_id: str, path: str) -> dict:
     return out
 
 
+@app.get("/api/job/{job_id}/datum")
+def datum_notes(job_id: str):
+    """What this set says the architectural datum 100'-0" equals - the
+    civil's [100'=7732'] and FFE SUMMARY levels, the structural note that
+    names the datum - as SUGGESTIONS with page and text. Document-wide and
+    cached per job; the operator types the value that applies to each
+    structure, nothing here is applied by itself."""
+    from takeoff_engine.datum_notes import find_datum_notes
+    job = JOBS.get(job_id) or _404()
+    cache = _job_dir(job_id) / "datum_notes.json"
+    if cache.exists():
+        try:
+            return JSONResponse(json.loads(cache.read_text()))
+        except (OSError, ValueError):
+            pass
+    doc = pymupdf.open(job["path"])
+    try:
+        pages = []
+        for i in range(min(doc.page_count, 120)):
+            try:
+                pages.append((i, doc[i].get_text()))
+            except Exception:
+                continue
+    finally:
+        doc.close()
+    out = {"notes": find_datum_notes(pages), "pages": len(pages)}
+    try:
+        cache.write_text(json.dumps(out))
+    except OSError:
+        pass
+    return JSONResponse(out)
+
+
 @app.get("/api/job/{job_id}/page/{page}/footings")
 def footings(job_id: str, page: int):
     """The footing marks on this sheet, each with the elevations printed

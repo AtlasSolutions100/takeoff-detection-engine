@@ -68,7 +68,7 @@ check(/3 ft wide, 1 ft below the slab \(from the footing schedule\)/.test(calls.
 H2.stApplyFooting("F-24", { from: "mark digits", width_ft: 2, depth_ft: null });
 check(state.st.draft.footing_w_ft === 2 && state.st.draft.footing_ft === 1 && /depth not in the schedule/.test(calls.status[calls.status.length - 1][0]), "a digits-only mark sets the width, keeps the depth, and asks for it");
 check(/\.st-chip\.st-chip-guess \{ border-style: dashed; color: var\(--t-warn\); \}/.test(css), "guess chips are dashed and warning-coloured");
-check(/style\.css\?v=88/.test(html) && /app\.js\?v=183/.test(html), "cache busters moved");
+check(+((/style\.css\?v=(\d+)/.exec(html) || [])[1]) >= 88 && +((/app\.js\?v=(\d+)/.exec(html) || [])[1]) >= 183, "cache busters moved");
 
 if (fails) { console.error(fails + " failure(s)"); process.exit(1); }
 console.log("all footing-chip checks passed");
