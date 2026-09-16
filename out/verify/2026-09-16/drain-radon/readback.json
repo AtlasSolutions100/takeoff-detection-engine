@@ -1,0 +1,225 @@
+{
+ "errors": [],
+ "clicks": [
+  [
+   1,
+   1
+  ],
+  [
+   2,
+   2
+  ],
+  [
+   3,
+   3
+  ],
+  [
+   4,
+   4
+  ],
+  [
+   5,
+   5
+  ],
+  [
+   6,
+   6
+  ]
+ ],
+ "appJs": "v=180",
+ "fpp": 0.4166666666666667,
+ "cleared": 1,
+ "canvas_rect": [
+  158,
+  1649.59375,
+  56,
+  12
+ ],
+ "screen_pts": [
+  [
+   832,
+   342.5
+  ],
+  [
+   1195.9999999999998,
+   342.5
+  ],
+  [
+   1195.9999999999998,
+   478.9999999999998
+  ],
+  [
+   1014,
+   478.9999999999998
+  ],
+  [
+   1014,
+   615.5
+  ],
+  [
+   832,
+   615.5
+  ]
+ ],
+ "closed": {
+  "status": "outline closed: 8,110 SF \u00b7 420 LF \u2014 set the depth, then Add to takeoff",
+  "draft": {
+   "n": 6,
+   "pts": [
+    [
+     1100,
+     899.6043956043957
+    ],
+    [
+     1388,
+     899.6043956043957
+    ],
+    [
+     1388,
+     1008.0000000000001
+    ],
+    [
+     1244,
+     1008.0000000000001
+    ],
+    [
+     1244,
+     1115.6043956043957
+    ],
+    [
+     1100,
+     1115.6043956043957
+    ]
+   ]
+  }
+ },
+ "wall_input": {
+  "value": "8",
+  "label": "Wall thickness (in): the radon pipe runs along the inside face of the exterior walls, this far inside the outline"
+ },
+ "wall8": {
+  "result": "mass 1,802.2 CY \u00b7 structure dig 466.7 CY \u00b7 backfill 466.7 CY (fill depth assumed = dig) \u00b7 slab prep 8,110 SF \u00b7 perimeter drain 420 LF \u00b7 radon 415 LF",
+  "calc": {
+   "area_sf": 8109.890109890129,
+   "perim_lf": 420,
+   "drain_lf": 420,
+   "radon_lf": 414.6666666666667,
+   "mass": 1802.1978021978064,
+   "dig": 466.6666666666667
+  }
+ },
+ "rects1": {
+  "stResult": [
+   149,
+   881.6875,
+   337,
+   54
+  ],
+  "wall": [
+   413,
+   743.5,
+   64,
+   23.59375
+  ],
+  "canvas": [
+   158,
+   1649.59375,
+   56,
+   12
+  ]
+ },
+ "wall12": {
+  "result": "mass 1,802.2 CY \u00b7 structure dig 466.7 CY \u00b7 backfill 466.7 CY (fill depth assumed = dig) \u00b7 slab prep 8,110 SF \u00b7 perimeter drain 420 LF \u00b7 radon 412 LF",
+  "radon_lf": 412,
+  "drain_lf": 420
+ },
+ "rects2": {
+  "stResult": [
+   149,
+   881.6875,
+   337,
+   54
+  ],
+  "wall": [
+   413,
+   743.5,
+   64,
+   23.59375
+  ]
+ },
+ "added": {
+  "result": "mass 1,802.2 CY \u00b7 structure dig 466.7 CY \u00b7 backfill 466.7 CY (fill depth assumed = dig) \u00b7 slab prep 8,110 SF \u00b7 perimeter drain 420 LF \u00b7 radon 412 LF \u00b7 server agrees \u2713",
+  "rows": [
+   [
+    "Mass Excavation",
+    1802.2,
+    "CY"
+   ],
+   [
+    "Structure Excavation",
+    466.7,
+    "CY"
+   ],
+   [
+    "Structure Backfill",
+    466.7,
+    "CY"
+   ],
+   [
+    "Slab Prep",
+    8109.9,
+    "SF"
+   ],
+   [
+    "Perimeter Drain",
+    420,
+    "LF"
+   ],
+   [
+    "Radon",
+    412,
+    "LF"
+   ]
+  ],
+  "items": 1,
+  "rowMeta": "mass 1,802.2 \u00b7 dig 466.7 \u00b7 backfill 466.7 CY \u00b7 drain 420 \u00b7 radon 412 LF",
+  "buckets": {
+   "radon": "Storm Drainage",
+   "drain": "Storm Drainage"
+  }
+ },
+ "rects3": {
+  "stResult": [
+   149,
+   202,
+   337,
+   54
+  ],
+  "rows": [
+   137,
+   -10,
+   361,
+   158
+  ]
+ },
+ "list_rows": [
+  [
+   "Perimeter DrainEarthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkGeneralLF\u2014",
+   [
+    149,
+    553.890625,
+    327,
+    71
+   ]
+  ],
+  [
+   "RadonEarthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkGeneralLF\u2014",
+   [
+    149,
+    553.890625,
+    327,
+    71
+   ]
+  ]
+ ]
+}

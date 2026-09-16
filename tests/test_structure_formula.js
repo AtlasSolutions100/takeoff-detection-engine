@@ -22,7 +22,7 @@ function fnSrc(name) {
 }
 const FPP = 40 / 72;
 const state = { result: { scale: { ft_per_paper_inch: 40 } } };
-const api = new Function("state", [fnSrc("stFtPerPt"), fnSrc("stPolyArea"), fnSrc("stPolyPerim"), fnSrc("stCalc")].join("\n") + "\nreturn stCalc;")(state);
+const api = new Function("state", [fnSrc("stFtPerPt"), fnSrc("stPolyArea"), fnSrc("stPolyPerim"), fnSrc("stPolyInsetPerim"), fnSrc("stCalc")].join("\n") + "\nreturn stCalc;")(state);
 const SQ = [[0, 0], [180, 0], [180, 180], [0, 180]];
 const L = 400;
 
@@ -46,10 +46,10 @@ const L = 400;
 }
 
 // ---- wiring --------------------------------------------------------------------
-check(/fill_depth_ft: NaN, footing_ft: 0,\s*footing_w_ft: 2, layback_hv: 1 \};/.test(js), "the panel's standing defaults carry the new fields");
+check(/fill_depth_ft: NaN, footing_ft: 0,\s*footing_w_ft: 2, layback_hv: 1(, wall_in: 8)? \};/.test(js), "the panel's standing defaults carry the new fields");
 check(/stNumInput\(d, "fill_depth_ft", "0.5", upd\)/.test(js) && /stNumInput\(d, "footing_w_ft", "0.5", upd\)/.test(js) && /stNumInput\(d, "layback_hv", "0.25", upd\)/.test(js), "the draft asks for fill depth, footing width and layback h:v");
 check(!/stNumInput\([a-z]+, "layback_ft"/.test(js), "no input asks for a constant layback width any more");
-check(/fill_depth_ft: isFinite\(\+d\.fill_depth_ft\)/.test(js) && /layback_hv: d\.layback_hv \}\] \}\),/.test(js), "the server cross-check sends the new fields");
+check(/fill_depth_ft: isFinite\(\+d\.fill_depth_ft\)/.test(js) && /layback_hv: d\.layback_hv(, wall_in: d\.wall_in)? \}\] \}\),/.test(js), "the server cross-check sends the new fields");
 check(/fill_depth_ft: calcNum\(it\.fill_depth_ft\) !== null \? it\.fill_depth_ft : NaN,/.test(js) && /layback_hv: calcNum\(it\.layback_hv\) !== null \? it\.layback_hv : 1,/.test(js), "saved work reloads the new fields with the new defaults");
 check(/\(fill depth assumed = dig\)/.test(fnSrc("stResultText")), "the result line says when the fill depth was assumed");
 check(/const digW = stCalc\(it\)\.dig_w_ft \|\| 0;/.test(js), "the canvas band is the trench's top width, not a constant");

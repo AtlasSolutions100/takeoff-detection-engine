@@ -7298,10 +7298,12 @@ function calcStatePayload() {
         gap_pt: it.gap_pt || 0, depth_ft: it.depth_ft,
         fill_depth_ft: isFinite(+it.fill_depth_ft) && it.fill_depth_ft !== null ? +it.fill_depth_ft : null,
         footing_ft: it.footing_ft, footing_w_ft: it.footing_w_ft, layback_hv: it.layback_hv,
+        wall_in: it.wall_in,
       })),
       seq: st.seq, depth_ft: st.depth_ft,
       fill_depth_ft: isFinite(+st.fill_depth_ft) && st.fill_depth_ft !== null ? +st.fill_depth_ft : null,
       footing_ft: st.footing_ft, footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv,
+      wall_in: st.wall_in,
     };
   } else if (saved.st) out.st = saved.st;
   // WORK AREA boxes (additive key "zones"): plain page-pt rects, keyed to
@@ -7601,6 +7603,7 @@ function stApplySaved() {
         footing_ft: calcNum(it.footing_ft) !== null ? it.footing_ft : 0,
         footing_w_ft: calcNum(it.footing_w_ft) !== null ? it.footing_w_ft : 2,
         layback_hv: calcNum(it.layback_hv) !== null ? it.layback_hv : 1,
+        wall_in: calcNum(it.wall_in) !== null ? it.wall_in : 8,
       });
     }
   }
@@ -7610,6 +7613,7 @@ function stApplySaved() {
   if (calcNum(sv.footing_ft) !== null) st.footing_ft = sv.footing_ft;
   if (calcNum(sv.footing_w_ft) !== null) st.footing_w_ft = sv.footing_w_ft;
   if (calcNum(sv.layback_hv) !== null) st.layback_hv = sv.layback_hv;
+  if (calcNum(sv.wall_in) !== null) st.wall_in = sv.wall_in;
   if (st.items.length && stFtPerPt()) {
     stApplyItems();
     if (!$("stPanel").hidden) renderSt();
@@ -9804,7 +9808,7 @@ const BID_RULES = [
     tokens: ["STORM", "SD", "RCP", "CMP", "CULVERT", "CATCH BASIN",
              "INLET", "HEADWALL", "FES", "ROOF DRAIN", "DOWNSPOUT",
              "UNDERDRAIN", "PERIMETER DRAIN", "FOUNDATION DRAIN",
-             "FOOTER DRAIN", "FOTER", "INFILTR", "DRAIN"] },
+             "FOOTER DRAIN", "FOTER", "INFILTR", "DRAIN", "RADON"] },
   // 7. Sanitary sewer - "sanitary + storm + water + force main" are #853's
   //    per-LF utility families (section 15 item 2); SSMH / MANHOLE per the
   //    Kayden legend's SANITARY SEWER MANHOLE row (section 19); SSWR is
@@ -21826,9 +21830,11 @@ SECTIONS.push(["stHead", ["stBody", "stRows", "stHint", "stActions"]]);
     for (const cid of ["stBody", "stRows", "stHint", "stActions"]) $(cid).hidden = closed;
   };
 }
-const ST_LABELS = ["Mass Excavation", "Structure Excavation", "Structure Backfill", "Slab Prep"];
+const ST_LABELS = ["Mass Excavation", "Structure Excavation", "Structure Backfill", "Slab Prep",
+                   "Perimeter Drain", "Radon"];
 const ST_UNITS = { "Mass Excavation": "CY", "Structure Excavation": "CY",
-                   "Structure Backfill": "CY", "Slab Prep": "SF" };
+                   "Structure Backfill": "CY", "Slab Prep": "SF",
+                   "Perimeter Drain": "LF", "Radon": "LF" };
 const ST_COLOR = "#ff7a00";        // committed structures: outline + band
 const ST_DRAFT_COLOR = "#58b7e6";  // the one being outlined right now.
 // RETINTED 2026-08-31 from #00a8e8 to --t-select, so the canvas outline
@@ -21848,7 +21854,7 @@ function stSync() {
   if (!state.st || state.st.result !== state.result) {
     state.st = { result: state.result, items: [], draft: null, drawPts: [], hover: null,
                  hot: null, seq: 1, depth_ft: 8, fill_depth_ft: NaN, footing_ft: 0,
-                 footing_w_ft: 2, layback_hv: 1 };
+                 footing_w_ft: 2, layback_hv: 1, wall_in: 8 };
     if (state.tool === "st-pick" || state.tool === "st-draw") state.tool = null;
     $("stPanel").hidden = true;
     $("stResult").textContent = "";
@@ -21872,6 +21878,33 @@ function stPolyPerim(pts) {  // closed ring length, pt
     L += Math.hypot(q[0] - p[0], q[1] - p[1]);
   }
   return L;
+}
+// Perimeter of the ring offset INWARD by t (pt), mitred corners: a convex
+// corner of turning angle phi loses 2 t tan(phi/2), a concave one gains it.
+// A rectangle loses 8 t. Mirror of server._inset_perim - the Radon row is
+// the inside face of the exterior walls (Beaumont, 2026-09-15, 32:49).
+function stPolyInsetPerim(pts, t) {
+  const n = pts.length;
+  if (n < 3) return 0;
+  let area2 = 0, per = 0;
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], q = pts[(i + 1) % n];
+    area2 += p[0] * q[1] - q[0] * p[1];
+    per += Math.hypot(q[0] - p[0], q[1] - p[1]);
+  }
+  const orient = area2 >= 0 ? 1 : -1;
+  let loss = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[(i + n - 1) % n], b = pts[i], c = pts[(i + 1) % n];
+    const ux = b[0] - a[0], uy = b[1] - a[1], vx = c[0] - b[0], vy = c[1] - b[1];
+    const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+    if (lu < 1e-9 || lv < 1e-9) continue;
+    const cross = (ux * vy - uy * vx) / (lu * lv), dot = (ux * vx + uy * vy) / (lu * lv);
+    const phi = Math.atan2(Math.abs(cross), dot);
+    if (phi >= Math.PI - 1e-9) continue;
+    loss += ((cross * orient) >= 0 ? 2 : -2) * t * Math.tan(phi / 2);
+  }
+  return Math.max(per - loss, 0);
 }
 // one structure -> its geometry + the four bid-sheet numbers (null w/o scale)
 function stCalc(it) {
@@ -21902,6 +21935,11 @@ function stCalc(it) {
   out.backfill_cy = out.perim_lf * df * (w + 0.5 * hv * df) / 27;
   out.backfill_assumed = assumed;
   out.slab_sf = out.area_sf;
+  // the two lineal rows off the same outline: drain around the outside,
+  // radon along the inside face of the exterior walls (32:10-32:49)
+  const wallIn = Math.max(0, isFinite(+it.wall_in) ? +it.wall_in : 8);
+  out.drain_lf = out.perim_lf;
+  out.radon_lf = stPolyInsetPerim(it.pts, (wallIn / 12) / fpp) * fpp;
   return out;
 }
 // every structure on the page, summed per bid-sheet label, into the takeoff
@@ -21909,7 +21947,8 @@ function stApplyItems() {
   const st = stSync();
   state.extraItems = state.extraItems.filter(it => !ST_LABELS.includes(it.label));
   const sum = { "Mass Excavation": 0, "Structure Excavation": 0,
-                "Structure Backfill": 0, "Slab Prep": 0 };
+                "Structure Backfill": 0, "Slab Prep": 0,
+                "Perimeter Drain": 0, "Radon": 0 };
   for (const it of st.items) {
     const c = stCalc(it);
     if (c.mass_cy === null) continue;
@@ -21917,6 +21956,8 @@ function stApplyItems() {
     sum["Structure Excavation"] += c.struct_cy;
     sum["Structure Backfill"] += c.backfill_cy;
     sum["Slab Prep"] += c.slab_sf;
+    sum["Perimeter Drain"] += c.drain_lf;
+    sum["Radon"] += c.radon_lf;
   }
   for (const label of ST_LABELS) {
     if (sum[label] > 0)
@@ -21985,7 +22026,7 @@ function stPickAt(px, py) {
   const st = stSync();
   st.draft = { name: `Structure ${st.seq}`, pts, source: "line", chain_id: best.chain_id, gap_pt: gap,
                depth_ft: st.depth_ft, fill_depth_ft: st.fill_depth_ft, footing_ft: st.footing_ft,
-               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv };
+               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv, wall_in: st.wall_in };
   state.tool = null;
   const c = stCalc(st.draft);
   setStatus(c.area_sf !== null
@@ -22024,7 +22065,7 @@ function stFinishDraw() {
   }
   st.draft = { name: `Structure ${st.seq}`, pts, source: "drawn", chain_id: null, gap_pt: 0,
                depth_ft: st.depth_ft, fill_depth_ft: st.fill_depth_ft, footing_ft: st.footing_ft,
-               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv };
+               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv, wall_in: st.wall_in };
   state.tool = null; st.drawPts = []; st.hover = null;
   polySnapClear();
   const c = stCalc(st.draft);
@@ -22150,7 +22191,7 @@ function stResultText(c) {
     return `${stFmt(c.area_pt2, 0)} pt² · ${stFmt(c.perim_pt, 0)} pt — no scale set on this page, volumes need feet`;
   return `mass ${stFmt(stR1(c.mass_cy))} CY · structure dig ${stFmt(stR1(c.struct_cy))} CY` +
     ` · backfill ${stFmt(stR1(c.backfill_cy))} CY${c.backfill_assumed ? " (fill depth assumed = dig)" : ""}` +
-    ` · slab prep ${stFmt(c.slab_sf, 0)} SF`;
+    ` · slab prep ${stFmt(c.slab_sf, 0)} SF · perimeter drain ${stFmt(c.drain_lf, 0)} LF · radon ${stFmt(c.radon_lf, 0)} LF`;
 }
 function renderSt() {
   const st = stSync();
@@ -22197,7 +22238,7 @@ function renderSt() {
     const grid = mk("div", "tr-grid");
     const upd = () => {
       st.depth_ft = d.depth_ft; st.fill_depth_ft = d.fill_depth_ft; st.footing_ft = d.footing_ft;
-      st.footing_w_ft = d.footing_w_ft; st.layback_hv = d.layback_hv;
+      st.footing_w_ft = d.footing_w_ft; st.layback_hv = d.layback_hv; st.wall_in = d.wall_in;
       $("stResult").textContent = stResultText(stCalc(d));
       draw();
     };
@@ -22211,6 +22252,8 @@ function renderSt() {
                 stNumInput(d, "footing_w_ft", "0.5", upd));
     grid.append(mk("div", null, "Layback, horizontal per vertical: 1 = a 1:1 slope (half the depth per side); 0 = vertical walls or a trench box"),
                 stNumInput(d, "layback_hv", "0.25", upd));
+    grid.append(mk("div", null, "Wall thickness (in): the radon pipe runs along the inside face of the exterior walls, this far inside the outline"),
+                stNumInput(d, "wall_in", "1", upd));
     box.appendChild(grid);
     const acts = mk("div", "st-draft-acts");
     const discard = mk("button", "mini", "discard outline");
@@ -22248,10 +22291,12 @@ function renderSt() {
              mk("span", null, "fill"), stNumInput(it, "fill_depth_ft", "0.5", upd),
              mk("span", null, "ftg below"), stNumInput(it, "footing_ft", "0.5", upd),
              mk("span", null, "ftg width"), stNumInput(it, "footing_w_ft", "0.5", upd),
-             mk("span", null, "layback h:v"), stNumInput(it, "layback_hv", "0.25", upd));
+             mk("span", null, "layback h:v"), stNumInput(it, "layback_hv", "0.25", upd),
+             mk("span", null, "wall in"), stNumInput(it, "wall_in", "1", upd));
     row.appendChild(g);
     row.appendChild(mk("div", "ew-meta", c.mass_cy !== null
       ? `mass ${stFmt(stR1(c.mass_cy))} · dig ${stFmt(stR1(c.struct_cy))} · backfill ${stFmt(stR1(c.backfill_cy))} CY`
+        + ` · drain ${stFmt(c.drain_lf, 0)} · radon ${stFmt(c.radon_lf, 0)} LF`
       : "no scale set"));
     row.onmouseenter = () => { st.hot = k; draw(); };
     row.onmouseleave = () => { st.hot = null; draw(); };
@@ -22282,12 +22327,12 @@ $("stAdd").onclick = async () => {
       body: JSON.stringify({ structures: [{ name: d.name, points: d.pts, depth_ft: d.depth_ft,
                                             fill_depth_ft: isFinite(+d.fill_depth_ft) && d.fill_depth_ft !== null ? +d.fill_depth_ft : null,
                                             footing_ft: d.footing_ft, footing_w_ft: d.footing_w_ft,
-                                            layback_hv: d.layback_hv }] }),
+                                            layback_hv: d.layback_hv, wall_in: d.wall_in }] }),
     });
     if (!r.ok) { $("stResult").textContent += ` · server check failed (${r.status})`; return; }
     const j = await r.json();
     const s = j.structures && j.structures[0];
-    const off = s && ["mass_cy", "struct_cy", "backfill_cy"].some(k => Math.abs(s[k] - stR1(c[k])) > 0.15);
+    const off = s && ["mass_cy", "struct_cy", "backfill_cy", "drain_lf", "radon_lf"].some(k => Math.abs(s[k] - stR1(c[k])) > 0.15);
     $("stResult").textContent = stResultText(c) + (off ? " · SERVER DISAGREES: " + JSON.stringify(s) : " · server agrees ✓");
   } catch (err) {
     $("stResult").textContent += " · server check unreachable";

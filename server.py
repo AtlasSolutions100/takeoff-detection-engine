@@ -6166,6 +6166,47 @@ class StructureBody(BaseModel):
     structures: list[dict] = []
 
 
+def _inset_perim(ring, t: float) -> float:
+    """Perimeter of a simple polygon offset INWARD by t (same units as the
+    ring), with mitred corners: each convex corner of turning angle phi
+    shortens the ring by 2 t tan(phi/2), each concave corner lengthens it
+    by the same. A rectangle loses 8 t; an L loses 8 t at its five convex
+    corners and gains 2 t at its one concave corner. Floors at 0 when the
+    wall is thicker than the shape. Same arithmetic as webui/app.js
+    stPolyInsetPerim - the radon row is the inside face of the exterior
+    walls (Beaumont, 2026-09-15, 32:49)."""
+    import math
+    n = len(ring)
+    if n < 3:
+        return 0.0
+    area2 = 0.0
+    per = 0.0
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        area2 += x1 * y2 - x2 * y1
+        per += math.hypot(x2 - x1, y2 - y1)
+    orient = 1.0 if area2 >= 0 else -1.0
+    loss = 0.0
+    for i in range(n):
+        ax, ay = ring[i - 1]
+        bx, by = ring[i]
+        cx, cy = ring[(i + 1) % n]
+        ux, uy = bx - ax, by - ay
+        vx, vy = cx - bx, cy - by
+        lu, lv = math.hypot(ux, uy), math.hypot(vx, vy)
+        if lu < 1e-9 or lv < 1e-9:
+            continue
+        cross = (ux * vy - uy * vx) / (lu * lv)
+        dot = (ux * vx + uy * vy) / (lu * lv)
+        phi = math.atan2(abs(cross), dot)          # turning angle, 0..pi
+        if phi >= math.pi - 1e-9:
+            continue                               # a spike: no mitre
+        convex = (cross * orient) >= 0
+        loss += (2.0 if convex else -2.0) * t * math.tan(phi / 2.0)
+    return max(per - loss, 0.0)
+
+
 def _structure_one(s: dict, ft_per_pt: float) -> dict:
     """One building footprint -> the excavator's four bid-sheet numbers.
     Same arithmetic as the review UI (webui/app.js stCalc); this is the
@@ -6185,6 +6226,9 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
       Structure Excavation CY = wall LF x Dt x (W + 0.5 x hv x Dt) / 27
       Structure Backfill CY   = wall LF x Df x (W + 0.5 x hv x Df) / 27
       Slab Prep SF            = footprint SF
+      Perimeter Drain LF      = the outline's perimeter (exterior face)
+      Radon LF                = the outline inset by the wall thickness
+                                (inside face of the exterior walls)
     with W = footing_w_ft (default 2, a CF2.0 footing) and hv = layback_hv
     (horizontal per vertical, default 1.0 = 1:1). When fill_depth_ft is
     blank the backfill is figured to the dig depth and the reply says so
@@ -6215,6 +6259,7 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
         return v
     depth, footing = num("depth_ft"), num("footing_ft")
     width, hv = num("footing_w_ft", 2.0), num("layback_hv", 1.0)
+    wall_in = num("wall_in", 8.0)
     fill_raw = s.get("fill_depth_ft")
     assumed = fill_raw is None or fill_raw == ""
     fill = depth if assumed else num("fill_depth_ft")
@@ -6230,6 +6275,7 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
         perim += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
     area_sf = abs(area2) / 2.0 * ft_per_pt * ft_per_pt
     perim_lf = perim * ft_per_pt
+    radon_lf = _inset_perim(ring, (wall_in / 12.0) / ft_per_pt) * ft_per_pt
     struct = perim_lf * dt * (width + 0.5 * hv * dt) / 27.0
     backfill = perim_lf * df * (width + 0.5 * hv * df) / 27.0
     return {
@@ -6238,8 +6284,10 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
         "area_sf": round(area_sf, 1),
         "perim_lf": round(perim_lf, 1),
         "depth_ft": depth, "fill_depth_ft": fill, "footing_ft": footing,
-        "footing_w_ft": width, "layback_hv": hv,
+        "footing_w_ft": width, "layback_hv": hv, "wall_in": wall_in,
         "dig_w_ft": round(width + 0.5 * hv * dt, 2),
+        "drain_lf": round(perim_lf, 1),
+        "radon_lf": round(radon_lf, 1),
         "backfill_assumed": bool(assumed),
         "mass_cy": round(area_sf * depth / 27.0, 1),
         "struct_cy": round(struct, 1),
@@ -6362,13 +6410,16 @@ def structure_calc(job_id: str, page: int, body: StructureBody):
         raise HTTPException(400, "too many structures")
     rows = [_structure_one(s, ft_per_pt) for s in body.structures]
     totals = {k: round(sum(r[k] for r in rows), 1)
-              for k in ("mass_cy", "struct_cy", "backfill_cy", "slab_sf")}
+              for k in ("mass_cy", "struct_cy", "backfill_cy", "slab_sf",
+                        "drain_lf", "radon_lf")}
     items = [{"label": label, "qty": totals[key], "unit": unit}
              for label, key, unit in (
                  ("Mass Excavation", "mass_cy", "CY"),
                  ("Structure Excavation", "struct_cy", "CY"),
                  ("Structure Backfill", "backfill_cy", "CY"),
-                 ("Slab Prep", "slab_sf", "SF"))
+                 ("Slab Prep", "slab_sf", "SF"),
+                 ("Perimeter Drain", "drain_lf", "LF"),
+                 ("Radon", "radon_lf", "LF"))
              if totals[key] > 0]
     _ledger_structure(job_id, page, body, rows, totals)
     return JSONResponse({"structures": rows, "totals": totals,
