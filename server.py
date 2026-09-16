@@ -592,6 +592,134 @@ def _is_staff(request: Request) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# ACCOUNTS FROM INSIDE THE APP (2026-09-15). Until now every account on the
+# hosted box was created over ssh: `docker compose exec app python -m
+# takeoff_engine.users add <email> --staff`. The boss could not hand a client
+# a login without the developer at a terminal. These routes give a STAFF
+# account the CLI's verbs - list, add, remove, reset - plus the staff toggle,
+# from Settings -> Accounts.
+#
+# Rules the CLI never had to enforce, because a person at a shell is assumed
+# to know what they are doing:
+#   * staff only, and 404 rather than 403 for anyone else, the same way
+#     /api/feedback hides that it exists;
+#   * the FIRST account on a box is still made at the terminal: creating it
+#     here would flip the box into per-user mode and sign the creator out
+#     mid-request (the middleware refuses an ownerless cookie once accounts
+#     exist - see _SessionAuth), so the gate answers 409 with the command;
+#   * you cannot remove yourself, and nobody can remove or demote the LAST
+#     staff account: a box with accounts and no staff has nobody left who can
+#     open every document, delete a client's set or add the next account,
+#     and the only way back is ssh;
+#   * a password issued here is shown ONCE, in the response, and the account
+#     must change it at first sign-in (users.must_change) - so whoever created
+#     the account does not keep a working password for it.
+# Documents keep their owner's name when the account is removed: they do not
+# vanish, they become visible to staff only (ownership is by name in the
+# registry; an account re-created with the same spelling gets them back).
+
+_USERNAME_MAX = 120
+
+
+def _account_gate(request: Request) -> None:
+    if not _is_staff(request):
+        raise HTTPException(404, "not found")
+    if not _users.load():
+        raise HTTPException(
+            409, "This server has no accounts yet, so it is in single-password "
+                 "mode. The first account is created on the server itself: "
+                 "python -m takeoff_engine.users add <email> --staff")
+
+
+def _staff_count(exclude: str | None = None) -> int:
+    return sum(1 for r in _users.list_users()
+               if r["staff"] and r["user"] != exclude)
+
+
+@app.get("/api/users")
+def api_users(request: Request):
+    _account_gate(request)
+    return {"me": _who(request), "users": _users.list_users()}
+
+
+@app.post("/api/users")
+async def api_users_add(request: Request):
+    _account_gate(request)
+    body = await request.json()
+    name = str(body.get("username") or "").strip()
+    if not name or len(name) > _USERNAME_MAX or any(c.isspace() for c in name):
+        raise HTTPException(
+            400, "Enter the sign-in name as one word, usually their email address.")
+    have = _users.find(name)
+    if have is not None:
+        raise HTTPException(
+            409, f"{have} already has an account. Use Reset password to issue "
+                 "a new one.")
+    pw = str(body.get("password") or "")
+    if not pw:
+        pw = _users.temp_password()
+    elif len(pw) < 8:
+        raise HTTPException(400, "Use at least 8 characters.")
+    elif pw.strip().lower() == DEFAULT_PASSWORD.lower():
+        raise HTTPException(
+            400, "That is the shared temporary password. Choose a different "
+                 "one, or leave it blank to have one generated.")
+    # must_change is not optional: the creator chose (or saw) this password,
+    # so the account is not private until its owner replaces it.
+    rec = _users.add_user(name, pw, staff=bool(body.get("staff")),
+                          must_change=True)
+    return {"ok": True, "user": rec["user"], "staff": rec["staff"],
+            "must_change": True, "temp_password": pw,
+            "created_by": _who(request)}
+
+
+@app.delete("/api/users/{username}")
+def api_users_remove(username: str, request: Request):
+    _account_gate(request)
+    name = _users.find(username)
+    if name is None:
+        raise HTTPException(404, "no such account")
+    if name == _who(request):
+        raise HTTPException(
+            400, "You cannot remove the account you are signed in as. Ask "
+                 "another staff member to do it.")
+    if _users.is_staff(name) and _staff_count(exclude=name) == 0:
+        raise HTTPException(
+            400, f"{name} is the last staff account on this server. Make "
+                 "someone else staff first.")
+    _users.remove_user(name)
+    return {"ok": True, "removed": name, "left": len(_users.load())}
+
+
+@app.post("/api/users/{username}/reset")
+def api_users_reset(username: str, request: Request):
+    _account_gate(request)
+    name = _users.find(username)
+    if name is None:
+        raise HTTPException(404, "no such account")
+    pw = _users.temp_password()
+    rec = _users.add_user(name, pw, must_change=True)     # keeps staff
+    return {"ok": True, "user": rec["user"], "staff": rec["staff"],
+            "must_change": True, "temp_password": pw}
+
+
+@app.post("/api/users/{username}/staff")
+async def api_users_staff(username: str, request: Request):
+    _account_gate(request)
+    body = await request.json()
+    flag = bool(body.get("staff"))
+    name = _users.find(username)
+    if name is None:
+        raise HTTPException(404, "no such account")
+    if not flag and _users.is_staff(name) and _staff_count(exclude=name) == 0:
+        raise HTTPException(
+            400, f"{name} is the last staff account on this server. Make "
+                 "someone else staff first.")
+    _users.set_staff(name, flag)
+    return {"ok": True, "user": name, "staff": flag}
+
+
+# ---------------------------------------------------------------------------
 # BRANDING. The one Settings value that is not a browser preference, because
 # the thing it brands (report_pdf, below) is generated on the server. See
 # takeoff_engine/branding.py for why it is stored per account rather than

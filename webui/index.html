@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=85">
+<link rel="stylesheet" href="style.css?v=86">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -244,6 +244,7 @@
       <a href="#scope">Scope</a>
       <a href="#pricing">Pricing</a>
       <a href="#account">Account</a>
+      <a href="#accounts" id="svNavAccounts" hidden>Accounts</a>
       <a href="#machine" id="svNavMachine">This machine</a>
     </nav>
 
@@ -358,6 +359,43 @@
         <button id="signOutBtn" class="ghost" hidden title="End this session on this browser">Sign out</button>
       </div>
       <div class="sv-note sv-note-b" id="svAccountFoot"></div>
+    </section>
+
+    <!-- ACCOUNTS (STAFF). The CLI's list / add / remove / reset, in the
+         browser, for a staff account on a box that HAS accounts. Hidden
+         entirely otherwise: a client must not learn the page exists, and a
+         single-password laptop has nothing to manage (the first account is
+         still made at the terminal - server.py _account_gate says why).
+         A password issued here is shown ONCE and must be changed at first
+         sign-in. Remove is two presses, not a dialog. -->
+    <h2 class="sv-grouptitle" id="svGroupAccounts" hidden>Accounts</h2>
+    <section class="sv-section" id="svAccountsSection" hidden>
+      <h2>Who can sign in to this server</h2>
+      <div class="sv-note" id="svUsersNote">Reading the account list from the server&hellip;</div>
+      <div id="svUsersTable" class="sv-book"></div>
+      <div class="sv-form">
+        <label class="sv-fld"><span>Sign-in name <em>(their email address)</em></span>
+          <input id="svNewUser" type="text" maxlength="120" spellcheck="false"
+                 autocomplete="off" placeholder="name@company.com"></label>
+        <label class="sv-fld sv-fld-check"><input id="svNewStaff" type="checkbox">
+          <span><b>Staff</b> &mdash; sees and can delete <b>every</b> document on
+          this server and can add accounts. For our own team only; a client is
+          never staff.</span></label>
+      </div>
+      <div class="sv-addrow">
+        <button id="svNewUserBtn" class="mini">Create account</button>
+        <span class="sv-note" id="svNewUserState"></span>
+      </div>
+      <div id="svTempBox" class="sv-temp" hidden></div>
+      <div class="sv-note sv-note-b">A new account gets a temporary password,
+        shown here once. Send it to the person with this address; the first
+        time they sign in they must choose their own password, and after that
+        nobody else knows it. <b>Reset password</b> issues a fresh temporary
+        one the same way. <b>Remove</b> ends their access at once; the
+        documents they uploaded stay on the server, visible to staff only.
+        You cannot remove yourself, and the last staff account cannot be
+        removed or demoted &mdash; someone must always be able to add the
+        next one.</div>
     </section>
 
     <!-- THIS MACHINE. The three filesystem controls that used to open the
@@ -1199,6 +1237,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=174"></script>
+<script src="app.js?v=175"></script>
 </body>
 </html>

@@ -3376,3 +3376,18 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
   border: 1px dashed var(--line); border-radius: var(--t-r-sm, 4px);
   background: transparent; color: var(--dim); cursor: pointer; }
 .ew-more:hover { color: var(--t-text); border-color: var(--t-text); }
+/* Settings -> Accounts (staff): the once-only temporary password box, the
+   "you" tag, the must-change flag, and the two-press Remove. */
+.sv-temp { margin: var(--t-sp-3, 12px) 0; padding: var(--t-sp-3, 12px) var(--t-sp-4, 16px);
+  border: 1px solid var(--t-border, var(--line)); border-radius: var(--t-r-2, 8px);
+  background: var(--panel); }
+.sv-temp-pw { display: inline-block; font-size: var(--t-fs-md, 16px); letter-spacing: .08em;
+  padding: 4px 10px; margin: var(--t-sp-2, 8px) var(--t-sp-2, 8px) var(--t-sp-2, 8px) 0;
+  border: 1px solid var(--t-border, var(--line)); border-radius: var(--t-r-1, 6px);
+  user-select: all; }
+.sv-you { font-size: var(--t-fs-xs, 12px); color: var(--t-text-dim, var(--dim)); margin-left: 6px; }
+.sv-flag { color: var(--t-warn); font-size: var(--t-fs-xs, 12px); }
+.sv-users td button + button { margin-left: 6px; }
+.sv-users .danger { color: var(--t-danger); }
+.sv-fld-check { display: flex; gap: var(--t-sp-2, 8px); align-items: flex-start; }
+.sv-fld-check input { margin-top: 3px; }

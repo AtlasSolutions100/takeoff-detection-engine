@@ -11000,6 +11000,8 @@ function svMeSet(me) {
   svMe = me;
   if (typeof renderSvAccount === "function" && !$("settingsView").hidden)
     renderSvAccount();
+  if (typeof renderSvUsers === "function" && !$("settingsView").hidden)
+    renderSvUsers();
 }
 async function loadWhoami() {
   let me = null;
@@ -24907,6 +24909,14 @@ function svAccountState(me) {
         + "any other machine you are signed in on." };
 }
 
+// Settings -> Accounts is for STAFF on a box that HAS accounts. A client must
+// not learn the page exists; a single-password laptop has nothing to manage
+// (and creating the first account from a browser would sign its creator out
+// mid-request - server.py _account_gate). All three, or the section is gone.
+function svAccountsVisible(me) {
+  return !!(me && me.accounts && me.staff && me.user);
+}
+
 // ---- where a Settings hash lands -------------------------------------------
 // `#pricing` is the hash this page has been writing since it was the price
 // book, so it must keep working: it now names the PRICING GROUP of the same
@@ -24917,7 +24927,8 @@ function svHashTarget(hash) {
   if (h === "settings") return "";
   const g = { company: "svGroupCompany", appearance: "svGroupAppearance",
               theme: "svGroupAppearance", scope: "svGroupScope",
-              pricing: "svGroupPricing", account: "svGroupAccount" };
+              pricing: "svGroupPricing", account: "svGroupAccount",
+              accounts: "svGroupAccounts" };
   return Object.prototype.hasOwnProperty.call(g, h) ? g[h] : null;
 }
 
@@ -25118,6 +25129,7 @@ function renderSettings() {
   renderSvMaterials();
   renderSvFoot();
   renderSvAccount();
+  renderSvUsers();
 }
 
 // ---------- COMPANY ---------------------------------------------------------
@@ -25315,6 +25327,176 @@ function renderSvAccount() {
   // it and an empty bordered strip reads as a control that failed to load.
   $("svAccountRow").hidden = !st.controls;
 }
+
+// ---------- ACCOUNTS (staff) -----------------------------------------------
+// Settings -> Accounts: the CLI's list / add / remove / reset for a staff
+// account in a browser. Shown only when svAccountsVisible(svMe). Every
+// action re-reads /api/users, so the table is always the server's list and
+// never a local guess; the server enforces the rules (not yourself, not the
+// last staff) and its sentence is shown verbatim when it refuses.
+let svUsers;            // last /api/users payload; undefined = not asked yet
+let svUsersErr = "";
+async function loadSvUsers() {
+  svUsersErr = "";
+  try {
+    const r = await fetch("/api/users");
+    if (r.ok) svUsers = await r.json();
+    else {
+      svUsers = null;
+      const j = await r.json().catch(() => ({}));
+      svUsersErr = j.detail || ("HTTP " + r.status);
+    }
+  } catch (e) { svUsers = null; svUsersErr = "could not reach the server"; }
+  if (!$("settingsView").hidden) renderSvUsers();
+}
+function renderSvUsers() {
+  const sec = $("svAccountsSection");
+  if (!sec) return;
+  const show = svAccountsVisible(svMe);
+  sec.hidden = !show;
+  $("svGroupAccounts").hidden = !show;
+  $("svNavAccounts").hidden = !show;
+  if (!show) return;
+  const note = $("svUsersNote"), box = $("svUsersTable");
+  if (svUsers === undefined) {
+    note.textContent = "Reading the account list from the server…";
+    box.innerHTML = "";
+    loadSvUsers();
+    return;
+  }
+  if (!svUsers) {
+    note.textContent = "Could not read the account list: " + svUsersErr
+      + ". Nothing has changed.";
+    box.innerHTML = "";
+    return;
+  }
+  const rows = svUsers.users || [];
+  const nStaff = rows.filter(u => u.staff).length;
+  note.textContent = rows.length + " account(s) on this server, " + nStaff
+    + " staff. You are signed in as " + svUsers.me + ".";
+  box.innerHTML = "";
+  const scroll = document.createElement("div");
+  scroll.className = "sv-book-scroll";
+  const t = document.createElement("table");
+  t.className = "sv-book-table sv-users";
+  t.innerHTML = "<thead><tr><th>Sign-in name</th><th>Role</th>"
+    + "<th>Password</th><th class=\"sv-r\"></th></tr></thead>";
+  const tb = document.createElement("tbody");
+  for (const u of rows) {
+    const tr = document.createElement("tr");
+    const isMe = u.user === svUsers.me;
+    const lastStaff = u.staff && nStaff === 1;
+    const nameTd = document.createElement("td");
+    nameTd.textContent = u.user;
+    if (isMe) {
+      const you = document.createElement("span");
+      you.className = "sv-you"; you.textContent = "you";
+      nameTd.appendChild(you);
+    }
+    tr.appendChild(nameTd);
+    const role = document.createElement("td");
+    const rb = document.createElement("button");
+    rb.className = "mini";
+    rb.textContent = u.staff ? "Staff" : "Client";
+    rb.title = lastStaff
+      ? "The last staff account cannot be demoted. Make someone else staff first."
+      : u.staff ? "Click to make this a CLIENT account (sees only its own documents)"
+                : "Click to make this a STAFF account (sees and can delete every document)";
+    rb.disabled = lastStaff;
+    rb.onclick = () => svUserAction("POST",
+      "/api/users/" + encodeURIComponent(u.user) + "/staff", { staff: !u.staff },
+      u.user + " is now " + (u.staff ? "a client account" : "staff"));
+    role.appendChild(rb);
+    tr.appendChild(role);
+    const pw = document.createElement("td");
+    if (u.must_change) {
+      const f = document.createElement("span");
+      f.className = "sv-flag";
+      f.textContent = "temporary — must change at next sign-in";
+      pw.appendChild(f);
+    } else pw.textContent = "their own";
+    tr.appendChild(pw);
+    const act = document.createElement("td");
+    act.className = "sv-r";
+    const reset = document.createElement("button");
+    reset.className = "mini"; reset.textContent = "Reset password";
+    reset.title = "Issue a fresh temporary password (shown once) that they must change at next sign-in";
+    reset.onclick = () => svUserAction("POST",
+      "/api/users/" + encodeURIComponent(u.user) + "/reset", {},
+      "new temporary password for " + u.user);
+    act.appendChild(reset);
+    const rm = document.createElement("button");
+    rm.className = "mini danger"; rm.textContent = "Remove";
+    rm.disabled = isMe || lastStaff;
+    rm.title = isMe ? "You cannot remove the account you are signed in as"
+      : lastStaff ? "The last staff account cannot be removed"
+      : "Remove this account. Their documents stay on the server, visible to staff only.";
+    // two presses, not a dialog: the first arms it, the second does it
+    rm.onclick = () => {
+      if (rm.dataset.armed) {
+        svUserAction("DELETE", "/api/users/" + encodeURIComponent(u.user), null,
+          u.user + " removed");
+        return;
+      }
+      rm.dataset.armed = "1"; rm.textContent = "Really remove?";
+      setTimeout(() => { delete rm.dataset.armed; rm.textContent = "Remove"; }, 4000);
+    };
+    act.appendChild(rm);
+    tr.appendChild(act);
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  scroll.appendChild(t);
+  box.appendChild(scroll);
+}
+async function svUserAction(method, url, body, doneMsg) {
+  const st = $("svNewUserState");
+  st.textContent = "working…";
+  try {
+    const r = await fetch(url, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { st.textContent = j.detail || ("HTTP " + r.status); return null; }
+    st.textContent = doneMsg;
+    if (j.temp_password) svShowTemp(j.user, j.temp_password);
+    svUsers = undefined;
+    renderSvUsers();
+    return j;
+  } catch (e) { st.textContent = "could not reach the server"; return null; }
+}
+function svShowTemp(user, pw) {
+  const box = $("svTempBox");
+  box.hidden = false;
+  box.innerHTML = "";
+  const p = document.createElement("div");
+  p.textContent = "Temporary password for " + user
+    + " — shown once; it is not stored anywhere you can read it again:";
+  const code = document.createElement("code");
+  code.className = "sv-temp-pw"; code.textContent = pw;
+  const copy = document.createElement("button");
+  copy.className = "mini"; copy.textContent = "Copy";
+  copy.onclick = () => {
+    if (navigator.clipboard)
+      navigator.clipboard.writeText(pw).then(() => { copy.textContent = "Copied"; }, () => {});
+  };
+  const how = document.createElement("div");
+  how.className = "sv-note";
+  how.textContent = "Send it to them with the sign-in address. The first time "
+    + "they sign in they must choose their own password; after that nobody "
+    + "else knows it.";
+  box.append(p, code, copy, how);
+}
+$("svNewUserBtn").onclick = () => {
+  const name = $("svNewUser").value.trim();
+  if (!name) { $("svNewUserState").textContent = "type their sign-in name first"; return; }
+  svUserAction("POST", "/api/users",
+    { username: name, staff: $("svNewStaff").checked },
+    "account created for " + name)
+    .then(j => { if (j) { $("svNewUser").value = ""; $("svNewStaff").checked = false; } });
+};
 
 // ---- the colour convention book ------------------------------------------
 // The whole set of standing colour decisions, where the operator can see and

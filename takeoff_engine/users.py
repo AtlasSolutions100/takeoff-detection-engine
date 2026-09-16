@@ -173,6 +173,85 @@ def check(username: str, password: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# ACCOUNT MANAGEMENT. Shared by the CLI below and the staff-only /api/users
+# routes in server.py (2026-09-15), so a record made from a browser and one
+# made at a shell are the same record. Before this, every account on the
+# hosted box was created over ssh; the boss could not hand a client a login
+# without the developer at a terminal.
+
+def list_users() -> list:
+    """[{user, staff, must_change}] sorted by name, case-insensitively."""
+    store = load()
+    return [{"user": n, "staff": bool(r.get("staff")),
+             "must_change": bool(r.get("must_change"))}
+            for n, r in sorted(store.items(), key=lambda kv: kv[0].lower())]
+
+
+def find(username: str) -> str | None:
+    """The stored spelling of a name, matched the way sign-in matches it
+    (case-insensitively), or None."""
+    want = (username or "").strip().lower()
+    if not want:
+        return None
+    for n in load():
+        if n.lower() == want:
+            return n
+    return None
+
+
+def temp_password() -> str:
+    """A starting password to hand over once: 12 characters from an alphabet
+    with no look-alikes (no 0/O, no 1/l/I), so it survives being read out
+    over the phone."""
+    alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(12))
+
+
+def add_user(username: str, password: str, *, staff: bool = False,
+             must_change: bool = False) -> dict:
+    """Create an account, or reset an existing one's password. Keeps an
+    existing staff flag on a reset unless staff is re-stated; must_change is
+    set only when asked for, and a reset clears it unless asked again."""
+    store = load()
+    name = find(username) or (username or "").strip()
+    existed = name in store
+    rec = hash_password(password)
+    if staff or (existed and store[name].get("staff")):
+        rec["staff"] = True
+    if must_change:
+        rec["must_change"] = True
+    store[name] = rec
+    save(store)
+    return {"user": name, "staff": bool(rec.get("staff")),
+            "must_change": bool(rec.get("must_change")), "existed": existed}
+
+
+def remove_user(username: str) -> bool:
+    store = load()
+    name = find(username)
+    if name is None:
+        return False
+    store.pop(name)
+    save(store)
+    return True
+
+
+def set_staff(username: str, flag: bool) -> bool:
+    store = load()
+    name = find(username)
+    if name is None:
+        return False
+    rec = dict(store[name])
+    if flag:
+        rec["staff"] = True
+    else:
+        rec.pop("staff", None)
+    store[name] = rec
+    save(store)
+    return True
+
+
 def _cli() -> int:
     import argparse
     import getpass
