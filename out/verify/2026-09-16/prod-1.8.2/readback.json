@@ -1,0 +1,56 @@
+{
+ "errors": [],
+ "config": {
+  "product": null,
+  "version": null,
+  "hosted": true
+ },
+ "me": {
+  "staff": true,
+  "accounts": true,
+  "must_change": false
+ },
+ "build": {
+  "app_js": [
+   "v=182"
+  ],
+  "css": [
+   "v=87"
+  ],
+  "stHint": true,
+  "gzBase": true,
+  "gzTable": true,
+  "trHint": true,
+  "ewBoundAuto": true,
+  "scopeBar": true,
+  "buckets": [
+   "Erosion & Sediment Control",
+   "Clearing/Limits",
+   "Earthwork",
+   "Storm Drainage",
+   "Sanitary Sewer",
+   "Water",
+   "Gas",
+   "Electric/Comm",
+   "Site Concrete/Paving",
+   "Walls",
+   "Landscape/Other",
+   "UNASSIGNED"
+  ],
+  "stLabels": [
+   "Mass Excavation",
+   "Structure Excavation",
+   "Structure Backfill",
+   "Slab Prep",
+   "Perimeter Drain",
+   "Radon"
+  ],
+  "gridInJs": true,
+  "accountsNav": true
+ },
+ "accounts": {
+  "nav": true,
+  "section": true,
+  "rows": 24
+ }
+}

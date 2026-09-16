@@ -1,0 +1,219 @@
+{
+ "steps": [
+  {
+   "step": "login-page",
+   "info": "Sign in \u00b7 CORE Takeoff",
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "projects",
+   "info": {
+    "tabs": [
+     "Demo plans7",
+     "Your projects19"
+    ],
+    "cards": 19
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "demo-tab",
+   "info": {
+    "cards": 7,
+    "reach": "All 7 demo plans on this server \u2014 search and sort reach all of them. Demo plans open fresh, every time: opening one clears the previous run, so you press Detect and watch the engine work on it. Nothing here is pre-detected."
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "search-oncor",
+   "info": {
+    "cards": 0,
+    "reach": "0 of 19 match \u201concor\u201d \u2014 searched all 19 projects on this server."
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "card-click-open",
+   "info": {
+    "job": "3bb69406cadc",
+    "page": 0,
+    "projectsOpen": false
+   },
+   "new_errors": [],
+   "s": 0.9
+  },
+  {
+   "step": "sheet-open-p0",
+   "info": {
+    "page": 0,
+    "hasResult": false,
+    "head": [
+     "Sheet 1 / 9",
+     "vector",
+     "not detected"
+    ]
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "sheet-p3-detected",
+   "info": {
+    "chains": 589,
+    "styles": 65,
+    "status": "589 lines in 65 styles \u00b7 scale 1\" = 30' (graphic-bar)",
+    "head": [
+     "C-04 (page 4 of 9)",
+     "vector",
+     "graphic bar 0-60 ft over 144.0pt (1\" = 30', ticks)",
+     "detected",
+     "the reading above is wrong?"
+    ]
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "style-row-click",
+   "info": {
+    "isolate": null,
+    "selected": null,
+    "bar": null
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "tools-menu",
+   "info": [
+    "Earthwork",
+    "Trench",
+    "Structure",
+    "Count",
+    "Whole job",
+    "Across sheets",
+    "Callouts",
+    "Legend sheet",
+    "Analyze"
+   ],
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "count-panel",
+   "info": {
+    "sym": "hidden/none",
+    "rows": 0,
+    "hint": "Every repeated shape found on the sheet. Hover a row to see\n        every instance marked; name it and Add to put \"\u00d7 N EA\" in the takeoff. The count comes\n        from geometry, so it is checkable - the name is yours."
+   },
+   "new_errors": [],
+   "s": 0.9
+  },
+  {
+   "step": "earthwork-open",
+   "info": {
+    "rows": 147,
+    "busy": "read done in 2s \u2014 147 contours with a height, 31 still need a side \u2014 go through them below \u2193",
+    "dropped": null
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "earthwork-rows",
+   "info": {
+    "visible": 148,
+    "firstSrc": "machine-readlabel in its own break, read by OCR"
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "earthwork-calc",
+   "info": {
+    "basis": "Interpolated from 58 existing and 22 proposed contours, plus 1 spot grade on the proposed surface, sampled on a 2 ft grid over 75,800 SF.The engine found 368 co",
+    "result": "cut 1,947 CY \u00b7 fill 8,306 CY \u00b7 net 6,359 CY over 75,800 SFdeepest cut 6.78 ft \u00b7 deepest fill 16.69 ft \u2014 eyeball these against the contours; a peak that surprises you is a row to check",
+    "status": ""
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "trench-open",
+   "info": {
+    "open": true
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "kbd-help",
+   "info": {
+    "open": true
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "csv-endpoint",
+   "info": 404,
+   "new_errors": [
+    "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+   ],
+   "s": 0.8
+  },
+  {
+   "step": "settings",
+   "info": {
+    "open": true,
+    "header": [
+     "EarthworkCut &",
+     "TrenchTrench e",
+     "StructureBuild",
+     "CountCount rep",
+     "Whole jobEvery",
+     "Across sheetsL",
+     "CalloutsThe sh",
+     "Legend sheetRe",
+     "AnalyzeA model",
+     "\u25d0"
+    ]
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "settings-light",
+   "info": "light",
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "back-to-sheet",
+   "info": {
+    "job": "bbf812d1c2e0",
+    "page": 3,
+    "docName": "Oncor Cloudcrest Substation Civils - 202",
+    "toolsVisible": true
+   },
+   "new_errors": [],
+   "s": 0.8
+  },
+  {
+   "step": "narrow-1100",
+   "info": {
+    "bodyScrollX": false,
+    "headerH": 52
+   },
+   "new_errors": [],
+   "s": 0.8
+  }
+ ],
+ "errors": [
+  "console: Failed to load resource: the server responded with a status of 404 (Not Found)"
+ ]
+}
