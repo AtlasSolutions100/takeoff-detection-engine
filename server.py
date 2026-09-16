@@ -4923,6 +4923,14 @@ class EarthworkBody(BaseModel):
     # true 2.2M but fill 2.6M against a true 1.6M, "filling all that stuff
     # outside". Omitting it leaves every existing number untouched.
     boundary: list[list[float]] | None = None
+    # THE BOUNDARY IS THE LIMIT OF DISTURBANCE, not just a crop. The panel
+    # sends true when the operator picked or drew a limit of work (never
+    # for the one-box work-area fallback). Then the layer area defaults to
+    # the ring's own area - Beaumont strips topsoil and clears "everything
+    # inside" the limits line (2026-09-15, 05:48-06:27) - and the reply
+    # carries the ring's SF and LF for the Clear & Grub and fence rows.
+    # False keeps every recorded body's numbers exactly where they were.
+    boundary_is_limit: bool = False
 
 
 # ONE ELEVATION READ PER PAGE AT A TIME.
@@ -5466,7 +5474,8 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
     difference them. Adds the per-layer volumes and the offsets used."""
     import numpy as _np
 
-    from takeoff_engine.earthwork import (Surface, clamp_pct, cut_fill,
+    from takeoff_engine.earthwork import (Surface, boundary_metrics,
+                                          clamp_pct, cut_fill,
                                           material_balance)
 
     rf = _job_dir(job_id) / f"p{page}_result.json"
@@ -5504,6 +5513,9 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
             except (KeyError, TypeError, ValueError):
                 continue
         return surf
+    # the ring's own numbers, whatever the boundary is used for below
+    bmet = (boundary_metrics(body.boundary, ft_per_pt)
+            if body.boundary and len(body.boundary) >= 3 else None)
     ex_layers, ex_off = _layer_stack(body.existing_layers)
     pr_layers, pr_off = _layer_stack(body.proposed_layers)
     result = cut_fill(build("existing", body.existing, body.existing_points),
@@ -5564,10 +5576,20 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
     # covers); strip_area_sf overrides it with e.g. the clear & grub area.
     if result.get("layers_only"):
         area = area0
+    elif body.strip_area_sf:
+        area = float(body.strip_area_sf)
+        result["area_source"] = "typed strip area"
+    elif body.boundary_is_limit and bmet:
+        # the limit of work IS the disturbed area: strip and clear over all
+        # of it, not just where the two surfaces happen to overlap
+        area = float(bmet["area_sf"])
+        result["area_source"] = "limit-of-work outline"
     else:
-        area = (float(body.strip_area_sf) if body.strip_area_sf
-                else float(result["area_sf"]))
+        area = float(result["area_sf"])
+        result["area_source"] = "surface overlap"
     result["layer_area_sf"] = round(area, 0)
+    if bmet:
+        result["boundary"] = dict(bmet, is_limit=bool(body.boundary_is_limit))
     layers = []
     for side, rows in (("existing", ex_layers), ("proposed", pr_layers)):
         for r in rows:

@@ -9730,7 +9730,7 @@ const BID_RULES = [
   //    are matched exactly rather than by keyword - and BEFORE everything
   //    else, so "Export Asphalt" stays earthwork rather than paving.
   { bucket: "Earthwork",
-    re: /^(Site Cut|Site Fill|Strip Topsoil|Remove |Rough Place |Place |Export |Import Structural$|(Cut|Fill) \(earthwork\))/ },
+    re: /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|(Cut|Fill) \(earthwork\))/ },
   { bucket: "Earthwork",
     tokens: ["MASS EXCAVATION", "STRUCTURE EXCAVATION",
              "STRUCTURE BACKFILL"] },
@@ -12160,6 +12160,8 @@ function ewBoundSet(pts, src) {
   const gap = Math.hypot(dx, dy);
   state.ewBound = { pts: p, src: src || "picked", gap };
   renderEwBound();
+  // the area note reads the limit too ("Blank = the limit of work you set")
+  if (state.ew && typeof renderEwArea === "function") renderEwArea();
   calcStateDirty();
   return true;
 }
@@ -12255,6 +12257,7 @@ function renderEwBound() {
          return p ? { pts: p, src: "work area box", gap: 0, fromWz: true } : null;
        })();
   box.classList.toggle("on", !!b);
+  renderEwBoundAuto();
   // a limit that IS the work-area box is cleared with the work area, not here
   if (clr) clr.hidden = !b || !!b.fromWz;
   const ftPerPt = (state.result && state.result.scale
@@ -12269,8 +12272,10 @@ function renderEwBound() {
     } else {
       const a = Math.abs(polyAreaPt(b.pts));
       const sf = ftPerPt ? a * ftPerPt * ftPerPt : null;
+      const lf = ftPerPt ? stPolyPerim(b.pts) * ftPerPt : null;
       st.textContent = `${b.src} ${'—'} ${b.pts.length} points`
-        + (sf ? ` ${'—'} ${Math.round(sf).toLocaleString()} SF` : "");
+        + (sf ? ` ${'—'} ${Math.round(sf).toLocaleString()} SF inside` : "")
+        + (lf && !b.fromWz ? `, ${Math.round(lf).toLocaleString()} LF around` : "");
       st.title = (b.gap > 1
         ? `The line does not close: its ends are ${b.gap.toFixed(1)} pt apart. `
           + `They are joined for the area test, so check the shape is what you meant. `
@@ -12299,6 +12304,50 @@ function polyAreaPt(pts) {
   return a / 2;
 }
 
+// THE SHEET'S OWN LIMIT LINE, OFFERED FIRST. Beaumont's step one on every
+// site plan is the limits-of-disturbance line (2026-09-15, 05:48): the
+// fence LF, the Clear & Grub SF and the strip area all come off it. When a
+// family's name or CAD layer says it is that line, offer it as a one-click
+// limit; the ring and its numbers are on the panel before anything counts.
+const EW_LOD_RE = /LIMITS? OF (DISTURB|GRAD|WORK|CONSTR)|\bLOD\b|DISTURBANCE|GRADING LIMIT/i;
+function ewLodFamily() {
+  if (!state.result || !state.result.styles) return null;
+  let best = null;
+  for (const s of state.result.styles) {
+    const name = state.labels.get(s.style_id) || s.suggested_label || "";
+    const layer = s.layer || "";
+    if (!(EW_LOD_RE.test(name) || EW_LOD_RE.test(layer))) continue;
+    const len = state.result.chains
+      .filter(c => c.style_id === s.style_id && !state.excluded.has(c.chain_id))
+      .reduce((t, c) => t + (c.length_pt || 0), 0);
+    if (len > 0 && (!best || len > best.len))
+      best = { style_id: s.style_id, name: name || layer, len };
+  }
+  return best;
+}
+function renderEwBoundAuto() {
+  const btn = $("ewBoundAuto");
+  if (!btn) return;
+  // decided from the DETECTION, not the panel's own state: the panel is
+  // rendered before its rows exist, and the offer must survive that
+  const fam = state.ewBound ? null : ewLodFamily();
+  btn.hidden = !fam;
+  if (fam) btn.textContent = `use the sheet's ${fam.name.slice(0, 40)}`;
+}
+$("ewBoundAuto").onclick = () => {
+  const fam = ewLodFamily();
+  if (!fam) return;
+  const seed = state.result.chains
+    .filter(c => c.style_id === fam.style_id && !state.excluded.has(c.chain_id))
+    .sort((a, b) => (b.length_pt || 0) - (a.length_pt || 0))[0];
+  if (!seed) return setStatus("that family has no lines left on the sheet", "err");
+  const st = ewBoundStitch(seed);
+  if (ewBoundSet(st.pts, st.n > 1 ? `${st.n} lines stitched (${fam.name})` : fam.name)) {
+    state.ewBound.seed = seed.chain_id;
+    calcStateDirty();
+    setStatus(ewStitchStatus(st));
+  }
+};
 $("ewBoundClear").onclick = () => {
   ewBoundClear();
   setStatus("limit of work cleared " + '—' + " volumes cover the whole overlap again");
@@ -12838,6 +12887,9 @@ function ewBody() {
     // (several boxes are not one outline - then the rows filter alone
     // shrinks the surfaces, and the panel says which)
     boundary: state.ewBound ? state.ewBound.pts : ewWorkAreaBoundary(),
+    // a picked or drawn limit is the DISTURBED AREA (fence, clear & grub,
+    // strip all come off it); a work-area box is only a crop
+    boundary_is_limit: !!state.ewBound,
     existing_layers: lay("existing"),
     proposed_layers: lay("proposed"),
     // #853 reuses site cut against site fill 1:1 (import 11,581 against
@@ -13020,11 +13072,18 @@ function renderEwArea() {
     renderEwArea();
   };
   const auto = state.ew.result ? state.ew.result.area_sf : null;
-  note.textContent = isFinite(state.ew.areaSf)
+  const fpp = stFtPerPt();
+  const limitSf = state.ewBound && fpp ? Math.abs(polyAreaPt(state.ewBound.pts)) * fpp * fpp : null;
+  // ewBody sends the typed area only when it is > 0, so the note says
+  // "typed" only then (0 or blank is not a typed area)
+  note.textContent = isFinite(state.ew.areaSf) && state.ew.areaSf > 0
     ? "Layer volumes use the area you typed."
-    : "Blank = where the two surfaces overlap"
-      + (auto ? ` (last run: ${Number(auto).toLocaleString()} SF)` : "")
-      + ". Topsoil is stripped over the whole disturbed area, which is usually larger — type that here.";
+    : limitSf
+      ? `Blank = the limit of work you set (${Math.round(limitSf).toLocaleString()} SF): `
+        + "Clear & Grub and Strip Topsoil cover all of it. Type a number only to override."
+      : "Blank = where the two surfaces overlap"
+        + (auto ? ` (last run: ${Number(auto).toLocaleString()} SF)` : "")
+        + ". Topsoil is stripped over the whole disturbed area, which is usually larger — set the limit of work above, or type that here.";
 }
 
 // Bid-sheet names (Beaumont's 22-item sheet) for the itemized takeoff
@@ -13036,7 +13095,7 @@ function ewItemLabel(layer) {
 // every earthwork row is replaced on each Calculate, so this has to match
 // the material-balance rows too. "Rough Place " does NOT start with
 // "Place ", so it needs its own alternative.
-const EW_ITEM_RE = /^(Site Cut|Site Fill|Strip Topsoil|Remove |Rough Place |Place |Export |Import Structural$|(Cut|Fill) \(earthwork\))/;
+const EW_ITEM_RE = /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|(Cut|Fill) \(earthwork\))/;
 
 // THE PANEL AND THE SELECTION CHIP MUST NOT CONTRADICT EACH OTHER.
 //
@@ -14397,6 +14456,17 @@ function ewApplyItems(j) {
   for (const lay of (j.layers || []))
     if (lay.volume_yd3 > 0)
       state.extraItems.push({ label: ewItemLabel(lay), qty: ewR(lay.volume_yd3), unit: "CY" });
+  // the limit of work itself is two bid lines (Beaumont's step one on every
+  // site plan): the ring's area is Clear & Grub, its length is the fence.
+  // Only a picked or drawn limit - a work-area box is a crop, not a site.
+  if (j.boundary && j.boundary.is_limit) {
+    if (j.boundary.area_sf > 0)
+      state.extraItems.push({ label: "Clear & Grub", qty: Math.round(j.boundary.area_sf), unit: "SF" });
+    if (j.boundary.perim_ft > 0)
+      state.extraItems.push({ label: "Silt / Construction Fence", qty: Math.round(j.boundary.perim_ft), unit: "LF" });
+    for (const lab of ["Clear & Grub", "Silt / Construction Fence"])
+      if (!store.getItem(tradeKey(lab))) store.setSession(tradeKey(lab), "Earthwork & Grading");
+  }
   // where the dirt goes. These price like any other row, but tradeFor()
   // would file "Import Structural" under General (it matches no keyword)
   // and "Export Asphalt" under Paving, so seed the trade the way

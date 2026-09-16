@@ -948,6 +948,36 @@ def clamp_pct(v, default: float = 0.0) -> float:
     return min(max(p, 0.0), 100.0)
 
 
+def boundary_metrics(pts, ft_per_pt):
+    """Area (SF), perimeter (ft) and closure gap (ft) of a limit-of-work ring
+    given in page points, or None for fewer than three points.
+
+    The ring is treated as closed - last point joined to first - which is
+    the convention the volume mask already uses; the gap says how far apart
+    the drawn ends actually are, so a traced-but-open line is judged by the
+    operator rather than silently closed. Same shoelace expression as the
+    layers-only branch of the volumes route, so the two never disagree.
+    Beaumont's step one on every site plan (2026-09-15, 05:48-06:27): the
+    limits line's length is the fence, everything inside it is Clear & Grub
+    and the strip area."""
+    p = [(float(q[0]), float(q[1])) for q in (pts or [])
+         if isinstance(q, (list, tuple)) and len(q) >= 2]
+    if len(p) < 3:
+        return None
+    a = 0.0
+    per = 0.0
+    for i in range(len(p)):
+        x0, y0 = p[i - 1]
+        x1, y1 = p[i]
+        a += (x0 + x1) * (y0 - y1)
+        per += ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+    gap = ((p[0][0] - p[-1][0]) ** 2 + (p[0][1] - p[-1][1]) ** 2) ** 0.5
+    return {"area_sf": round(abs(a / 2.0) * ft_per_pt * ft_per_pt, 1),
+            "perim_ft": round(per * ft_per_pt, 1),
+            "gap_ft": round(gap * ft_per_pt, 1),
+            "n": len(p)}
+
+
 def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
                      cut_reuse_pct: float = 100.0,
                      export_factor: float = 1.0,
