@@ -1,0 +1,219 @@
+{
+ "errors": [],
+ "appJs": "v=191",
+ "c30_needed_detect": false,
+ "c30_rows": {
+  "existing": 34,
+  "proposed": 26,
+  "zones_before": 2
+ },
+ "rows": {
+  "existing": 34,
+  "proposed": 26,
+  "zones_before": 2
+ },
+ "zone_box": [
+  1040,
+  839.6043956043957,
+  1448,
+  1175.6043956043957
+ ],
+ "modal_live": {
+  "live": "cut 744 CY \u00b7 fill 733 CY \u00b7 net -10 CYover 23,180 SF (the whole zone)topsoil strip 8\u2033 over 23,180 SF = 572 CY \u2014 the fill above already includes replacing that depthexisting inside the zone: mean 7719.15 ft, sampled from the surface built on 34 contour rows + 0 spot grades (whole sheet)deepest cut 3.84 ft \u00b7 deepest fill 12.59 ft \u2014 eyeball these against the contourscut blue \u00b7 fill orange \u2014 full colour = \u00b19.523 ft (the sheet map's own palette)",
+  "mode": "proposed",
+  "corners": 4,
+  "row_text": "Proposed contours on this sheet \u2014 the design the sheet draws"
+ },
+ "rect_z0": {
+  "card": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "live": [
+   487,
+   553.5,
+   526,
+   244
+  ],
+  "row": [
+   487,
+   298,
+   13,
+   13
+  ]
+ },
+ "zone": {
+  "name": "Zone 3",
+  "named_from": null,
+  "design": {
+   "mode": "proposed"
+  },
+  "err": null,
+  "corners": 4,
+  "summary": "proposed contours \u00b7 strip 8\"",
+  "name_title": "zone name - its takeoff rows are named after it",
+  "result": {
+   "mode": "proposed",
+   "cut": 743.5,
+   "fill": 733.2,
+   "net": -10.3,
+   "area": 23180,
+   "zone_area": 23754,
+   "coverage": 1,
+   "suggested_name": null,
+   "labels": 120
+  }
+ },
+ "table": [
+  [
+   "zone",
+   "area",
+   "cut",
+   "fill",
+   "net",
+   "total"
+  ],
+  [
+   "Zone 1",
+   "8,002",
+   "668",
+   "875",
+   "+207",
+   "1,543"
+  ],
+  [
+   "Zone 2",
+   "8,002",
+   "303",
+   "655",
+   "+351",
+   "958"
+  ],
+  [
+   "Zone 3",
+   "23,754",
+   "744",
+   "733",
+   "\u221210",
+   "1,477"
+  ],
+  [
+   "all zones",
+   "39,758",
+   "1,715",
+   "2,263",
+   "+548",
+   "3,978"
+  ]
+ ],
+ "rect_z1": {
+  "table": [
+   148,
+   468.125,
+   339,
+   171
+  ],
+  "rows": [
+   148,
+   154.125,
+   339,
+   308
+  ],
+  "row": [
+   148,
+   370.125,
+   339,
+   92
+  ]
+ },
+ "map": {
+  "labels": 226,
+  "spacing": 30,
+  "sample": [
+   {
+    "x": 761.1,
+    "y": 463.3,
+    "dz": 2.4
+   },
+   {
+    "x": 811.3,
+    "y": 446.3,
+    "dz": 1.3
+   },
+   {
+    "x": 875.3,
+    "y": 432.8,
+    "dz": 1
+   },
+   {
+    "x": 946.7,
+    "y": 435.1,
+    "dz": 1.6
+   }
+  ],
+  "bbox": [
+   407.377,
+   395.58,
+   1501.777,
+   1787.58
+  ],
+  "legend": "cut \u22128.0 ft \u2026 +8.0 ft fill (full color)",
+  "checked_before": false
+ },
+ "view_z2": {
+  "x": -60.38656702412857,
+  "y": -197.80517426273445,
+  "k": 0.31701381728191375,
+  "f": 1.8055555555555556,
+  "cv": [
+   528,
+   52,
+   972,
+   854
+  ],
+  "toggle": [
+   157,
+   408.15625,
+   83.546875,
+   18
+  ]
+ },
+ "view_z3": {
+  "x": -1582.2501666666667,
+  "y": -1938.0899999999997,
+  "k": 1.2,
+  "f": 1.8055555555555556,
+  "cv": [
+   528,
+   52,
+   972,
+   854
+  ]
+ },
+ "map_after_untick": {
+  "map_still": true,
+  "nums": false
+ },
+ "errors3": [],
+ "appJs3": "v=191",
+ "zones_now": [
+  [
+   "Zone 1",
+   "pad",
+   null
+  ],
+  [
+   "Zone 2",
+   "pad",
+   null
+  ],
+  [
+   "Zone 3",
+   "proposed",
+   null
+  ]
+ ],
+ "zones_after_cancel": 3
+}
