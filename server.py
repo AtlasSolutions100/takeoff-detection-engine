@@ -711,6 +711,13 @@ async def api_users_staff(username: str, request: Request):
     name = _users.find(username)
     if name is None:
         raise HTTPException(404, "no such account")
+    # Your own role is off limits: demoting yourself drops the Accounts page
+    # from under you mid-click and nobody but another staff member can put
+    # it back (it happened to the owner on the first day it was live).
+    if name == _who(request):
+        raise HTTPException(
+            400, "You cannot change your own role. Ask another staff member "
+                 "to do it.")
     if not flag and _users.is_staff(name) and _staff_count(exclude=name) == 0:
         raise HTTPException(
             400, f"{name} is the last staff account on this server. Make "

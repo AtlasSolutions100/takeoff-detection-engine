@@ -149,9 +149,11 @@ st, js, _ = call("POST", "/api/users", {"username": "chosen@c.test", "password":
 check(st == 200 and js["must_change"] is True and js["temp_password"] == "chosen-by-boss-1",
       "a chosen password is accepted but still must be changed at first sign-in")
 
-# ---- staff toggle and the last-staff rule ----------------------------------------
+# ---- staff toggle, the self rule and the last-staff rule -----------------------------
 st, js, _ = call("POST", "/api/users/boss%40wo.test/staff", {"staff": False}, BOSS)
-check(st == 400, "the last staff account cannot be demoted (even by itself)")
+check(st == 400 and "own role" in js["detail"], "you cannot change your own role (the owner demoted himself on day one)")
+st, js, _ = call("POST", "/api/users/boss%40wo.test/staff", {"staff": True}, BOSS)
+check(st == 400, "not even to re-state it")
 st, js, _ = call("POST", "/api/users/new%40client.test/staff", {"staff": True}, BOSS)
 check(st == 200 and _users.is_staff("new@client.test"), "staff can promote an account to staff")
 st, js, _ = call("POST", "/api/users/new%40client.test/staff", {"staff": False}, BOSS)
@@ -170,23 +172,25 @@ st, _ = login("alice@client.test", "alicepass123")
 check(st == 401, "the removed account can no longer sign in")
 st, js, _ = call("GET", "/api/me", None, ALICE)
 check(st == 401, "and its old cookie is dead")
-# promote new, then the boss becomes removable by new? no - new removes boss
-# would leave new as the last staff, which is allowed; what is NOT allowed is
-# removing the last staff. Prove that: demote everyone but boss, then try.
+# the last-staff rule from the OTHER side: promote new, let new (with a
+# settled password) demote the boss - allowed, because new remains staff -
+# and the boss loses the page at once; then new cannot demote itself.
 st, js, _ = call("POST", "/api/users/new%40client.test/staff", {"staff": True}, BOSS)
-st, NEW2 = login("new@client.test", TEMP)
-# new still has a temporary password; the middleware stops it at 403, so use
-# the boss to check the rule instead: with new as staff, boss is not last.
-st, js, _ = call("POST", "/api/users/boss%40wo.test/staff", {"staff": False}, BOSS)
-check(st == 200, "with a second staff account the first can be demoted")
+_users.set_password("new@client.test", "new-chose-this-1")   # clears must_change
+st, NEW2 = login("new@client.test", "new-chose-this-1")
+check(st == 200 and NEW2, "new signs in with a settled password as staff")
+st, js, _ = call("POST", "/api/users/boss%40wo.test/staff", {"staff": False}, NEW2)
+check(st == 200, "another staff account can demote the boss while it remains staff")
 st, js, _ = call("GET", "/api/users", None, BOSS)
 check(st == 404, "a demoted account immediately loses the page")
+st, js, _ = call("POST", "/api/users/new%40client.test/staff", {"staff": False}, NEW2)
+check(st == 400, "the remaining staff cannot demote itself either (self rule, and last staff)")
 _users.set_staff("boss@wo.test", True)      # restore for the rest
 st, js, _ = call("POST", "/api/users/new%40client.test/staff", {"staff": False}, BOSS)
 check(st == 200, "restored boss demotes new")
 
 # ---- reset -------------------------------------------------------------------------
-_users.set_password("new@client.test", "settled-by-them-1")   # they changed it
+_users.set_password("new@client.test", "settled-by-them-1")   # they changed it again
 check(not _users.must_change("new@client.test"), "fixture: new chose their own password")
 st, js, _ = call("POST", "/api/users/new%40client.test/reset", {}, BOSS)
 check(st == 200 and len(js["temp_password"]) == 12 and js["must_change"] is True, "reset issues a fresh temporary password")

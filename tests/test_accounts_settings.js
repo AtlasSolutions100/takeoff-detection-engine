@@ -41,7 +41,7 @@ for (const p of ['"/api/users/" + encodeURIComponent(u.user) + "/staff"', '"/api
 const blk = appSrc.slice(appSrc.indexOf("// ---------- ACCOUNTS (staff)"), appSrc.indexOf('$("svNewUserBtn").onclick') + 600);
 check(blk.length > 1000 && !/\bconfirm\(/.test(blk) && /Really remove\?/.test(blk), "Remove is two presses, not a confirm() dialog");
 check(/if \(j\.temp_password\) svShowTemp\(j\.user, j\.temp_password\);/.test(appSrc), "a returned temporary password is shown once");
-check(/rm\.disabled = isMe \|\| lastStaff;/.test(appSrc) && /rb\.disabled = lastStaff;/.test(appSrc), "self and last-staff rules are mirrored in the table");
+check(/rm\.disabled = isMe \|\| lastStaff;/.test(appSrc) && /rb\.disabled = lastStaff \|\| isMe;/.test(appSrc), "self and last-staff rules are mirrored in the table, for Remove AND for the role button");
 check(/\.sv-temp-pw \{/.test(cssSrc) && /\.sv-fld-check \{/.test(cssSrc), "style.css styles the temp-password box and the staff checkbox row");
 
 if (fails) { console.error(fails + " failure(s)"); process.exit(1); }

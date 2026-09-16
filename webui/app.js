@@ -25398,11 +25398,13 @@ function renderSvUsers() {
     const rb = document.createElement("button");
     rb.className = "mini";
     rb.textContent = u.staff ? "Staff" : "Client";
-    rb.title = lastStaff
+    rb.title = isMe
+      ? "You cannot change your own role. Ask another staff member to do it."
+      : lastStaff
       ? "The last staff account cannot be demoted. Make someone else staff first."
       : u.staff ? "Click to make this a CLIENT account (sees only its own documents)"
                 : "Click to make this a STAFF account (sees and can delete every document)";
-    rb.disabled = lastStaff;
+    rb.disabled = lastStaff || isMe;
     rb.onclick = () => svUserAction("POST",
       "/api/users/" + encodeURIComponent(u.user) + "/staff", { staff: !u.staff },
       u.user + " is now " + (u.staff ? "a client account" : "staff"));
