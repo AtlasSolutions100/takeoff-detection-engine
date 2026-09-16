@@ -1,0 +1,274 @@
+{
+ "errors": [],
+ "clicks": [
+  [
+   "z1",
+   1,
+   1
+  ],
+  [
+   "z1",
+   2,
+   2
+  ],
+  [
+   "z1",
+   3,
+   3
+  ],
+  [
+   "z1",
+   4,
+   4
+  ],
+  [
+   "z2",
+   1,
+   1
+  ],
+  [
+   "z2",
+   2,
+   2
+  ],
+  [
+   "z2",
+   3,
+   3
+  ],
+  [
+   "z2",
+   4,
+   4
+  ]
+ ],
+ "appJs": "v=181",
+ "cleared": 0,
+ "ewEnsure": {
+  "ok": true,
+  "rows": 9
+ },
+ "z1_modal": {
+  "modal": true,
+  "title": "Zone 1 \u2014 8,002 SF",
+  "exist": "existing from the sheet: mean 7731.4 ft, 4 contours + 0 spots in zone (rows the panel assigns to EXISTING)",
+  "pad": "7731.4"
+ },
+ "z1_live": "cut 669 CY \u00b7 fill 770 CY \u00b7 net 101 CYover 7,424 SF \u2014 the existing surface reaches only 95% of this 8,002 SF zone; the volumes cover that share onlytopsoil strip 8\u2033 over 7,424 SF = 183 CY \u2014 the fill above already includes replacing that depthbase 6\u2033 Gravel over 8,002 SF = 148 CY \u2014 the cut / fill above are figured to the subgrade, 0.5 ft below the elevation typedexisting inside the zone: mean 7731.20 ft, sampled from the surface built on 9 contour rows + 0 spot grades (whole sheet)deepest cut 8.43 ft \u00b7 deepest fill 10.61 ft \u2014 eyeball these against the contourscut blue \u00b7 fill orange \u2014 full colour = \u00b19.117 ft (the sheet map's own palette)",
+ "rects_live": {
+  "live": [
+   487,
+   497.5,
+   526,
+   272
+  ],
+  "base": [
+   653.6875,
+   403.5,
+   56,
+   24
+  ],
+  "card": [
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "z1": {
+  "name": "Zone 1",
+  "base_in": 6,
+  "base_name": "Gravel",
+  "err": null,
+  "design": {
+   "mode": "pad",
+   "elev_ft": 7731.4
+  },
+  "result": {
+   "cut": 668.8,
+   "fill": 770,
+   "net": 101.2,
+   "area": 7424,
+   "zone_area": 8002,
+   "layers": [
+    {
+     "name": "Gravel",
+     "thickness_in": 6,
+     "volume_yd3": 148.2
+    }
+   ],
+   "sub": 0.5,
+   "coverage": 0.947
+  },
+  "summary": "pad @ 7731.4 \u00b7 strip 8\" \u00b7 base 6\" Gravel",
+  "cyf": "cut 669 \u00b7 fill 770 CY \u00b7 strip 183 CY \u00b7 base 148 CY"
+ },
+ "table1": {
+  "hidden": false,
+  "rows": [
+   [
+    "zone",
+    "area SF",
+    "strip CY",
+    "cut CY",
+    "fill CY",
+    "net CY",
+    "total CY",
+    "base CY"
+   ],
+   [
+    "Zone 1",
+    "8,002",
+    "183",
+    "669",
+    "770",
+    "+101",
+    "1,439",
+    "148"
+   ]
+  ],
+  "note": "net = fill \u2212 cut (+ brings dirt in, \u2212 hauls it out) \u00b7 total = cut + fill, the dirt moved \u00b7 base = zone area \u00d7 base thickness"
+ },
+ "rects_t1": {
+  "table": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "row": [
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "z1_rows": [
+  [
+   "Zone 1 cut",
+   669,
+   "CY"
+  ],
+  [
+   "Zone 1 fill",
+   770,
+   "CY"
+  ],
+  [
+   "Zone 1 topsoil strip",
+   183,
+   "CY"
+  ],
+  [
+   "Zone 1 place Gravel",
+   148,
+   "CY"
+  ]
+ ],
+ "z2_modal": {
+  "modal": true,
+  "title": "Zone 2 \u2014 8,002 SF",
+  "exist": "existing from the sheet: mean 7702.5 ft, 4 contours + 0 spots in zone (rows the panel assigns to EXISTING)",
+  "pad": "7702.5"
+ },
+ "z2": {
+  "name": "Zone 2",
+  "base_in": 0,
+  "err": null,
+  "result": {
+   "cut": 280.1,
+   "fill": 656.2,
+   "layers": [],
+   "zone_area": 8002
+  }
+ },
+ "table2": [
+  [
+   "zone",
+   "area SF",
+   "strip CY",
+   "cut CY",
+   "fill CY",
+   "net CY",
+   "total CY",
+   "base CY"
+  ],
+  [
+   "Zone 1",
+   "8,002",
+   "183",
+   "669",
+   "770",
+   "+101",
+   "1,439",
+   "148"
+  ],
+  [
+   "Zone 2",
+   "8,002",
+   "192",
+   "280",
+   "656",
+   "+376",
+   "936",
+   "0"
+  ],
+  [
+   "all zones",
+   "16,004",
+   "375",
+   "949",
+   "1,426",
+   "+477",
+   "2,375",
+   "148"
+  ]
+ ],
+ "rects_t2": {
+  "table": [
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "list_rows": [
+  [
+   "Zone 1 fillEarthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkGeneralCY\u2014",
+   [
+    149,
+    553.890625,
+    327,
+    71
+   ]
+  ],
+  [
+   "Zone 1 cutEarthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkGeneralCY\u2014",
+   [
+    149,
+    553.890625,
+    327,
+    71
+   ]
+  ],
+  [
+   "Zone 1 place GravelEarthwork & GradingWet UtilitiesDry UtilitiesPaving & ConcreteFooting & FoundationStructuresFencing & SiteworkGeneralCY\u2014",
+   [
+    149,
+    553.890625,
+    327,
+    71
+   ]
+  ]
+ ],
+ "exception": "Page.wait_for_function: Timeout 180000ms exceeded.",
+ "dump_fail": {
+  "modal": false,
+  "live": "",
+  "status": "",
+  "tool": null,
+  "draft": 0,
+  "zones": 0,
+  "ew": false
+ }
+}

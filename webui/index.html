@@ -555,7 +555,7 @@
           <button id="gzBox" class="mini" title="Drag a rectangle over the region, then declare the design for it.">+ grading zone (box)</button>
         </div>
         <div id="gzRows" class="gz-rows"></div>
-        <div id="gzTotals" class="gz-totals" hidden></div>
+        <div id="gzTable" class="gz-table" hidden></div>
         <div class="gz-hint">Use this when the sheet does not draw the new
           ground. Outline a region. Then say what goes there: a flat pad, a
           sloping plane, a balanced pad, or a strip. We compare that to the
@@ -1196,6 +1196,15 @@
       <span>in</span>
       <span class="gz-m-note" id="gzStripWhy"></span>
     </div>
+    <div class="gz-m-strip">
+      <label for="gzBaseIn">Base under the finished grade</label>
+      <input id="gzBaseIn" type="number" min="0" step="1" value="0" class="gz-num gz-sm">
+      <span>in of</span>
+      <input id="gzBaseName" type="text" value="Base" maxlength="30" class="gz-num">
+      <span class="gz-m-note">The elevation above is the finished grade. A base course sits on top of
+        the earthwork, so the dig is figured to the subgrade this much lower, and the base is its own
+        &ldquo;place&rdquo; row (zone area &times; thickness). 0 = none.</span>
+    </div>
     <div class="gz-m-live" id="gzMLive"></div>
     <div class="gz-m-actions">
       <button id="gzMSave">Save zone</button>
@@ -1246,6 +1255,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=180"></script>
+<script src="app.js?v=181"></script>
 </body>
 </html>

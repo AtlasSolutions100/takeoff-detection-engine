@@ -7327,6 +7327,7 @@ function calcStatePayload() {
       polygon: z.polygon.map(q => [Math.round(q[0] * 10) / 10,
                                    Math.round(q[1] * 10) / 10]),
       design: z.design, strip_in: z.strip_in,
+      base_in: isFinite(+z.base_in) ? +z.base_in : 0, base_name: z.base_name || "Base",
       added: !!z.added, show_nums: !!z.showNums,
     }));
   // Review-queue check-offs (additive key, same carry-forward rule as the
@@ -22683,11 +22684,21 @@ function gzZoneSummary(poly) {
   return { nContours: nC, nSpots: nS, mean };
 }
 
-function gzBody(polygon, design, strip_in) {
+// the zone's base course as the route's proposed_layers row (one layer per
+// zone: thickness in inches + a name; 0 = none)
+function gzBase(z) {
+  const t = +z.base_in;
+  return { name: (z.base_name || "Base").trim().slice(0, 30) || "Base",
+           thickness_in: isFinite(t) && t > 0 ? t : 0 };
+}
+function gzBody(polygon, design, strip_in, base) {
+  const b = base && isFinite(+base.thickness_in) && +base.thickness_in > 0
+    ? [{ name: base.name || "Base", thickness_in: +base.thickness_in }] : [];
   return {
     polygon: polygon.map(q => [q[0], q[1]]),
     design: design,
     strip_in: isFinite(strip_in) && strip_in > 0 ? strip_in : 0,
+    proposed_layers: b,
     existing_rows: gzExistingRows().map(r => ({ chain_id: r.chain_id, z: r.z })),
     existing_points: gzExistingPoints(),
   };
@@ -22701,7 +22712,7 @@ async function gzCompute(z, gen) {
   try {
     const r = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/zone`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(gzBody(z.polygon, z.design, z.strip_in)),
+      body: JSON.stringify(gzBody(z.polygon, z.design, z.strip_in, gzBase(z))),
     });
     if (gen !== state.gen) return;
     if (!r.ok) {
@@ -22749,6 +22760,8 @@ function gzApplySaved() {
       polygon: poly,
       design: (s.design && typeof s.design === "object") ? s.design : { mode: "pad" },
       strip_in: isFinite(+s.strip_in) ? Math.max(+s.strip_in, 0) : 0,
+      base_in: isFinite(+s.base_in) ? Math.max(+s.base_in, 0) : 0,
+      base_name: String(s.base_name || "Base").slice(0, 30),
       added: !!s.added, showNums: !!s.show_nums,
       result: null, img: null, err: null,
     });
@@ -22795,7 +22808,8 @@ async function gzRestoreCompute() {
 // trench calculator's exact-label pattern, for the same reason (a prefix
 // filter once silently deleted another system's rows).
 function gzRowLabels(z) {
-  return [`${z.name} cut`, `${z.name} fill`, `${z.name} topsoil strip`];
+  return [`${z.name} cut`, `${z.name} fill`, `${z.name} topsoil strip`,
+          `${z.name} place ${gzBase(z).name}`];
 }
 function gzClearItems(z) {
   const mine = new Set((z.labels && z.labels.length) ? z.labels : gzRowLabels(z));
@@ -22810,6 +22824,9 @@ function gzApplyItems(z) {
   if (j.cut_yd3 > 0) rows.push({ label: z.labels[0], qty: ewR(j.cut_yd3), unit: "CY" });
   if (j.fill_yd3 > 0) rows.push({ label: z.labels[1], qty: ewR(j.fill_yd3), unit: "CY" });
   if (j.strip_yd3 > 0) rows.push({ label: z.labels[2], qty: ewR(j.strip_yd3), unit: "CY" });
+  // the base course: zone area x thickness, one row (one layer per zone)
+  const baseCY = (j.layers || []).reduce((a, l) => a + Math.max(+l.volume_yd3 || 0, 0), 0);
+  if (baseCY > 0) rows.push({ label: z.labels[3], qty: ewR(baseCY), unit: "CY" });
   for (const r of rows) {
     state.extraItems.push(r);
     // tradeFor() would file "Zone 1 cut" under General; seed the trade the
@@ -22821,7 +22838,7 @@ function gzApplyItems(z) {
 
 // ---- the panel list -------------------------------------------------------
 function renderGz() {
-  const box = $("gzRows"), tot = $("gzTotals"), st = $("gzState");
+  const box = $("gzRows"), tbl = $("gzTable"), st = $("gzState");
   if (!box) return;
   const zs = state.gzones || [];
   if (st) st.textContent = zs.length
@@ -22853,9 +22870,11 @@ function renderGz() {
     cyf.className = "gz-cyf";
     if (z.err) { cyf.innerHTML = `<span class="gz-err">${z.err}</span>`; }
     else if (z.result) {
+      const bCY = gzBaseCY(z);
       cyf.innerHTML = `cut <b>${ewCY(z.result.cut_yd3 > 0 ? z.result.cut_yd3 : 0)}</b>`
         + ` · fill <b>${ewCY(z.result.fill_yd3 > 0 ? z.result.fill_yd3 : 0)}</b> CY`
-        + (z.result.strip_yd3 > 0 ? ` · strip ${ewCY(z.result.strip_yd3)} CY` : "");
+        + (z.result.strip_yd3 > 0 ? ` · strip ${ewCY(z.result.strip_yd3)} CY` : "")
+        + (bCY > 0 ? ` · base ${ewCY(bCY)} CY` : "");
     } else cyf.textContent = "computing…";
     const nums = document.createElement("button");
     nums.className = "mini" + (z.showNums ? " on" : "");
@@ -22905,22 +22924,51 @@ function renderGz() {
     row.append(name, sum, cyf, nums, edit, add, del);
     box.appendChild(row);
   }
-  if (tot) {
-    const done = zs.filter(z => z.result);
-    if (done.length < 2) tot.hidden = true;
-    else {
-      tot.hidden = false;
-      const cut = done.reduce((a, z) => a + Math.max(z.result.cut_yd3, 0), 0);
-      const fill = done.reduce((a, z) => a + Math.max(z.result.fill_yd3, 0), 0);
-      const strip = done.reduce((a, z) => a + Math.max(z.result.strip_yd3, 0), 0);
-      tot.innerHTML = `<span>all zones:</span> <b>cut ${ewCY(cut)}</b>`
-        + ` · <b>fill ${ewCY(fill)}</b>`
-        + (strip > 0 ? ` · strip ${ewCY(strip)}` : "") + ` CY`
-        + (done.length < zs.length
-            ? ` <span class="gz-err">(${zs.length - done.length} zone${zs.length - done.length === 1 ? "" : "s"} not computed - not in these totals)</span>`
-            : "");
-    }
+  if (tbl) gzRenderTable(tbl, zs);
+}
+
+// ZONE TABLE - one line per computed zone (Beaumont's per-region sheet,
+// 2026-09-15): area, strip, cut, fill, net (fill - cut: + brings dirt in,
+// - hauls it out), total (cut + fill: the dirt moved) and the base course.
+// An all-zones row once there are two. Numbers come from each zone's own
+// result; nothing here is a stored figure.
+function gzBaseCY(z) {
+  return ((z.result && z.result.layers) || []).reduce((a, l) => a + Math.max(+l.volume_yd3 || 0, 0), 0);
+}
+function gzZoneCells(z) {
+  const r = z.result;
+  const cut = Math.max(r.cut_yd3, 0), fill = Math.max(r.fill_yd3, 0);
+  return [Number(r.zone_area_sf || r.area_sf || 0), Math.max(r.strip_yd3 || 0, 0),
+          cut, fill, fill - cut, cut + fill, gzBaseCY(z)];
+}
+const GZ_TABLE_COLS = ["area SF", "strip CY", "cut CY", "fill CY", "net CY", "total CY", "base CY"];
+function gzEsc(s) {
+  return String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+function gzNet(v) {
+  return (v > 0.5 ? "+" : v < -0.5 ? "\u2212" : "") + ewCY(Math.abs(v));
+}
+function gzRenderTable(tbl, zs) {
+  const done = zs.filter(z => z.result);
+  if (!done.length) { tbl.hidden = true; tbl.innerHTML = ""; return; }
+  tbl.hidden = false;
+  const tot = GZ_TABLE_COLS.map(() => 0);
+  const line = (name, c, cls) => `<tr${cls ? ` class="${cls}"` : ""}><td>${gzEsc(name)}</td>`
+    + c.map((v, i) => `<td class="num">${i === 4 ? gzNet(v) : ewCY(v)}</td>`).join("") + `</tr>`;
+  let rows = "";
+  for (const z of done) {
+    const c = gzZoneCells(z);
+    c.forEach((v, i) => { tot[i] += v; });
+    rows += line(z.name, c);
   }
+  if (done.length > 1) rows += line("all zones", tot, "gz-tot");
+  const missing = zs.length - done.length;
+  tbl.innerHTML = `<table><thead><tr><th>zone</th>`
+    + GZ_TABLE_COLS.map(h => `<th class="num">${h}</th>`).join("") + `</tr></thead><tbody>${rows}</tbody></table>`
+    + `<div class="gz-m-note">net = fill \u2212 cut (+ brings dirt in, \u2212 hauls it out) \u00b7 total = cut + fill, the dirt moved`
+    + ` \u00b7 base = zone area \u00d7 base thickness`
+    + (missing > 0 ? ` \u00b7 <span class="gz-err">${missing} zone${missing === 1 ? "" : "s"} not computed - not in this table</span>` : "")
+    + `</div>`;
 }
 
 function gzDesignSummary(z) {
@@ -22934,6 +22982,7 @@ function gzDesignSummary(z) {
       ? `balance @ ${z.result.balance_elev_ft}` : "balance";
   else s = "strip only";
   if (z.strip_in > 0) s += ` · strip ${z.strip_in}"`;
+  if (z.base_in > 0) s += ` · base ${z.base_in}" ${gzBase(z).name}`;
   return s;
 }
 
@@ -23120,6 +23169,8 @@ function gzModalOpen(zone, polygon) {
     ? `default ${sd.value}" — ${sd.local}; national band ${sd.national[0]}–${sd.national[1]} in. `
       + `Set 0 for no strip.`
     : "";
+  if ($("gzBaseIn")) $("gzBaseIn").value = zone && Number.isFinite(+zone.base_in) ? zone.base_in : 0;
+  if ($("gzBaseName")) $("gzBaseName").value = (zone && zone.base_name) || "Base";
   gzModalSyncMode();
   $("gzModal").hidden = false;
   gzModalCalc();
@@ -23147,10 +23198,13 @@ function gzModalCollect() {
   const mode = (document.querySelector('input[name="gzMode"]:checked') || {}).value || "pad";
   const sv = parseFloat($("gzStrip").value);
   const strip_in = isFinite(sv) && sv > 0 ? sv : 0;
+  const bv = parseFloat(($("gzBaseIn") || {}).value);
+  const base = { thickness_in: isFinite(bv) && bv > 0 ? bv : 0,
+                 name: ((($("gzBaseName") || {}).value) || "Base").trim().slice(0, 30) || "Base" };
   if (mode === "pad") {
     const e = parseFloat($("gzPadElev").value);
     if (!isFinite(e)) return { err: "type the pad elevation" };
-    return { design: { mode: "pad", elev_ft: e }, strip_in };
+    return { design: { mode: "pad", elev_ft: e }, strip_in, base };
   }
   if (mode === "plane") {
     const e = parseFloat($("gzPlElev").value);
@@ -23159,9 +23213,9 @@ function gzModalCollect() {
     const az = parseFloat($("gzPlAz").value);
     return { design: { mode: "plane", elev_ft: e,
                        slope_pct: isFinite(sl) ? sl : 0,
-                       azimuth_deg: isFinite(az) ? az : 0 }, strip_in };
+                       azimuth_deg: isFinite(az) ? az : 0 }, strip_in, base };
   }
-  return { design: { mode }, strip_in };
+  return { design: { mode }, strip_in, base };
 }
 
 function gzModalDirty() {
@@ -23183,7 +23237,7 @@ async function gzModalCalc() {
   try {
     r = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/zone`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(gzBody(gzModalPoly, c.design, c.strip_in)),
+      body: JSON.stringify(gzBody(gzModalPoly, c.design, c.strip_in, c.base)),
     });
   } catch (err) {
     if (seq === gzModalSeq) live.innerHTML = '<span class="gz-warn">server unreachable</span>';
@@ -23222,6 +23276,12 @@ async function gzModalCalc() {
       + (j.mode !== "strip_only"
           ? " — the fill above already includes replacing that depth" : "")
       + `</span>`;
+  for (const lay of (j.layers || []))
+    h += `<span class="gz-meta">base ${lay.thickness_in}&Prime; ${gzEsc(lay.name)} over `
+      + `${Number(j.zone_area_sf).toLocaleString()} SF = <b>${ewCY(lay.volume_yd3)} CY</b>`
+      + ` — the cut / fill above are figured to the subgrade, ${j.subgrade_offset_ft} ft below the `
+      + (j.mode === "balance" ? `finished grade (subgrade balances at ${j.balance_subgrade_ft} ft)` : `elevation typed`)
+      + `</span>`;
   h += `<span class="gz-meta">existing inside the zone: mean `
     + `${j.existing_mean_ft.toFixed(2)} ft, sampled from the surface built on `
     + `${j.existing_n_contours} contour row${j.existing_n_contours === 1 ? "" : "s"}`
@@ -23248,6 +23308,7 @@ $("gzMSave").onclick = () => {
       name: "Zone " + state.gzSeq++,
       polygon: gzModalPoly.map(q => [q[0], q[1]]),
       design: c.design, strip_in: c.strip_in,
+      base_in: c.base.thickness_in, base_name: c.base.name,
       added: false, showNums: false,
       result: null, img: null, err: null,
     };
@@ -23255,6 +23316,7 @@ $("gzMSave").onclick = () => {
   } else {
     z.design = c.design;
     z.strip_in = c.strip_in;
+    z.base_in = c.base.thickness_in; z.base_name = c.base.name;
   }
   const name = z.name;
   gzModalClose();
@@ -23277,7 +23339,7 @@ addEventListener("keydown", (e) => {
   }
 }, true);
 (function gzWireModalInputs() {
-  for (const id of ["gzPadElev", "gzPlElev", "gzPlSlope", "gzPlAz", "gzStrip"]) {
+  for (const id of ["gzPadElev", "gzPlElev", "gzPlSlope", "gzPlAz", "gzStrip", "gzBaseIn", "gzBaseName"]) {
     const el = $(id);
     if (el) el.addEventListener("input", gzModalDirty);
   }

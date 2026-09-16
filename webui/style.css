@@ -1717,6 +1717,15 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
 .gz-totals { margin-top: 6px; font-size: var(--t-fs-xs); display: flex; gap: 12px;
   font-family: var(--mono); color: var(--text); }
 .gz-totals b { font-weight: 600; }
+/* ZONE TABLE: one line per zone - area, strip, cut, fill, net, total, base -
+   with an all-zones row once there are two (Beaumont's per-region sheet) */
+.gz-table { margin-top: 6px; overflow-x: auto; }
+.gz-table table { border-collapse: collapse; font-size: var(--t-fs-xs); font-family: var(--mono); width: 100%; }
+.gz-table th, .gz-table td { padding: 2px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.gz-table th { color: var(--dim); font-weight: 500; text-align: left; }
+.gz-table th.num, .gz-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.gz-table tr.gz-tot td { font-weight: 600; border-bottom: none; }
+.gz-table .gz-m-note { margin-top: 3px; }
 
 .gz-modal { position: fixed; inset: 0; z-index: 80;
   background: rgba(0, 0, 0, .45); display: flex; align-items: center;

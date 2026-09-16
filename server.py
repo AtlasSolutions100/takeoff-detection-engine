@@ -5706,6 +5706,15 @@ class GradingZoneBody(BaseModel):
     # surface before differencing (cut_fill's existing_offset convention)
     # and reports its own strip_yd3 = area x depth.
     strip_in: float = 0.0
+    # base course(s) ON TOP of the earthwork, [{name, thickness_in}], the
+    # same rows the whole-sheet /earthwork route takes. The declared
+    # elevation is the FINISHED grade: a pad or plane is lowered by the
+    # stack's thickness before differencing (the dig goes to the subgrade),
+    # a balance solves the subgrade and reports the finished grade above
+    # it, and each layer comes back as a "place" volume = zone area x
+    # thickness (the base covers the whole zone whatever the TIN reaches).
+    # Beaumont, 2026-09-15: a base under a slab or a road is its own line.
+    proposed_layers: list[dict] = []
     # existing ground, same shapes the /earthwork route takes:
     # rows [{chain_id, z}] and spot points [{x, y, z}]
     existing_rows: list[dict] = []
@@ -5756,7 +5765,17 @@ def earthwork_zone(job_id: str, page: int, body: GradingZoneBody):
             surf.points.append((float(q["x"]), float(q["y"]), float(q["z"])))
         except (KeyError, TypeError, ValueError):
             continue
-    out = zone_cut_fill(surf, body.polygon, ft_per_pt, body.design,
+    # the base stack: the typed elevation is finished grade, the earthwork
+    # stops at the subgrade below it
+    pr_layers, pr_off = _layer_stack(body.proposed_layers)
+    design = dict(body.design or {})
+    mode = design.get("mode")
+    if pr_off > 0 and mode in ("pad", "plane"):
+        try:
+            design["elev_ft"] = float(design["elev_ft"]) - pr_off
+        except (KeyError, TypeError, ValueError):
+            pass
+    out = zone_cut_fill(surf, body.polygon, ft_per_pt, design,
                         cell_ft=body.cell_ft or 2.0,
                         strip_in=body.strip_in)
     if "error" in out:
@@ -5766,6 +5785,21 @@ def earthwork_zone(job_id: str, page: int, body: GradingZoneBody):
         # at 324 ft against a declared pad published 417,664 CY here while
         # POST /earthwork on the same rows answered 400 surface_no_relief.
         raise HTTPException(400, _ew_refusal_detail(out))
+    out["layers"] = []
+    out["subgrade_offset_ft"] = 0.0
+    if pr_off > 0 and mode != "strip_only":
+        if mode == "balance" and out.get("balance_elev_ft") is not None:
+            # the bisection solved the SUBGRADE; say both, report the
+            # finished grade as the elevation (what the reviewer types
+            # everywhere else)
+            out["balance_subgrade_ft"] = out["balance_elev_ft"]
+            out["balance_elev_ft"] = round(out["balance_elev_ft"] + pr_off, 2)
+            out["balance_delta_ft"] = round(out["balance_elev_ft"] - out["existing_mean_ft"], 2)
+        area = float(out.get("zone_area_sf") or out.get("area_sf") or 0.0)
+        out["layers"] = [{"name": lay["name"], "thickness_in": lay["thickness_in"],
+                          "volume_yd3": round(area * lay["thickness_in"] / 12.0 / 27.0, 1)}
+                         for lay in pr_layers]
+        out["subgrade_offset_ft"] = round(pr_off, 3)
     # dz map clipped to the zone's grid, same palette as the whole-sheet
     # cut/fill map (cut blue / fill yellow-orange - the client's own
     # convention), base64 so one JSON reply carries numbers + picture.

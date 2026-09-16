@@ -1,0 +1,111 @@
+{
+ "errors": [],
+ "restored": [
+  {
+   "name": "Zone 1",
+   "base_in": 6,
+   "base_name": "Gravel",
+   "strip_in": 8,
+   "added": true,
+   "design": {
+    "mode": "pad",
+    "elev_ft": 7731.4
+   }
+  },
+  {
+   "name": "Zone 2",
+   "base_in": 0,
+   "base_name": "Base",
+   "strip_in": 8,
+   "added": false,
+   "design": {
+    "mode": "pad",
+    "elev_ft": 7703.5
+   }
+  }
+ ],
+ "recomputed": [
+  {
+   "name": "Zone 1",
+   "err": null,
+   "layers": [
+    {
+     "name": "Gravel",
+     "thickness_in": 6,
+     "volume_yd3": 148.2
+    }
+   ],
+   "cut": 668.1
+  },
+  {
+   "name": "Zone 2",
+   "err": null,
+   "layers": [],
+   "cut": 280.3
+  }
+ ],
+ "table": [
+  [
+   "zone",
+   "area SF",
+   "strip CY",
+   "cut CY",
+   "fill CY",
+   "net CY",
+   "total CY",
+   "base CY"
+  ],
+  [
+   "Zone 1",
+   "8,002",
+   "183",
+   "668",
+   "769",
+   "+101",
+   "1,438",
+   "148"
+  ],
+  [
+   "Zone 2",
+   "8,002",
+   "192",
+   "280",
+   "656",
+   "+375",
+   "936",
+   "0"
+  ],
+  [
+   "all zones",
+   "16,004",
+   "375",
+   "948",
+   "1,425",
+   "+477",
+   "2,374",
+   "148"
+  ]
+ ],
+ "rows": [
+  [
+   "Zone 1 cut",
+   668,
+   "CY"
+  ],
+  [
+   "Zone 1 fill",
+   769,
+   "CY"
+  ],
+  [
+   "Zone 1 topsoil strip",
+   183,
+   "CY"
+  ],
+  [
+   "Zone 1 place Gravel",
+   148,
+   "CY"
+  ]
+ ]
+}
