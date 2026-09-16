@@ -2,7 +2,8 @@
 // 2026-09-15). The modal asks for a base (thickness + name), the request
 // carries it as proposed_layers, the zone's rows gain "<zone> place <name>",
 // calcstate keeps it, and the panel renders one table over all zones
-// (area / strip / cut / fill / net / total / base, all-zones row).
+// (area / cut / fill / net / total, all-zones row; strip and base on each
+// zone's row line and summed in the note - seven columns overflowed the panel).
 //
 // run: node tests/test_zone_base.js   (fails on 86abed9)
 "use strict";
@@ -64,10 +65,14 @@ H.gzClearItems(z);
 check(!state.extraItems.some(i => /^Pad A/.test(i.label)) && state.extraItems.length === 1, "Remove clears all four by exact label");
 
 // ---- the table ----
-check(JSON.stringify(H.gzZoneCells(z)) === JSON.stringify([10000, 0, 185.2, 0, -185.2, 185.2, 185.2]), "cells: area, strip, cut, fill, net (fill - cut), total (cut + fill), base");
+check(JSON.stringify(H.gzZoneCells(z)) === JSON.stringify([10000, 185.2, 0, -185.2, 185.2]), "cells: area, cut, fill, net (fill - cut), total (cut + fill) - Beaumont's five");
+check(H.gzBaseCY(z) === 185.2, "the base is read off the zone's layers for the row line and the all-zones note");
+check(/all zones: strip \$\{ewCY\(strip\)\} CY \\u00b7 base \$\{ewCY\(base\)\} CY/.test(js), "the note under the table sums strip and base over all zones");
+check(/\.gz-table td:first-child \{ max-width: 76px; overflow: hidden; text-overflow: ellipsis; \}/.test(css), "a long zone name truncates instead of pushing the numbers out of the panel");
 check(H.gzNet(-185.2) === "−185" && H.gzNet(40) === "+40" && H.gzNet(0.2) === "0", "net carries its sign (+ in, - out)");
 check(H.gzEsc('<b>&"') === "&lt;b&gt;&amp;&quot;", "zone names are escaped into the table");
-check(/const GZ_TABLE_COLS = \["area SF", "strip CY", "cut CY", "fill CY", "net CY", "total CY", "base CY"\];/.test(js), "the seven columns");
+check(/const GZ_TABLE_COLS = \["area", "cut", "fill", "net", "total"\];/.test(js) && /area in SF, the rest in CY/.test(js), "the five columns with the units in the note (seven overflowed the panel, and unit-suffixed headers still clipped)");
+check(!/\.gz-table table \{[^}]*var\(--mono\)/.test(css), "the table uses the UI font (narrower digits) with tabular numbers, not mono");
 check(/if \(done\.length > 1\) rows \+= line\("all zones", tot, "gz-tot"\);/.test(js), "an all-zones row once there are two");
 check(/<div id="gzTable" class="gz-table" hidden><\/div>/.test(html) && !/id="gzTotals"/.test(html) && !/\$\("gzTotals"\)/.test(js), "the table replaces the old totals line");
 check(/\.gz-table th\.num, \.gz-table td\.num \{ text-align: right; font-variant-numeric: tabular-nums; \}/.test(css), "numbers right-aligned, tabular");

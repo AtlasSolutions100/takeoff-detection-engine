@@ -22927,21 +22927,23 @@ function renderGz() {
   if (tbl) gzRenderTable(tbl, zs);
 }
 
-// ZONE TABLE - one line per computed zone (Beaumont's per-region sheet,
-// 2026-09-15): area, strip, cut, fill, net (fill - cut: + brings dirt in,
-// - hauls it out), total (cut + fill: the dirt moved) and the base course.
-// An all-zones row once there are two. Numbers come from each zone's own
-// result; nothing here is a stored figure.
+// ZONE TABLE - one line per computed zone, Beaumont's own five columns
+// (2026-09-15): area, cut, fill, net (fill - cut: + brings dirt in, - hauls
+// it out), total (cut + fill: the dirt moved). An all-zones row once there
+// are two. The strip and the base course sit on each zone's row line and in
+// its takeoff rows; the note under the table carries their all-zones sums.
+// Five numeric columns are what fits the panel (seven overflowed it -
+// measured 2026-09-16, net / total / base hidden behind a scrollbar).
+// Numbers come from each zone's own result; nothing here is a stored figure.
 function gzBaseCY(z) {
   return ((z.result && z.result.layers) || []).reduce((a, l) => a + Math.max(+l.volume_yd3 || 0, 0), 0);
 }
 function gzZoneCells(z) {
   const r = z.result;
   const cut = Math.max(r.cut_yd3, 0), fill = Math.max(r.fill_yd3, 0);
-  return [Number(r.zone_area_sf || r.area_sf || 0), Math.max(r.strip_yd3 || 0, 0),
-          cut, fill, fill - cut, cut + fill, gzBaseCY(z)];
+  return [Number(r.zone_area_sf || r.area_sf || 0), cut, fill, fill - cut, cut + fill];
 }
-const GZ_TABLE_COLS = ["area SF", "strip CY", "cut CY", "fill CY", "net CY", "total CY", "base CY"];
+const GZ_TABLE_COLS = ["area", "cut", "fill", "net", "total"];   // SF, then CY - the note says so
 function gzEsc(s) {
   return String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 }
@@ -22953,20 +22955,23 @@ function gzRenderTable(tbl, zs) {
   if (!done.length) { tbl.hidden = true; tbl.innerHTML = ""; return; }
   tbl.hidden = false;
   const tot = GZ_TABLE_COLS.map(() => 0);
-  const line = (name, c, cls) => `<tr${cls ? ` class="${cls}"` : ""}><td>${gzEsc(name)}</td>`
-    + c.map((v, i) => `<td class="num">${i === 4 ? gzNet(v) : ewCY(v)}</td>`).join("") + `</tr>`;
-  let rows = "";
+  const line = (name, c, cls) => `<tr${cls ? ` class="${cls}"` : ""}><td title="${gzEsc(name)}">${gzEsc(name)}</td>`
+    + c.map((v, i) => `<td class="num">${i === 3 ? gzNet(v) : ewCY(v)}</td>`).join("") + `</tr>`;
+  let rows = "", strip = 0, base = 0;
   for (const z of done) {
     const c = gzZoneCells(z);
     c.forEach((v, i) => { tot[i] += v; });
+    strip += Math.max(z.result.strip_yd3 || 0, 0);
+    base += gzBaseCY(z);
     rows += line(z.name, c);
   }
   if (done.length > 1) rows += line("all zones", tot, "gz-tot");
   const missing = zs.length - done.length;
   tbl.innerHTML = `<table><thead><tr><th>zone</th>`
     + GZ_TABLE_COLS.map(h => `<th class="num">${h}</th>`).join("") + `</tr></thead><tbody>${rows}</tbody></table>`
-    + `<div class="gz-m-note">net = fill \u2212 cut (+ brings dirt in, \u2212 hauls it out) \u00b7 total = cut + fill, the dirt moved`
-    + ` \u00b7 base = zone area \u00d7 base thickness`
+    + `<div class="gz-m-note">area in SF, the rest in CY \u00b7 net = fill \u2212 cut (+ brings dirt in, \u2212 hauls it out) \u00b7 total = cut + fill, the dirt moved`
+    + (done.length > 1 && (strip > 0 || base > 0)
+        ? ` \u00b7 all zones: strip ${ewCY(strip)} CY \u00b7 base ${ewCY(base)} CY (each zone's own on its row)` : "")
     + (missing > 0 ? ` \u00b7 <span class="gz-err">${missing} zone${missing === 1 ? "" : "s"} not computed - not in this table</span>` : "")
     + `</div>`;
 }
