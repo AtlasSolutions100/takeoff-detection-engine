@@ -9909,6 +9909,90 @@ const BID_LABEL_ONLY = ["W", "G", "E"];
 // Uppercase, and collapse every non-alphanumeric run to one space, so
 // hyphenated CAD layer paths split into words. Padded with spaces so
 // whole-word tests are one indexOf.
+// ---- the bid-sheet template (Settings -> Bid sheet; takeoff_engine/bidsheet.py) ----
+// The seat's own bid sheet: ordered lines with a unit and the words that
+// file a takeoff row onto them - the same token grammar as BID_RULES above
+// (bidTokenHit) plus `not` words that veto a line and an optional regex on
+// the raw label for CORE's own calculator rows. First line that matches
+// wins, top to bottom. Kept on the server per seat (like the letterhead)
+// so the job's bid-sheet CSV and the report's bid-sheet page file rows
+// exactly as the bid view shows them. tests/fixtures/bidsheet_cases.json
+// pins this port and the Python original to the same answers.
+const BS_LABEL_ONLY = ["W", "G", "E"];
+let bsSheet;                 // /api/bidsheet payload; undefined = not asked, null = failed
+async function bsLoad(force) {
+  if (bsSheet !== undefined && !force) return bsSheet;
+  try {
+    const r = await fetch("/api/bidsheet");
+    bsSheet = r.ok ? await r.json() : null;
+  } catch (e) { bsSheet = null; }
+  return bsSheet;
+}
+function bsMode() { return store.getItem("bid.sheetMode") === "1"; }
+function bsLineFor(label, layer, lines) {
+  const raw = String(label == null ? "" : label);
+  const passes = [bidNormText(raw), bidNormText(raw + " " + String(layer == null ? "" : layer))];
+  for (let p = 0; p < passes.length; p++)
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      if ((ln.not || []).some((t) => bidTokenHit(passes[p], t))) continue;
+      if (ln.re && p === 0) {
+        let rx = null;
+        try { rx = new RegExp(ln.re); } catch (e) { rx = null; }
+        if (rx && rx.test(raw)) return { index: i, how: "re" };
+      }
+      for (const tok of (ln.match || [])) {
+        if (p === 1 && BS_LABEL_ONLY.indexOf(tok) >= 0) continue;
+        if (bidTokenHit(passes[p], tok)) return { index: i, how: tok };
+      }
+    }
+  return { index: -1, how: null };
+}
+// The bid view's rows regrouped onto the sheet's lines: every line in
+// order, blanks included (the sheet's empty lines are what the takeoff has
+// not produced yet), then the rows no line names. Same shape bidGroupRows
+// returns, so renderBidView draws both the same way. A row adds into a
+// line only in the line's unit; anything else is listed and kept out.
+function bsGroupRows(rows, lines) {
+  const out = lines.map((ln, i) => ({ bucket: `${ln.n || i + 1}. ${ln.name}`, line: ln, n: 0, byUnit: {}, members: [], other: {} }));
+  const un = { bucket: "Not on the bid sheet", line: null, n: 0, byUnit: {}, members: [], other: {} };
+  for (const r of rows || []) {
+    // by the row's NAME only: the approved export the CSV and the report
+    // are built from carries no CAD layer, so the screen must file the
+    // same way or the two would disagree (the layer pass is the bucket
+    // view's; measured on Barn C3.0 it put 27k ft of contour on Boulder walls)
+    const hit = bsLineFor(r.label, null, lines);
+    const unit = r.unit === "pt" || r.unit === "ft" ? "LF" : String(r.unit || "").toUpperCase();
+    const B = hit.index >= 0 ? out[hit.index] : un;
+    const ok = B.line ? (B.line.unit !== "LS" && unit === B.line.unit) : true;
+    const m = Object.assign({}, r, { bucket: B.bucket, ruleBucket: "", token: hit.how, via: "sheet",
+                                     size: bidSizeToken(r.label), sheetUnit: unit, sheetOk: ok });
+    B.n += 1;
+    if (typeof m.qty === "number" && isFinite(m.qty)) {
+      if (ok) B.byUnit[r.unit] = (B.byUnit[r.unit] || 0) + m.qty;
+      else B.other[unit] = (B.other[unit] || 0) + m.qty;
+    }
+    B.members.push(m);
+  }
+  for (const B of out) B.members.sort((x, y) => y.qty - x.qty);
+  out.push(un);
+  return out;
+}
+// the job's bid-sheet CSV, carrying the cross-sheet panel's unticks so the
+// file agrees with the screen (page:label, one per unticked contribution)
+function bsCsvUrl() {
+  const q = [];
+  for (const k of (state.xsIgnore || [])) {
+    const m = /^.* p(\d+) :: ([\s\S]+)$/.exec(k);
+    if (m) q.push("ignore=" + encodeURIComponent(m[1] + ":" + m[2]));
+  }
+  return url(`/api/job/${state.job}/bidsheet.csv` + (q.length ? "?" + q.join("&") : ""));
+}
+function bsLinkSync() {
+  const bl = $("bidsheetLink");
+  if (bl && !bl.hidden) bl.href = bsCsvUrl();
+}
+
 function bidNormText(s) {
   return (" " + String(s == null ? "" : s).toUpperCase()
     .replace(/[^A-Z0-9]+/g, " ").trim() + " ");
@@ -10081,7 +10165,13 @@ function renderBidView(groups, ftPerIn) {
                   // a concrete component under Structures.
                   subs: it.subs || [], subExt: it.subExt || 0 });
     }
-  const buckets = bidGroupRows(rows, (label) => {
+  // "in bid-sheet order": the same rows regrouped onto the seat's bid sheet
+  // (fetched once; until it arrives the buckets show, then this re-renders)
+  const modeCb = $("bidSheetMode");
+  if (modeCb) modeCb.checked = bsMode();
+  if (bsMode() && bsSheet === undefined) bsLoad().then(() => renderItemized());
+  const sheetMode = !!(bsMode() && bsSheet && bsSheet.lines);
+  const buckets = sheetMode ? bsGroupRows(rows, bsSheet.lines) : bidGroupRows(rows, (label) => {
     const v = store.getItem(bidKey(label));
     return v && BID_BUCKETS.indexOf(v) >= 0 ? v : null;
   });
@@ -10097,11 +10187,12 @@ function renderBidView(groups, ftPerIn) {
   };
   let any = false;
   for (const B of buckets) {
-    if (!B.n) continue;   // an empty bucket is not a bid line
+    if (!B.n && !sheetMode) continue;   // an empty bucket is not a bid line (a sheet's empty line is)
+    if (!B.n && sheetMode && !B.line) continue;   // nothing left over: no "not on the sheet" line
     any = true;
-    const un = B.bucket === BID_UNASSIGNED;
+    const un = B.bucket === BID_UNASSIGNED || (sheetMode && !B.line);
     const d = document.createElement("details");
-    d.className = "bid-bucket" + (un ? " bid-unassigned" : "");
+    d.className = "bid-bucket" + (un ? " bid-unassigned" : "") + (sheetMode && !B.n ? " bid-empty" : "");
     d.open = bidOpen.has(B.bucket);
     d.addEventListener("toggle", () => {
       if (d.open) bidOpen.add(B.bucket); else bidOpen.delete(B.bucket);
@@ -10119,7 +10210,16 @@ function renderBidView(groups, ftPerIn) {
     for (const m of B.members) bDecl += (m.subs || []).length;
     const declTxt = bDecl
       ? " · " + bDecl + " declared sub-item" + (bDecl === 1 ? "" : "s") : "";
-    sub.textContent = un
+    const otherTxt = sheetMode && B.line
+      ? Object.keys(B.other || {}).map((k) => abbr(B.other[k]) + " " + k).join(" · ") : "";
+    if (sheetMode) sub.textContent = !B.line
+      ? B.n + " row" + (B.n === 1 ? "" : "s") + " no line names / " + (chipText(B.byUnit) || "0 " + u)
+        + " — add a word to a line in Settings, or leave them out on purpose" + declTxt
+      : !B.n ? "— nothing on this line yet (" + B.line.unit + ")"
+      : (B.line.unit === "LS" ? "lump sum" : (chipText(B.byUnit) || "0 " + B.line.unit))
+        + " · " + B.n + " row" + (B.n === 1 ? "" : "s")
+        + (otherTxt ? " · " + otherTxt + " not summed (other unit)" : "") + declTxt;
+    else sub.textContent = un
       ? B.n + " row" + (B.n === 1 ? "" : "s") + " / "
         + (chipText(B.byUnit) || "0 " + u)
         + " not yet assigned — open the style list" + declTxt
@@ -10179,6 +10279,7 @@ function renderBidView(groups, ftPerIn) {
         + (m.ov ? " (your override; the itemized row discloses the "
                   + "detected figure)" : "");
       row.appendChild(q);
+      if (!sheetMode) {   // a bucket pick means nothing on the sheet's lines
       const pick = document.createElement("select");
       pick.className = "bid-pick" + (m.via === "override" ? " ov" : "");
       pick.name = "bid-" + m.label;
@@ -10203,6 +10304,13 @@ function renderBidView(groups, ftPerIn) {
         renderItemized();
       };
       row.appendChild(pick);
+      }
+      if (sheetMode && m.sheetOk === false) {
+        const nu = document.createElement("span");
+        nu.className = "bm-nounit";
+        nu.textContent = "not summed: " + m.sheetUnit + " on a " + (B.line ? B.line.unit : "") + " line";
+        row.appendChild(nu);
+      }
       if (m.sids.length) {
         row.onclick = () => bidIsolate(m, row);
         // EVERY style pooled under this bid line, not m.sids[0]. See the
@@ -15666,6 +15774,14 @@ async function xsLoadApproved() {
 }
 
 $("xsClose").onclick = () => { $("xsPanel").hidden = true; };
+{
+  const cb = $("bidSheetMode");
+  if (cb) {
+    cb.onclick = (e) => e.stopPropagation();
+    cb.onchange = () => { store.setItem("bid.sheetMode", cb.checked ? "1" : "0"); renderItemized(); };
+    cb.parentElement.onclick = (e) => e.stopPropagation();
+  }
+}
 
 $("xsBtn").onclick = async () => {
   const panel = $("xsPanel");
@@ -15744,6 +15860,7 @@ function renderXs() {
       cb.onchange = () => {
         if (cb.checked) state.xsIgnore.delete(k); else state.xsIgnore.add(k);
         renderXs();
+        bsLinkSync();
       };
       const nm = document.createElement("button");
       nm.className = "mini xs-go";
@@ -16715,6 +16832,8 @@ $("approveBtn").onclick = async () => {
   const rl = $("reportLink");
   rl.href = url(`/api/job/${state.job}/report.pdf`);
   rl.hidden = false;
+  const bl = $("bidsheetLink");
+  if (bl) { bl.href = bsCsvUrl(); bl.hidden = false; }
 };
 
 // ---------- legend sheet vocabulary ----------
@@ -25537,7 +25656,7 @@ function svHashTarget(hash) {
   if (h === "settings") return "";
   const g = { company: "svGroupCompany", appearance: "svGroupAppearance",
               theme: "svGroupAppearance", scope: "svGroupScope",
-              pricing: "svGroupPricing", account: "svGroupAccount",
+              pricing: "svGroupPricing", bidsheet: "svGroupBidsheet", account: "svGroupAccount",
               accounts: "svGroupAccounts" };
   return Object.prototype.hasOwnProperty.call(g, h) ? g[h] : null;
 }
@@ -25730,11 +25849,137 @@ function svLiveItems() {
   return out;
 }
 
+// ---------- BID SHEET ----------------------------------------------------------
+// The seat's bid-sheet template, edited here and kept on the server (see
+// bsLoad / takeoff_engine/bidsheet.py). The editor works on its own copy;
+// Save posts the whole list, Reset posts null and the printed sheet comes
+// back. Typing edits the model only - a re-render happens on move / remove
+// / add, never on a keystroke, so a focused field is never rebuilt.
+let svBs;                    // working copy of the /api/bidsheet payload; undefined = not asked, null = failed
+let svBsDirty = false;
+async function loadSvBs() {
+  const j = await bsLoad(true);
+  svBs = j ? JSON.parse(JSON.stringify(j)) : j;
+  svBsDirty = false;
+  renderSvBidsheet();
+}
+function svBsSet(msg, cls) {
+  const st = $("svBsState");
+  if (!st) return;
+  st.textContent = msg || "";
+  st.className = "sv-note" + (cls ? " " + cls : "");
+}
+function renderSvBidsheet() {
+  const note = $("svBsNote"), box = $("svBsTable");
+  if (!note) return;
+  if (svBs === undefined) {
+    note.textContent = "Reading your bid sheet from the server…";
+    box.innerHTML = "";
+    loadSvBs();
+    return;
+  }
+  if (!svBs) {
+    note.textContent = "Could not read the bid sheet from the server. Nothing has been "
+      + "changed - leave this page and come back to try again.";
+    box.innerHTML = "";
+    return;
+  }
+  const lines = svBs.lines = svBs.lines || [];
+  const where = svBs.scope === "account" ? "your account's own sheet"
+    : svBs.scope === "install" ? "this server's sheet (your account has not saved its own)"
+    : "the printed sheet - Beaumont Excavating's standard, as scanned; edit it and Save to make it yours";
+  note.textContent = `${lines.length} line${lines.length === 1 ? "" : "s"} · ${where}`
+    + (svBsDirty ? " · unsaved changes" : "");
+  box.innerHTML = "";
+  const scroll = document.createElement("div");
+  scroll.className = "sv-book-scroll";
+  const t = document.createElement("table");
+  t.className = "sv-book-table sv-bs";
+  t.innerHTML = "<thead><tr><th>#</th><th>Item</th><th>Unit</th><th>Matches</th><th>Not</th><th class=\"sv-r\"></th></tr></thead>";
+  const tb = document.createElement("tbody");
+  const touch = () => { svBsDirty = true; svBsSet("unsaved changes"); };
+  const words = (v) => v.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+  lines.forEach((ln, i) => {
+    const tr = document.createElement("tr");
+    const nTd = document.createElement("td");
+    nTd.textContent = String(i + 1); nTd.className = "sv-bs-n";
+    tr.appendChild(nTd);
+    const nameTd = document.createElement("td");
+    const name = document.createElement("input");
+    name.type = "text"; name.maxLength = 60; name.value = ln.name || "";
+    name.name = `bs-name-${i}`; name.className = "sv-bs-name";
+    if (ln.note) name.title = ln.note;
+    name.oninput = () => { ln.name = name.value; touch(); };
+    nameTd.appendChild(name); tr.appendChild(nameTd);
+    const uTd = document.createElement("td");
+    const sel = document.createElement("select");
+    sel.name = `bs-unit-${i}`;
+    for (const u of (svBs.units || ["LS", "SF", "CY", "LF", "EA"])) {
+      const o = document.createElement("option");
+      o.value = u; o.textContent = u; o.selected = u === ln.unit;
+      sel.appendChild(o);
+    }
+    sel.onchange = () => { ln.unit = sel.value; touch(); };
+    uTd.appendChild(sel); tr.appendChild(uTd);
+    const mTd = document.createElement("td");
+    const m = document.createElement("input");
+    m.type = "text"; m.value = (ln.match || []).join(", "); m.name = `bs-match-${i}`;
+    m.className = "sv-bs-match"; m.spellcheck = false;
+    m.title = ln.re ? "also matches CORE's own row names: /" + ln.re + "/" : "words, comma-separated";
+    m.oninput = () => { ln.match = words(m.value); touch(); };
+    mTd.appendChild(m); tr.appendChild(mTd);
+    const xTd = document.createElement("td");
+    const x = document.createElement("input");
+    x.type = "text"; x.value = (ln.not || []).join(", "); x.name = `bs-not-${i}`;
+    x.className = "sv-bs-not"; x.spellcheck = false;
+    x.oninput = () => { ln.not = words(x.value); touch(); };
+    xTd.appendChild(x); tr.appendChild(xTd);
+    const bTd = document.createElement("td");
+    bTd.className = "sv-r sv-bs-btns";
+    const btn = (txt, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "mini"; b.textContent = txt; b.title = title; b.onclick = fn;
+      return b;
+    };
+    bTd.appendChild(btn("↑", "move up", () => { if (i > 0) { lines.splice(i - 1, 0, lines.splice(i, 1)[0]); touch(); renderSvBidsheet(); } }));
+    bTd.appendChild(btn("↓", "move down", () => { if (i < lines.length - 1) { lines.splice(i + 1, 0, lines.splice(i, 1)[0]); touch(); renderSvBidsheet(); } }));
+    bTd.appendChild(btn("✕", "remove this line", () => { lines.splice(i, 1); touch(); renderSvBidsheet(); }));
+    tr.appendChild(bTd);
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); scroll.appendChild(t); box.appendChild(scroll);
+  $("svBsAdd").onclick = () => {
+    lines.push({ name: "", unit: "LF", match: [], not: [] });
+    touch(); renderSvBidsheet();
+    const last = box.querySelector("tbody tr:last-child input");
+    if (last) last.focus();
+  };
+  $("svBsSave").onclick = () => svBsSave(lines);
+  $("svBsReset").onclick = () => svBsSave(null);
+}
+async function svBsSave(lines) {
+  svBsSet(lines ? "saving…" : "resetting…");
+  try {
+    const r = await fetch("/api/bidsheet", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ lines }) });
+    if (!r.ok) throw new Error("failed (" + r.status + ")");
+    const j = await r.json();
+    bsSheet = j;
+    svBs = JSON.parse(JSON.stringify(j));
+    svBsDirty = false;
+    renderSvBidsheet();
+    svBsSet(lines ? `saved · ${j.lines.length} line${j.lines.length === 1 ? "" : "s"} on `
+                    + (j.scope === "account" ? "your account" : "this server")
+                  : "back to the printed sheet", "ok");
+  } catch (e) { svBsSet("not saved: " + ((e && e.message) || e), "err"); }
+}
+
 function renderSettings() {
   renderSvBrand();
   renderSvTheme();
   renderSvScope();
   renderSvBook();
+  renderSvBidsheet();
   renderSvColors();
   renderSvMaterials();
   renderSvFoot();

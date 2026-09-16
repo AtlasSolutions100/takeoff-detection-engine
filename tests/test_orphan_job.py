@@ -139,6 +139,7 @@ PINNED = sorted([
     ("GET", J + "/page/{page}/callouts"),
     ("GET", J + "/page/{page}/footings"),
     ("POST", J + "/page/{page}/footings/split"),
+    ("GET", J + "/bidsheet.csv"),
     ("GET", J + "/datum"),
     ("GET", J + "/page/{page}/symbols/suggest"),
     ("GET", J + "/marks-rollup"),
@@ -229,7 +230,7 @@ def test_0_every_job_route_is_enumerated():
             f"{m} {p}" for m, p in sorted(set(live) - set(PINNED)))
         + "\n  -" + "\n  -".join(
             f"{m} {p}" for m, p in sorted(set(PINNED) - set(live))))
-    assert len(live) == 33, len(live)   # +scale/dimensions, +earthwork/progress, +footings, +datum, +footings/split
+    assert len(live) == 34, len(live)   # +scale/dimensions, +earthwork/progress, +footings, +datum, +footings/split, +bidsheet.csv
 
 
 def test_1_gate_fails_closed_on_a_missing_row():

@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=91">
+<link rel="stylesheet" href="style.css?v=92">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -243,6 +243,7 @@
       <a href="#appearance">Appearance</a>
       <a href="#scope">Scope</a>
       <a href="#pricing">Pricing</a>
+      <a href="#bidsheet">Bid sheet</a>
       <a href="#account">Account</a>
       <a href="#accounts" id="svNavAccounts" hidden>Accounts</a>
       <a href="#machine" id="svNavMachine">This machine</a>
@@ -346,6 +347,30 @@
       <div id="svImportPreview" class="sv-preview" hidden></div>
     </section>
     <div class="sv-foot" id="svFoot"></div>
+
+    <h2 class="sv-grouptitle" id="svGroupBidsheet">Bid sheet</h2>
+    <section class="sv-section" id="svBidsheetSection">
+      <h2>Your bid sheet, line by line</h2>
+      <div class="sv-note" id="svBsNote">Loading&hellip;</div>
+      <div id="svBsTable" class="sv-book"></div>
+      <div class="sv-addrow">
+        <button id="svBsAdd" class="mini">Add a line</button>
+        <button id="svBsSave" class="mini">Save</button>
+        <button id="svBsReset" class="mini">Reset to the printed sheet</button>
+        <span class="sv-note" id="svBsState"></span>
+      </div>
+      <div class="sv-note sv-note-b">The order and the units are yours. The
+        <b>matches</b> words file a takeoff row onto a line by its name: the first
+        line that matches wins, top to bottom; a word of three letters or fewer
+        must stand alone (SD never matches inside SDWK); write <b>=WORD</b> for a
+        longer word that must stand alone; <b>not</b> words keep a row off a
+        line. A row adds into a line only in the line&rsquo;s unit &mdash; anything
+        else is listed beside it and kept out of the sum. The job&rsquo;s
+        <b>Bid sheet CSV</b>, the report&rsquo;s bid-sheet page and the bid
+        view&rsquo;s <b>in bid-sheet order</b> mode all follow this list; rows
+        nothing matches are listed under &ldquo;not on the bid sheet&rdquo;,
+        never dropped.</div>
+    </section>
 
     <h2 class="sv-grouptitle" id="svGroupAccount">Account</h2>
     <section class="sv-section">
@@ -848,6 +873,7 @@
     <div class="side-head bid-head" id="bidHead" hidden>
       <h2>Bid view <span class="card-n" id="bidCount"></span></h2>
       <span class="bid-honesty">grouped by name rules &mdash; every number is the sum of the measured rows below it</span>
+      <label class="bid-mode" title="Regroup the same rows onto your bid sheet's lines (Settings &rarr; Bid sheet), in its order and units"><input type="checkbox" id="bidSheetMode"> in bid-sheet order</label>
     </div>
     <div id="bidBox" class="bid-view" hidden></div>
         </section>
@@ -891,6 +917,7 @@
     <div class="links-bar">
       <a id="dlLink" hidden download>elements.json</a>
       <a id="reportLink" hidden>Report PDF (all approved pages)</a>
+      <a id="bidsheetLink" hidden title="Every approved page filed onto your bid sheet's lines, in its order and units; rows no line names are listed at the end">Bid sheet CSV</a>
     </div>
     </div>
     <!-- The resize grip: the column's inner edge is draggable, and the
@@ -1255,6 +1282,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=186"></script>
+<script src="app.js?v=187"></script>
 </body>
 </html>

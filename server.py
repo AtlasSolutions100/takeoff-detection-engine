@@ -28,13 +28,14 @@ from collections import deque
 from pathlib import Path
 
 import pymupdf
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from takeoff_engine import bids as _bids
 from takeoff_engine import branding as _branding
+from takeoff_engine import bidsheet as _bidsheet
 from takeoff_engine import ledger
 from takeoff_engine.chain import build_chains
 from takeoff_engine.classify_page import classify_page
@@ -768,6 +769,35 @@ def post_branding(body: BrandingBody, request: Request):
             "scope": scope, "seat": scope,
             "company_max": _branding.COMPANY_MAX,
             "contact_max": _branding.CONTACT_MAX}
+
+
+class BidsheetBody(BaseModel):
+    lines: list | None = None
+
+
+def _bidsheet_payload(lines, scope, request: Request) -> dict:
+    return {"lines": lines, "scope": scope,
+            "seat": "account" if _who(request) else "install",
+            "units": list(_bidsheet.UNITS), "default": _bidsheet.default_lines(),
+            "line_max": _bidsheet.LINE_MAX}
+
+
+@app.get("/api/bidsheet")
+def get_bidsheet(request: Request):
+    """This seat's bid sheet: ordered lines with units and the words that
+    file a takeoff row onto them (Beaumont's printed sheet until the seat
+    saves its own). `scope` says where it came from, like the letterhead."""
+    lines, scope = _bidsheet.resolve(_who(request))
+    return _bidsheet_payload(lines, scope, request)
+
+
+@app.post("/api/bidsheet")
+def post_bidsheet(body: BidsheetBody, request: Request):
+    """Save this seat's sheet (a list, cleaned and renumbered) or, with
+    `lines` null, remove it and go back to the printed default."""
+    lines, scope = _bidsheet.save(_who(request), body.lines)
+    return _bidsheet_payload(lines, scope, request)
+
 
 # BETA NOTICE. The whole point of this product is a number an estimator puts
 # in a bid, so the caveat has to travel WITH the number, not sit on a login
@@ -4170,6 +4200,7 @@ def report_pdf(job_id: str, request: Request):
     _brec, _bscope = _branding.resolve(_who(request))
     _bco = (_brec.get("company") or "").strip()
     _bct = (_brec.get("contact") or "").strip()
+    _bs_pages: list = []            # every approved page's rows, for the bid-sheet page
 
     def _letterhead(pg) -> None:
         """Stamp the company on one 612x792 text page. Self-declared and
@@ -4205,6 +4236,7 @@ def report_pdf(job_id: str, request: Request):
 
         # itemized table page
         items = exp.get("items", [])
+        _bs_pages.append({"page": pno, "items": items})
         tp = out.new_page(width=612, height=792)
         _letterhead(tp)
         y = 60
@@ -4422,6 +4454,43 @@ def report_pdf(job_id: str, request: Request):
     # notice mid-sentence at "...are produced by" - a half-printed disclaimer
     # is worse than none, and it would have broken again the moment anyone
     # edited the wording.
+    # THE BID SHEET PAGE: the same approved rows filed onto this seat's bid
+    # sheet (Settings -> Bid sheet) in its order and its units; a line
+    # nothing matched prints blank, rows no line names print at the end.
+    _bs_lines, _bs_scope = _bidsheet.resolve(_who(request))
+    _bs = _bidsheet.build(_bs_lines, _bs_pages)
+    tp = out.new_page(width=612, height=792)
+    _letterhead(tp)
+    y = 60
+    tp.insert_text((50, y), "Bid sheet", fontsize=16)
+    y += 17
+    tp.insert_text((50, y), (f"{_bidsheet.scope_text(_bs_scope)} - {len(pages)} approved "
+                             "sheet(s); a run on several sheets counts "
+                             "once per sheet")[:118], fontsize=8)
+    y += 16
+    for _x, _h in ((50, "#"), (70, "Item"), (300, "Unit"), (340, "Qty"), (420, "Rows")):
+        tp.insert_text((_x, y), _h, fontsize=9)
+    y += 14
+    _bs_rows = list(_bs["lines"])
+    if _bs["unmatched"]:
+        _bs_rows.append({"n": "", "name": "Not on the bid sheet", "unit": "", "qty": None, "rows": [], "other": {}})
+        _bs_rows += [{"n": "", "name": "   " + r["label"], "unit": r["unit"], "qty": r["qty"], "rows": [r], "other": {}}
+                     for r in _bs["unmatched"]]
+    for _L in _bs_rows:
+        if y > 740:
+            tp = out.new_page(width=612, height=792)
+            _letterhead(tp)
+            y = 60
+        tp.insert_text((50, y), str(_L["n"]), fontsize=9)
+        tp.insert_text((70, y), str(_L["name"])[:44], fontsize=9)
+        tp.insert_text((300, y), str(_L["unit"]), fontsize=9)
+        _qv = _L["qty"]
+        _qs = "" if _qv is None or (_qv == 0 and not _L["rows"]) else f"{_qv:,.1f}".rstrip("0").rstrip(".")
+        tp.insert_text((340, y), _qs, fontsize=9)
+        _oth = ", ".join(f"{v:,g} {u} not summed" for u, v in (_L.get("other") or {}).items())
+        tp.insert_text((420, y), (str(len(_L["rows"])) + (f" ({_oth})" if _oth else "")) if _L["rows"] else "",
+                       fontsize=8)
+        y += 12
     _beta = textwrap.wrap(BETA_LONG, 150) or [""]
     for _pg in out:
         _w, _h = _pg.rect.width, _pg.rect.height
@@ -4445,6 +4514,38 @@ def report_pdf(job_id: str, request: Request):
     out.save(pdf_path, deflate=True, garbage=4)
     return FileResponse(pdf_path, media_type="application/pdf",
                         filename=f"takeoff_{Path(job['path']).stem[:30]}.pdf")
+
+
+@app.get("/api/job/{job_id}/bidsheet.csv")
+def bidsheet_csv(job_id: str, request: Request, ignore: list[str] = Query([])):
+    """Every approved page of this job filed onto this seat's bid sheet, in
+    its order and units: one CSV row per bid line, blanks kept, the rows no
+    line names listed at the end (never dropped). `ignore` repeats
+    "page:label" for the sheet contributions the operator unticked on the
+    cross-sheet panel, so the CSV agrees with the screen."""
+    job = JOBS.get(job_id) or _404()
+    jd = _job_dir(job_id)
+    pages = sorted(int(f.name[1:].split("_")[0]) for f in jd.glob("p*_elements.json"))
+    if not pages:
+        raise HTTPException(404, "no approved pages yet")
+    skip = set()
+    for k in ignore or []:
+        pg_, _, label = str(k).partition(":")
+        if pg_.isdigit() and label:
+            skip.add((int(pg_), label))
+    lines, scope = _bidsheet.resolve(_who(request))
+    rows = []
+    for pno in pages:
+        try:
+            exp = json.loads((jd / f"p{pno}_elements.json").read_text())
+        except (OSError, ValueError):
+            continue
+        rows.append({"page": pno, "items": exp.get("items", [])})
+    text = _bidsheet.to_csv(_bidsheet.build(lines, rows, ignore=skip),
+                            Path(job["path"]).name, scope)
+    return Response(text, media_type="text/csv",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="bidsheet_{Path(job["path"]).stem[:30]}.csv"'})
 
 
 class AnalyzeResponse(BaseModel):

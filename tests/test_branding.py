@@ -188,8 +188,9 @@ _sig = inspect.signature(server.report_pdf)
 ok("request" in _sig.parameters,
    "report_pdf takes the Request it needs to resolve WHOSE company to stamp")
 _src = inspect.getsource(server.report_pdf)
-ok("_letterhead" in _src and _src.count("_letterhead(tp)") == 4,
-   "report_pdf: every text page it creates gets the letterhead call",
+ok("_letterhead" in _src and _src.count("_letterhead(tp)") == 6,
+   "report_pdf: every text page it creates gets the letterhead call "
+   "(4, plus the bid-sheet page and its overflow since 2026-09-16)",
    _src.count("_letterhead(tp)"))
 ok("if not _bco:" in _src,
    "report_pdf: a blank company draws nothing at all")

@@ -1,0 +1,99 @@
+CORE Takeoff - bid sheet,upload_8fff4cc725d5_SWR_Barn_Residence_-_Civil_4.7.26.pdf
+template,the printed sheet (default - not edited yet)
+approved sheets,3
+note,quantities are sums of the approved sheets' rows; a row drawn on several sheets counts once per sheet
+
+#,Item,Unit,Qty,Rows,From
+1,Mobilization,LS,,0,
+2,Clear & Grub,SF,,0,
+3,Strip Topsoil,CY,183,1,p3: Zone 1 topsoil strip 183 CY
+4,Site Cut,CY,668,1,p3: Zone 1 cut 668 CY
+5,Site Fill,CY,875,1,p3: Zone 1 fill 875 CY
+6,Mass Excavation,CY,1802.2,1,p3: Mass Excavation 1802.2 CY
+7,Perimeter Drain,LF,420,1,p3: Perimeter Drain 420 LF
+8,Structure Excavation,CY,466.7,1,p3: Structure Excavation 466.7 CY
+9,Structure Backfill,CY,466.7,1,p3: Structure Backfill 466.7 CY
+10,Mass Backfill,CY,,0,
+11,Slab Prep,SF,8109.9,1,p3: Slab Prep 8109.9 SF
+12,Rough Place Topsoil,CY,,0,
+13,"18"" Culvert",LF,267.5,2,p3: SE-P-UT-STORM-CULVERT-ENTRY3 257.9 LF; p3: SE-P-UT-STORM-CULVERT 9.6 LF
+14,Drive Sub Grade Prep,SF,0,1,p3: SE-P-CENTERLINE DRIVEWAY 493.6 LF (not summed: other unit) [also 493.6 LF in other units]
+15,"4"" Sewer",LF,408,2,p3: SE-P-UT-SEWER 69.8 LF; p3: SE-P-UT-SS 338.2 LF
+16,Water,LF,2319.4,5,p3: SE-P-UT-WATER-10'' 1756.4 LF; p3: SE-P-UT-WATER-SRV 222 LF; p3: SE-P-UT-WATER-6'' 154 LF; p3: SE-P-UT-WATER-SRV BR 117.2 LF; p3: SE-P-UT-WATER-SVC 69.8 LF
+17,Elec/Phone/TV - Trench,LF,1538,2,p3: P-UT-ELEC-UG 1340.9 LF; p3: PROPOSED UNDERGROUND ELEC. (legend) 197.1 LF
+18,Gas Trench only,LF,285.4,1,p3: SE-P-UT-GAS 285.4 LF
+19,Outside Slab Prep,SF,,0,
+20,Radon,LF,412,1,p3: Radon 412 LF
+21,Site Drains,LF,2034.8,5,p3: SE-P-STORM-PIPE BR IN 1223 LF; p3: P-VENT DRAIN 466.4 LF; p3: SE-P-UT-STORM 165.1 LF; p3: PROPOSED STORM SEWER (legend) 98.5 LF; p3: SE-P-UT-STORM INLET BR 81.8 LF
+22,Boulder walls,SF,0,5,p3: BG-L-Boulder Cut 11.4 LF (not summed: other unit); p3: BG-L-Retaining Wall type 2 69.1 LF (not summed: other unit); p3: BG-L-Retaining Wall arch 46.2 LF (not summed: other unit); p3: BG-L-Boulders 1146.1 LF (not summed: other unit); p3: BG-L-Steel Retaining 62.2 LF (not summed: other unit) [also 1335 LF in other units]
+23,Silt Fence,LF,1632.1,1,p3: BG-Limit of disturbance 1632.1 LF
+24,Septic Tank,EA,,0,
+25,Propane Tank,EA,,0,
+
+,Not on the bid sheet,,,,"rows no line matched - add a word to a line in Settings, or leave them out on purpose"
+,EXISTING CONTOUR (TRUE NORTH SURVEY) (legend),LF,42409.8,1,p3
+,PROPOSED CONTOUR (legend),LF,25842.9,1,p3
+,PROPOSED 1-FT CONTOURS (SEPARATE PERMIT) (legend),LF,11337.2,1,p3
+,7900 EXISTING CONTOUR INTERVAL (TRUE NORTH SURVEY) (legend),LF,9056.5,1,p3
+,C-TOPO,LF,7143.5,1,p3
+,SE-P-SWALE,LF,888.9,1,p3
+,C-TOPO-MINR-E,LF,69.5,1,p3
+,C-TOPO-MAJR-E,LF,69.5,1,p3
+,Zone 1 place Gravel,CY,148,1,p3
+,BG-THERMAL WELLS,LF,10084.1,1,p3
+,SE-P-OWTS-PDchmbr-trench sys,LF,752.1,1,p3
+,BG-building-CSA,LF,1008.8,1,p3
+,BG-L-Stair type 3,LF,572.6,1,p3
+,BG-L-Stair type 1,LF,208.8,1,p3
+,BG-L-Stair type 2,LF,176.3,1,p3
+,BG-L-PLNT-TREE-STEM,LF,8215.6,1,p3
+,1Tree,LF,4420.3,1,p3
+,PROPERTY/TRACT LINE (legend),LF,1907.2,1,p3
+,BG-L-PLNT-TREE,LF,265.7,1,p3
+,SE-P-SETBACK,LF,69.8,1,p3
+,BG-L-Handrail,LF,30.1,1,p3
+,solid solid,LF,8229.1,1,p3
+,BG-L-Metal edger,LF,5264.7,1,p3
+,dash1 d1.0 g7.6,LF,5042.6,1,p3
+,BG-L-PLNT-SHRB,LF,2562.8,1,p3
+,BG-L-Conc,LF,1992.6,1,p3
+,dash2 d9.0 d54.0 g9.0,LF,1961.3,1,p3
+,dash1 d31.4 g19.8,LF,1763.2,1,p3
+,SE-P-EOG ENTRY 3 UPPER,LF,1762.6,1,p3
+,SE-P-Infiltr-chamber,LF,1312.3,1,p3
+,dash1 d18.0 g62.3,LF,1271,1,p3
+,SE-P-SEDIMENT LOG,LF,1124.9,1,p3
+,SE-P-CL-CB,LF,1039.9,1,p3
+,SE-P-CONC,LF,758.6,1,p3
+,SE-P-CENTERLINE,LF,734.4,1,p3
+,BG-L-Paver type 7,LF,655.7,1,p3
+,dash1 d30.6 g36.0,LF,590.9,1,p3
+,SE-P-GRAVEL HTCH GC2,LF,537.6,1,p3
+,BG-L-Pool,LF,518.4,1,p3
+,BG-L-Gravel type 1,LF,457.3,1,p3
+,SE-P-FND-SOLID FND DRN,LF,451.2,1,p3
+,SE-OWTS-FIELD,LF,418.6,1,p3
+,SE-P-OWTS FIELD,LF,341.9,1,p3
+,SE-P-EOG AB RD,LF,286.7,1,p3
+,BG-L-Amphitheater,LF,277.6,1,p3
+,BG-L-Gravel Decorative,LF,257.5,1,p3
+,SE-P-FL,LF,254.6,1,p3
+,BG-L-Paver type 2,LF,246.9,1,p3
+,BG-PARCEL BOUNDARIES,LF,226.7,1,p3
+,dash1 d9.0 g4.5,LF,202.8,1,p3
+,EX-GRAVEL,LF,197.2,1,p3
+,dash2 d9.2 d19.5 g44.6,LF,167.2,1,p3
+,dash2 misc,LF,164.1,1,p3
+,dash1 misc,LF,147,1,p3
+,A-BLDG-FPRT,LF,98.1,1,p3
+,BG-L-Paver type 4,LF,94.8,1,p3
+,SE-EX-PL-ROW,LF,69.8,1,p3
+,SE-P-FL-ARROW,LF,69.6,1,p3
+,SE-EX-GRAVEL,LF,69.5,1,p3
+,BG-L-Gravel type 3,LF,64.7,1,p3
+,EX-BREAKLINES,LF,48.3,1,p3
+,SE-P-CENTERLINE MR,LF,44.9,1,p3
+,SE-P-UT-IRR,LF,34.6,1,p3
+,SE-P-EOG,LF,27.9,1,p3
+,BG-L-Fire-Stone Flush,LF,22.9,1,p3
+,BG-L-PLNT-SHRB-STEM,LF,19.1,1,p3

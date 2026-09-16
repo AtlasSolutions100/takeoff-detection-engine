@@ -807,6 +807,16 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .st-groups tbody tr:hover td, .st-groups tr:hover td { background: rgba(127, 127, 127, .14); }
 .st-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; border: 1px solid rgba(0, 0, 0, .4); margin-right: 2px; }
 .st-paint { display: flex; align-items: center; gap: 4px; }
+/* Settings -> Bid sheet: the line editor */
+.sv-bs input.sv-bs-name { width: 150px; }
+.sv-bs input.sv-bs-match { width: 230px; }
+.sv-bs input.sv-bs-not { width: 110px; }
+.sv-bs td.sv-bs-n { color: var(--dim); }
+.sv-bs td.sv-bs-btns button { margin-left: 2px; }
+/* the bid view's in-bid-sheet-order mode */
+.bid-mode { margin-left: auto; font-size: var(--t-fs-xs); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.bid-bucket.bid-empty summary { opacity: .55; }
+.bm-nounit { font-size: var(--t-fs-xs); color: var(--t-warn); margin-left: 6px; white-space: nowrap; }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }

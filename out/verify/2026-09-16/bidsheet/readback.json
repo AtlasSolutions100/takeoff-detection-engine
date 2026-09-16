@@ -1,0 +1,790 @@
+{
+ "errors": [],
+ "appJs": "v=187",
+ "s1": {
+  "note": "25 lines \u00b7 the printed sheet - Beaumont Excavating's standard, as scanned; edit it and Save to make it yours",
+  "state": "",
+  "rows": [
+   [
+    "1",
+    "Mobilization",
+    "LS",
+    "",
+    ""
+   ],
+   [
+    "2",
+    "Clear & Grub",
+    "SF",
+    "CLEAR, GRUB, CLEARING",
+    ""
+   ],
+   [
+    "3",
+    "Strip Topsoil",
+    "CY",
+    "STRIP TOPSOIL, TOPSOIL STRIP",
+    "PLACE, ROUGH"
+   ],
+   [
+    "4",
+    "Site Cut",
+    "CY",
+    "=CUT",
+    "BOULDER"
+   ],
+   [
+    "5",
+    "Site Fill",
+    "CY",
+    "=FILL",
+    ""
+   ],
+   [
+    "6",
+    "Mass Excavation",
+    "CY",
+    "MASS EXCAVATION, MASS EX",
+    ""
+   ],
+   [
+    "7",
+    "Perimeter Drain",
+    "LF",
+    "PERIMETER DRAIN, FOUNDATION DRAIN, FOOTER DRAIN, FOTER DRAIN",
+    ""
+   ],
+   [
+    "8",
+    "Structure Excavation",
+    "CY",
+    "STRUCTURE EXCAVATION, STRUCT EX, STRUCTURAL EX",
+    ""
+   ],
+   [
+    "9",
+    "Structure Backfill",
+    "CY",
+    "STRUCTURE BACKFILL, STRUCT BACKFILL, STRUCTURAL BACKFILL",
+    ""
+   ],
+   [
+    "10",
+    "Mass Backfill",
+    "CY",
+    "",
+    ""
+   ],
+   [
+    "11",
+    "Slab Prep",
+    "SF",
+    "SLAB PREP, SLAB",
+    "OUTSIDE, PATIO, WALK, DRIVE, EXTERIOR"
+   ],
+   [
+    "12",
+    "Rough Place Topsoil",
+    "CY",
+    "ROUGH PLACE, PLACE TOPSOIL, RESPREAD",
+    ""
+   ],
+   [
+    "13",
+    "18\" Culvert",
+    "LF",
+    "CULVERT",
+    ""
+   ],
+   [
+    "14",
+    "Drive Sub Grade Prep",
+    "SF",
+    "DRIVE SUBGRADE, DRIVE SUB GRADE, DRIVEWAY, DRIVE, SUBGRADE, SUB GRADE",
+    ""
+   ],
+   [
+    "15",
+    "4\" Sewer",
+    "LF",
+    "SEWER, SANITARY, SS, SSWR",
+    "TANK, STORM, FIELD"
+   ],
+   [
+    "16",
+    "Water",
+    "LF",
+    "WATER, WATR, WM, W, DOMESTIC, POTABLE",
+    "TANK, STORM, TOPO"
+   ],
+   [
+    "17",
+    "Elec/Phone/TV - Trench",
+    "LF",
+    "ELECTRIC, =ELEC, UGE, UE, TELEPHONE, TELE, COMM, CATV, TV, FIBER, JOINT TRENCH, E",
+    "TOPO, CONTOUR"
+   ],
+   [
+    "18",
+    "Gas Trench only",
+    "LF",
+    "GAS, G",
+    "TANK, TOPO"
+   ],
+   [
+    "19",
+    "Outside Slab Prep",
+    "SF",
+    "OUTSIDE SLAB, PATIO, SIDEWALK, WALK, FLATWORK, PATH, CARPORT, CAR PORT",
+    ""
+   ],
+   [
+    "20",
+    "Radon",
+    "LF",
+    "RADON",
+    ""
+   ],
+   [
+    "21",
+    "Site Drains",
+    "LF",
+    "SITE DRAIN, STORM, SD, ROOF DRAIN, DOWNSPOUT, AREA DRAIN, GUTTER, DRAIN, INLET",
+    "PERIMETER, FOUNDATION, FOOTER"
+   ],
+   [
+    "22",
+    "Boulder walls",
+    "SF",
+    "BOULDER, ROCK WALL, SITE WALL, RETAINING",
+    ""
+   ],
+   [
+    "23",
+    "Silt Fence",
+    "LF",
+    "SILT, FENCE, LIMIT OF DISTURBANCE, LIMITS OF DISTURBANCE, LIMIT OF WORK, LIMITS OF WORK, LOD",
+    ""
+   ],
+   [
+    "24",
+    "Septic Tank",
+    "EA",
+    "SEPTIC TANK",
+    ""
+   ],
+   [
+    "25",
+    "Propane Tank",
+    "EA",
+    "PROPANE TANK",
+    ""
+   ]
+  ]
+ },
+ "rect_s1": {
+  "section": [
+   222.5,
+   109.28125,
+   1040,
+   658.5
+  ],
+  "table": [
+   223.5,
+   178.78125,
+   1038,
+   430
+  ],
+  "nav": [
+   543.953125,
+   -2156,
+   76.6875,
+   26
+  ]
+ },
+ "s2_after_remove": {
+  "rows": 24,
+  "state": "unsaved changes",
+  "note": "24 lines \u00b7 the printed sheet - Beaumont Excavating's standard, as scanned; edit it and Save to make it yours \u00b7 unsaved changes"
+ },
+ "s2_saved": "saved \u00b7 24 lines on this server",
+ "s2": {
+  "note": "24 lines \u00b7 this server's sheet (your account has not saved its own)",
+  "state": "",
+  "rows": [
+   [
+    "1",
+    "Mobilization",
+    "LS",
+    "",
+    ""
+   ],
+   [
+    "2",
+    "Clear & Grub",
+    "SF",
+    "CLEAR, GRUB, CLEARING",
+    ""
+   ],
+   [
+    "3",
+    "Strip Topsoil",
+    "CY",
+    "STRIP TOPSOIL, TOPSOIL STRIP",
+    "PLACE, ROUGH"
+   ],
+   [
+    "4",
+    "Site Cut",
+    "CY",
+    "=CUT",
+    "BOULDER"
+   ],
+   [
+    "5",
+    "Site Fill",
+    "CY",
+    "=FILL",
+    ""
+   ],
+   [
+    "6",
+    "Mass Excavation",
+    "CY",
+    "MASS EXCAVATION, MASS EX",
+    ""
+   ],
+   [
+    "7",
+    "Perimeter Drain",
+    "LF",
+    "PERIMETER DRAIN, FOUNDATION DRAIN, FOOTER DRAIN, FOTER DRAIN",
+    ""
+   ],
+   [
+    "8",
+    "Structure Excavation",
+    "CY",
+    "STRUCTURE EXCAVATION, STRUCT EX, STRUCTURAL EX",
+    ""
+   ],
+   [
+    "9",
+    "Structure Backfill",
+    "CY",
+    "STRUCTURE BACKFILL, STRUCT BACKFILL, STRUCTURAL BACKFILL",
+    ""
+   ],
+   [
+    "10",
+    "Slab Prep",
+    "SF",
+    "SLAB PREP, SLAB",
+    "OUTSIDE, PATIO, WALK, DRIVE, EXTERIOR"
+   ],
+   [
+    "11",
+    "Rough Place Topsoil",
+    "CY",
+    "ROUGH PLACE, PLACE TOPSOIL, RESPREAD",
+    ""
+   ],
+   [
+    "12",
+    "18\" Culvert",
+    "LF",
+    "CULVERT",
+    ""
+   ],
+   [
+    "13",
+    "Drive Sub Grade Prep",
+    "SF",
+    "DRIVE SUBGRADE, DRIVE SUB GRADE, DRIVEWAY, DRIVE, SUBGRADE, SUB GRADE",
+    ""
+   ],
+   [
+    "14",
+    "4\" Sewer",
+    "LF",
+    "SEWER, SANITARY, SS, SSWR",
+    "TANK, STORM, FIELD"
+   ],
+   [
+    "15",
+    "Water",
+    "LF",
+    "WATER, WATR, WM, W, DOMESTIC, POTABLE",
+    "TANK, STORM, TOPO"
+   ],
+   [
+    "16",
+    "Elec/Phone/TV - Trench",
+    "LF",
+    "ELECTRIC, =ELEC, UGE, UE, TELEPHONE, TELE, COMM, CATV, TV, FIBER, JOINT TRENCH, E",
+    "TOPO, CONTOUR"
+   ],
+   [
+    "17",
+    "Gas Trench only",
+    "LF",
+    "GAS, G",
+    "TANK, TOPO"
+   ],
+   [
+    "18",
+    "Outside Slab Prep",
+    "SF",
+    "OUTSIDE SLAB, PATIO, SIDEWALK, WALK, FLATWORK, PATH, CARPORT, CAR PORT",
+    ""
+   ],
+   [
+    "19",
+    "Radon",
+    "LF",
+    "RADON",
+    ""
+   ],
+   [
+    "20",
+    "Site Drains",
+    "LF",
+    "SITE DRAIN, STORM, SD, ROOF DRAIN, DOWNSPOUT, AREA DRAIN, GUTTER, DRAIN, INLET",
+    "PERIMETER, FOUNDATION, FOOTER"
+   ],
+   [
+    "21",
+    "Boulder walls",
+    "SF",
+    "BOULDER, ROCK WALL, SITE WALL, RETAINING",
+    ""
+   ],
+   [
+    "22",
+    "Silt Fence",
+    "LF",
+    "SILT, FENCE, LIMIT OF DISTURBANCE, LIMITS OF DISTURBANCE, LIMIT OF WORK, LIMITS OF WORK, LOD",
+    ""
+   ],
+   [
+    "23",
+    "Septic Tank",
+    "EA",
+    "SEPTIC TANK",
+    ""
+   ],
+   [
+    "24",
+    "Propane Tank",
+    "EA",
+    "PROPANE TANK",
+    ""
+   ]
+  ]
+ },
+ "s2_api": {
+  "scope": "install",
+  "n": 24,
+  "tenth": "Slab Prep"
+ },
+ "rect_s2": {
+  "note": [
+   239.5,
+   148.78125,
+   1006,
+   18
+  ],
+  "table": [
+   223.5,
+   178.78125,
+   1038,
+   430
+  ]
+ },
+ "s3": {
+  "rows": 25,
+  "state": "back to the printed sheet",
+  "api": {
+   "scope": "default",
+   "n": 25
+  }
+ },
+ "needed_detect": false,
+ "extra_items": [
+  [
+   "Mass Excavation",
+   1802.2,
+   "CY"
+  ],
+  [
+   "Structure Excavation",
+   466.7,
+   "CY"
+  ],
+  [
+   "Structure Backfill",
+   466.7,
+   "CY"
+  ],
+  [
+   "Slab Prep",
+   8109.9,
+   "SF"
+  ],
+  [
+   "Perimeter Drain",
+   420,
+   "LF"
+  ],
+  [
+   "Radon",
+   412,
+   "LF"
+  ],
+  [
+   "Zone 1 cut",
+   668,
+   "CY"
+  ],
+  [
+   "Zone 1 fill",
+   875,
+   "CY"
+  ],
+  [
+   "Zone 1 topsoil strip",
+   183,
+   "CY"
+  ],
+  [
+   "Zone 1 place Gravel",
+   148,
+   "CY"
+  ]
+ ],
+ "bid_sheet_mode": {
+  "on": true,
+  "buckets": [
+   [
+    "1. Mobilization",
+    "\u2014 nothing on this line yet (LS)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "2. Clear & Grub",
+    "\u2014 nothing on this line yet (SF)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "3. Strip Topsoil",
+    "183 CY \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "4. Site Cut",
+    "668 CY \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "5. Site Fill",
+    "875 CY \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "6. Mass Excavation",
+    "1.8k CY \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "7. Perimeter Drain",
+    "420 LF \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "8. Structure Excavation",
+    "466.7 CY \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "9. Structure Backfill",
+    "466.7 CY \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "10. Mass Backfill",
+    "\u2014 nothing on this line yet (CY)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "11. Slab Prep",
+    "8.1k SF \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "12. Rough Place Topsoil",
+    "\u2014 nothing on this line yet (CY)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "13. 18\" Culvert",
+    "267.5 ft \u00b7 2 rows",
+    "bid-bucket",
+    2
+   ],
+   [
+    "14. Drive Sub Grade Prep",
+    "0 SF \u00b7 1 row \u00b7 493.6 LF not summed (other unit)",
+    "bid-bucket",
+    1
+   ],
+   [
+    "15. 4\" Sewer",
+    "407.9 ft \u00b7 2 rows",
+    "bid-bucket",
+    2
+   ],
+   [
+    "16. Water",
+    "2.3k ft \u00b7 5 rows",
+    "bid-bucket",
+    5
+   ],
+   [
+    "17. Elec/Phone/TV - Trench",
+    "1.5k ft \u00b7 2 rows",
+    "bid-bucket",
+    2
+   ],
+   [
+    "18. Gas Trench only",
+    "285.4 ft \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "19. Outside Slab Prep",
+    "\u2014 nothing on this line yet (SF)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "20. Radon",
+    "412 LF \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "21. Site Drains",
+    "2.0k ft \u00b7 5 rows",
+    "bid-bucket",
+    5
+   ],
+   [
+    "22. Boulder walls",
+    "0 SF \u00b7 5 rows \u00b7 1.3k LF not summed (other unit)",
+    "bid-bucket",
+    5
+   ],
+   [
+    "23. Silt Fence",
+    "1.6k ft \u00b7 1 row",
+    "bid-bucket",
+    1
+   ],
+   [
+    "24. Septic Tank",
+    "\u2014 nothing on this line yet (EA)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "25. Propane Tank",
+    "\u2014 nothing on this line yet (EA)",
+    "bid-bucket bid-empty",
+    0
+   ],
+   [
+    "Not on the bid sheet",
+    "66 rows no line names / 166.4k ft \u00b7 148 CY \u2014 add a word to a line in Settings, or leave them out on purpose",
+    "bid-bucket bid-unassigned",
+    66
+   ]
+  ],
+  "picks": 0
+ },
+ "members_15_17": [
+  [
+   "15. 4\" Sewer",
+   [
+    [
+     "SE-P-UT-SS",
+     "338.2 ft \u00b7 2 lines",
+     ""
+    ],
+    [
+     "SE-P-UT-SEWER",
+     "69.8 ft \u00b7 1 lines",
+     ""
+    ]
+   ]
+  ],
+  [
+   "16. Water",
+   [
+    [
+     "SE-P-UT-WATER-10''",
+     "1.8k ft \u00b7 1 lines",
+     ""
+    ],
+    [
+     "SE-P-UT-WATER-SRV",
+     "222 ft \u00b7 2 lines",
+     ""
+    ],
+    [
+     "SE-P-UT-WATER-6''",
+     "154 ft \u00b7 5 lines",
+     ""
+    ],
+    [
+     "SE-P-UT-WATER-SRV BR",
+     "117.2 ft \u00b7 1 lines",
+     ""
+    ],
+    [
+     "SE-P-UT-WATER-SVC",
+     "69.8 ft \u00b7 1 lines",
+     ""
+    ]
+   ]
+  ],
+  [
+   "17. Elec/Phone/TV - Trench",
+   [
+    [
+     "P-UT-ELEC-UG",
+     "1.3k ft \u00b7 3 lines",
+     ""
+    ],
+    [
+     "PROPOSED UNDERGROUND ELEC. (legend)",
+     "197.1 ft \u00b7 3 lines",
+     ""
+    ]
+   ]
+  ]
+ ],
+ "rect_b1": {
+  "head": [
+   137,
+   52.28125,
+   361,
+   87.375
+  ],
+  "box": [
+   137,
+   139.65625,
+   361,
+   338.390625
+  ]
+ },
+ "bucket_mode": {
+  "on": false,
+  "buckets": [
+   "Erosion & Sediment Control",
+   "Clearing/Limits",
+   "Earthwork",
+   "Storm Drainage",
+   "Sanitary Sewer",
+   "Water",
+   "Gas",
+   "Electric/Comm",
+   "Site Concrete/Paving",
+   "Walls",
+   "Landscape/Other",
+   "UNASSIGNED"
+  ],
+  "picks": 99
+ },
+ "csv_href": "http://127.0.0.1:8100/api/job/3bb69406cadc/bidsheet.csv",
+ "csv_status": 200,
+ "csv_head": [
+  "CORE Takeoff - bid sheet,upload_8fff4cc725d5_SWR_Barn_Residence_-_Civil_4.7.26.pdf",
+  "template,the printed sheet (default - not edited yet)",
+  "approved sheets,3",
+  "note,quantities are sums of the approved sheets' rows; a row drawn on several sheets counts once per sheet",
+  "",
+  "#,Item,Unit,Qty,Rows,From",
+  "1,Mobilization,LS,,0,",
+  "2,Clear & Grub,SF,,0,",
+  "3,Strip Topsoil,CY,183,1,p3: Zone 1 topsoil strip 183 CY",
+  "4,Site Cut,CY,668,1,p3: Zone 1 cut 668 CY",
+  "5,Site Fill,CY,875,1,p3: Zone 1 fill 875 CY",
+  "6,Mass Excavation,CY,1802.2,1,p3: Mass Excavation 1802.2 CY"
+ ],
+ "csv_rows": [
+  "1,Mobilization,LS,,0,",
+  "2,Clear & Grub,SF,,0,",
+  "3,Strip Topsoil,CY,183,1,p3: Zone 1 topsoil strip 183 CY",
+  "4,Site Cut,CY,668,1,p3: Zone 1 cut 668 CY",
+  "5,Site Fill,CY,875,1,p3: Zone 1 fill 875 CY",
+  "6,Mass Excavation,CY,1802.2,1,p3: Mass Excavation 1802.2 CY",
+  "7,Perimeter Drain,LF,420,1,p3: Perimeter Drain 420 LF",
+  "8,Structure Excavation,CY,466.7,1,p3: Structure Excavation 466.7 CY",
+  "9,Structure Backfill,CY,466.7,1,p3: Structure Backfill 466.7 CY",
+  "10,Mass Backfill,CY,,0,",
+  "11,Slab Prep,SF,8109.9,1,p3: Slab Prep 8109.9 SF",
+  "12,Rough Place Topsoil,CY,,0,",
+  "13,\"18\"\" Culvert\",LF,267.5,2,p3: SE-P-UT-STORM-CULVERT-ENTRY3 257.9 LF; p3: SE-P-UT-STORM-CULVERT 9.6 LF",
+  "14,Drive Sub Grade Prep,SF,0,1,p3: SE-P-CENTERLINE DRIVEWAY 493.6 LF (not summed: other unit) [also 493.6 LF in other units]",
+  "15,\"4\"\" Sewer\",LF,408,2,p3: SE-P-UT-SEWER 69.8 LF; p3: SE-P-UT-SS 338.2 LF",
+  "16,Water,LF,2319.4,5,p3: SE-P-UT-WATER-10'' 1756.4 LF; p3: SE-P-UT-WATER-SRV 222 LF; p3: SE-P-UT-WATER-6'' 154 LF; p3: SE-P-UT-WATER-SRV BR 117.2 LF; p3: SE-P-UT-WATER-SVC 69.8 LF",
+  "17,Elec/Phone/TV - Trench,LF,1538,2,p3: P-UT-ELEC-UG 1340.9 LF; p3: PROPOSED UNDERGROUND ELEC. (legend) 197.1 LF",
+  "18,Gas Trench only,LF,285.4,1,p3: SE-P-UT-GAS 285.4 LF",
+  "19,Outside Slab Prep,SF,,0,",
+  "20,Radon,LF,412,1,p3: Radon 412 LF",
+  "21,Site Drains,LF,2034.8,5,p3: SE-P-STORM-PIPE BR IN 1223 LF; p3: P-VENT DRAIN 466.4 LF; p3: SE-P-UT-STORM 165.1 LF; p3: PROPOSED STORM SEWER (legend) 98.5 LF; p3: SE-P-UT-STORM INLET BR 81.8 LF",
+  "22,Boulder walls,SF,0,5,p3: BG-L-Boulder Cut 11.4 LF (not summed: other unit); p3: BG-L-Retaining Wall type 2 69.1 LF (not summed: other unit); p3: BG-L-Retaining Wall arch 46.2 LF (not summed: other unit); p3: BG-L-Boulders 1146.1 LF (not summed: other unit); p3: BG-L-Steel Retaining 62.2 LF (not summed: other unit) [also 1335 LF in other units]",
+  "23,Silt Fence,LF,1632.1,1,p3: BG-Limit of disturbance 1632.1 LF",
+  "24,Septic Tank,EA,,0,",
+  "25,Propane Tank,EA,,0,"
+ ],
+ "rect_b2": {
+  "links": [
+   128,
+   878,
+   389,
+   28
+  ],
+  "link": [
+   417.40625,
+   878,
+   75.25,
+   18
+  ],
+  "status": [
+   667.21875,
+   914.5,
+   272.953125,
+   18
+  ]
+ },
+ "status": "exported 1228 elements \u00b7 99 items itemized",
+ "report_page": {
+  "index": 5,
+  "text": "Bid sheet\nthe printed sheet (default - not edited yet) - 1 approved sheet(s); a run on several sheets counts once per sheet\n#\nItem\nUnit\nQty\nRows\n1\nMobilization\nLS\n2\nClear & Grub\nSF\n3\nStrip Topsoil\nCY\n183\n1\n4\nSite Cut\nCY\n668\n1\n5\nSite Fill\nCY\n875\n1\n6\nMass Excavation\nCY\n1,802.2\n1\n7\nPerimeter Drain\nLF\n420\n1\n8\nStructure Excavation\nCY\n466.7\n1\n9\nStructure Backfill\nCY\n466.7\n1\n10\nMass Backfill\nCY\n11\nSlab Prep\nSF\n8,109.9\n1\n12\nRough Place Topsoil\nCY\n13\n18\" Culvert\nLF\n267.5\n2\n14\nDrive Sub Grade Prep\nSF\n0\n1 (493.6 LF not summed)\n15\n4\" Sewer\nLF\n408\n2\n16\nWater\nLF\n2,319.4\n5\n17\nElec/Phone/TV - Trench\nLF\n1,538\n2\n18\nGas Trench only\nLF\n285.4\n1\n19\nOutside Slab Prep\nSF\n20\nRadon\nLF\n412\n1\n21\nSite Drains\nLF\n2,034.8\n5\n22\nBoulder walls\nSF\n0\n5 (1,335 LF not summed)\n23\nSilt Fence\nLF\n1,632.1\n1\n24\nSeptic Tank\nEA\n25\nPropane Tank\nEA\nNot on the bid sheet\n   EXISTING CONTOUR (TRUE NORTH SURVEY) (leg\nLF\n42,409.8\n1\n   PROPO"
+ },
+ "report_pages": 7
+}

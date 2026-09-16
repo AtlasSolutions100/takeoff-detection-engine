@@ -1,0 +1,343 @@
+[
+ {
+  "n": 1,
+  "name": "Mobilization",
+  "unit": "LS",
+  "match": [],
+  "not": [],
+  "note": "lump sum - never summed from the takeoff"
+ },
+ {
+  "n": 2,
+  "name": "Clear & Grub",
+  "unit": "SF",
+  "re": "^Clear & Grub$",
+  "match": [
+   "CLEAR",
+   "GRUB",
+   "CLEARING"
+  ],
+  "not": []
+ },
+ {
+  "n": 3,
+  "name": "Strip Topsoil",
+  "unit": "CY",
+  "re": "^Strip Topsoil",
+  "match": [
+   "STRIP TOPSOIL",
+   "TOPSOIL STRIP"
+  ],
+  "not": [
+   "PLACE",
+   "ROUGH"
+  ]
+ },
+ {
+  "n": 4,
+  "name": "Site Cut",
+  "unit": "CY",
+  "re": "^(Site Cut|Cut \\(earthwork\\))$",
+  "match": [
+   "=CUT"
+  ],
+  "not": [
+   "BOULDER"
+  ]
+ },
+ {
+  "n": 5,
+  "name": "Site Fill",
+  "unit": "CY",
+  "re": "^(Site Fill|Fill \\(earthwork\\))$",
+  "match": [
+   "=FILL"
+  ],
+  "not": []
+ },
+ {
+  "n": 6,
+  "name": "Mass Excavation",
+  "unit": "CY",
+  "re": "^Mass Excavation",
+  "match": [
+   "MASS EXCAVATION",
+   "MASS EX"
+  ],
+  "not": []
+ },
+ {
+  "n": 7,
+  "name": "Perimeter Drain",
+  "unit": "LF",
+  "re": "^Perimeter Drain",
+  "match": [
+   "PERIMETER DRAIN",
+   "FOUNDATION DRAIN",
+   "FOOTER DRAIN",
+   "FOTER DRAIN"
+  ],
+  "not": []
+ },
+ {
+  "n": 8,
+  "name": "Structure Excavation",
+  "unit": "CY",
+  "re": "^Structure Excavation",
+  "match": [
+   "STRUCTURE EXCAVATION",
+   "STRUCT EX",
+   "STRUCTURAL EX"
+  ],
+  "not": []
+ },
+ {
+  "n": 9,
+  "name": "Structure Backfill",
+  "unit": "CY",
+  "re": "^Structure Backfill",
+  "match": [
+   "STRUCTURE BACKFILL",
+   "STRUCT BACKFILL",
+   "STRUCTURAL BACKFILL"
+  ],
+  "not": []
+ },
+ {
+  "n": 10,
+  "name": "Mass Backfill",
+  "unit": "CY",
+  "match": [],
+  "not": [],
+  "note": "struck through on the printed sheet - his notes: \"we don't really use this much\""
+ },
+ {
+  "n": 11,
+  "name": "Slab Prep",
+  "unit": "SF",
+  "re": "^Slab Prep$",
+  "match": [
+   "SLAB PREP",
+   "SLAB"
+  ],
+  "not": [
+   "OUTSIDE",
+   "PATIO",
+   "WALK",
+   "DRIVE",
+   "EXTERIOR"
+  ],
+  "note": "any concrete in the house: basement, garage, flat slabs, crawler prep"
+ },
+ {
+  "n": 12,
+  "name": "Rough Place Topsoil",
+  "unit": "CY",
+  "re": "^Rough Place",
+  "match": [
+   "ROUGH PLACE",
+   "PLACE TOPSOIL",
+   "RESPREAD"
+  ],
+  "not": [],
+  "note": "6\" - 8\" on the printed sheet; 1 ft over the green areas in his notes"
+ },
+ {
+  "n": 13,
+  "name": "18\" Culvert",
+  "unit": "LF",
+  "match": [
+   "CULVERT"
+  ],
+  "not": [],
+  "note": "length of culverts and sizes - usually one at the end of the drive"
+ },
+ {
+  "n": 14,
+  "name": "Drive Sub Grade Prep",
+  "unit": "SF",
+  "match": [
+   "DRIVE SUBGRADE",
+   "DRIVE SUB GRADE",
+   "DRIVEWAY",
+   "DRIVE",
+   "SUBGRADE",
+   "SUB GRADE"
+  ],
+  "not": []
+ },
+ {
+  "n": 15,
+  "name": "4\" Sewer",
+  "unit": "LF",
+  "match": [
+   "SEWER",
+   "SANITARY",
+   "SS",
+   "SSWR"
+  ],
+  "not": [
+   "TANK",
+   "STORM",
+   "FIELD"
+  ],
+  "note": "house to a stub or to the septic tank"
+ },
+ {
+  "n": 16,
+  "name": "Water",
+  "unit": "LF",
+  "match": [
+   "WATER",
+   "WATR",
+   "WM",
+   "W",
+   "DOMESTIC",
+   "POTABLE"
+  ],
+  "not": [
+   "TANK",
+   "STORM",
+   "TOPO"
+  ],
+  "note": "mechanical room or house to the curb stop; road cut and tap separate"
+ },
+ {
+  "n": 17,
+  "name": "Elec/Phone/TV - Trench",
+  "unit": "LF",
+  "match": [
+   "ELECTRIC",
+   "=ELEC",
+   "UGE",
+   "UE",
+   "TELEPHONE",
+   "TELE",
+   "COMM",
+   "CATV",
+   "TV",
+   "FIBER",
+   "JOINT TRENCH",
+   "E"
+  ],
+  "not": [
+   "TOPO",
+   "CONTOUR"
+  ],
+  "note": "side of the garage to the transformer or stub"
+ },
+ {
+  "n": 18,
+  "name": "Gas Trench only",
+  "unit": "LF",
+  "match": [
+   "GAS",
+   "G"
+  ],
+  "not": [
+   "TANK",
+   "TOPO"
+  ],
+  "note": "house to the stub"
+ },
+ {
+  "n": 19,
+  "name": "Outside Slab Prep",
+  "unit": "SF",
+  "match": [
+   "OUTSIDE SLAB",
+   "PATIO",
+   "SIDEWALK",
+   "WALK",
+   "FLATWORK",
+   "PATH",
+   "CARPORT",
+   "CAR PORT"
+  ],
+  "not": [],
+  "note": "concrete / gravel / sand paths, separated by material"
+ },
+ {
+  "n": 20,
+  "name": "Radon",
+  "unit": "LF",
+  "re": "^Radon",
+  "match": [
+   "RADON"
+  ],
+  "not": [],
+  "note": "handwritten on the sheet: around the interior of the foundation to the mechanical room"
+ },
+ {
+  "n": 21,
+  "name": "Site Drains",
+  "unit": "LF",
+  "match": [
+   "SITE DRAIN",
+   "STORM",
+   "SD",
+   "ROOF DRAIN",
+   "DOWNSPOUT",
+   "AREA DRAIN",
+   "GUTTER",
+   "DRAIN",
+   "INLET"
+  ],
+  "not": [
+   "PERIMETER",
+   "FOUNDATION",
+   "FOOTER"
+  ],
+  "note": "handwritten: downspout, gutter and site drains (storm)"
+ },
+ {
+  "n": 22,
+  "name": "Boulder walls",
+  "unit": "SF",
+  "match": [
+   "BOULDER",
+   "ROCK WALL",
+   "SITE WALL",
+   "RETAINING"
+  ],
+  "not": [],
+  "note": "handwritten: surface SF + add 1'"
+ },
+ {
+  "n": 23,
+  "name": "Silt Fence",
+  "unit": "LF",
+  "re": "^Silt / Construction Fence$",
+  "match": [
+   "SILT",
+   "FENCE",
+   "LIMIT OF DISTURBANCE",
+   "LIMITS OF DISTURBANCE",
+   "LIMIT OF WORK",
+   "LIMITS OF WORK",
+   "LOD"
+  ],
+  "not": [],
+  "note": "from the call: the limits-of-disturbance perimeter (the LOD line itself files here)"
+ },
+ {
+  "n": 24,
+  "name": "Septic Tank",
+  "unit": "EA",
+  "match": [
+   "SEPTIC TANK"
+  ],
+  "not": [],
+  "note": "from the call: the size is read off the callout"
+ },
+ {
+  "n": 25,
+  "name": "Propane Tank",
+  "unit": "EA",
+  "match": [
+   "PROPANE TANK"
+  ],
+  "not": [],
+  "note": "from the call"
+ }
+]
