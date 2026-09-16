@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=95">
+<link rel="stylesheet" href="style.css?v=96">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -670,6 +670,7 @@
         <span id="ewResult" class="ew-result"></span>
         <label class="ew-map-toggle" title="Paint where the dirt moves: cut blue, fill yellow; deeper = stronger"><input type="checkbox" id="ewMap"> Show cut/fill map</label>
         <span id="ewMapLegend" class="ew-map-legend" hidden><span class="eml-bar"></span><span class="eml-txt"></span></span>
+        <label class="ew-map-toggle" id="ewMapNumsWrap" hidden title="Print the depth in every block of the map - the number the crew reads: cut red (−), fill blue (+), the mean over each block"><input type="checkbox" id="ewMapNums"> print depths</label>
         <!-- The map's OWN refusal, in its own slot. /earthwork/map can
              refuse when /earthwork answered 200 (a layers-only sheet has
              layer volumes but no dz grid to paint), and writing that into
@@ -1229,6 +1230,12 @@
         <span>Balance &mdash; solve the pad elevation where cut equals fill</span></label>
       <label class="gz-m-row"><input type="radio" name="gzMode" value="strip_only">
         <span>Strip only &mdash; no design surface, just the strip volume</span></label>
+      <label class="gz-m-row"><input type="radio" name="gzMode" value="proposed">
+        <span>Proposed contours on this sheet &mdash; the design the sheet draws</span></label>
+      <div class="gz-m-note">The PROPOSED contours and spot grades the panel assigned, against
+        the ground now, inside this zone only &mdash; one zone per building gives an engineer's
+        volume exhibit. Cells the proposed surface does not reach are left out and coverage
+        says so.</div>
     </div>
     <div class="gz-m-strip">
       <label for="gzStrip">Topsoil strip</label>
@@ -1295,6 +1302,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=190"></script>
+<script src="app.js?v=191"></script>
 </body>
 </html>

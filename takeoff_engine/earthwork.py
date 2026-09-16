@@ -1239,6 +1239,43 @@ def material_balance(cut_yd3: float, fill_yd3: float, layers: list,
     }
 
 
+def map_labels(grid: dict, cell_ft: float, spacing_ft: float = 30.0,
+               cap: int = 1500) -> list:
+    """Spot depths for the whole-sheet cut/fill map: the mean dz of every
+    `spacing_ft` block of defined cells, [{x, y, dz}] in page pt, at most
+    `cap` of them (the block grows until it fits). Beaumont hands his crew
+    the cut/fill map with the depths printed on it (call 2026-09-15); the
+    grading zones already print theirs, this is the same for the sheet.
+    Same block-mean rule as the zone labels: a printed depth is the mean
+    over its block, never one cell's spike."""
+    dz = np.asarray(grid["dz"], float)
+    ok = np.asarray(grid["ok"], bool)
+    ny, nx = dz.shape
+    x0, y0, _x1, _y1 = grid["bbox_pt"]
+    cell_pt = float(grid["cell_pt"])
+    try:
+        sp = float(spacing_ft)
+    except (TypeError, ValueError):
+        sp = 30.0
+    if not sp > 0:
+        sp = 30.0
+    k = max(1, int(round(sp / max(float(cell_ft or 2.0), 1e-6))))
+    while ((nx + k - 1) // k) * ((ny + k - 1) // k) > cap:
+        k += 1
+    out = []
+    for bi in range(0, ny, k):
+        for bj in range(0, nx, k):
+            blk = dz[bi:bi + k, bj:bj + k]
+            m = ok[bi:bi + k, bj:bj + k] & ~np.isnan(blk)
+            if not m.any():
+                continue
+            ii, jj = np.nonzero(m)
+            out.append({"x": round(float(x0 + (bj + jj.mean() + 0.5) * cell_pt), 1),
+                        "y": round(float(y0 + (bi + ii.mean() + 0.5) * cell_pt), 1),
+                        "dz": round(float(blk[m].mean()), 1)})
+    return out
+
+
 def render_cut_fill_map(grid: dict) -> tuple[bytes, dict]:
     """Paint a dz grid as an RGBA PNG: cut (dz < 0) blue, fill (dz > 0)
     yellow-orange, |dz| -> alpha 0.15..0.75, undefined cells transparent.
@@ -1307,7 +1344,8 @@ def _zone_centroid(poly: np.ndarray) -> tuple:
 
 def zone_cut_fill(existing: Surface, polygon, ft_per_pt: float,
                   design: dict, cell_ft: float = 2.0,
-                  strip_in: float = 0.0, label_target: int = 120) -> dict:
+                  strip_in: float = 0.0, label_target: int = 120,
+                  proposed: "Surface | None" = None) -> dict:
     """Volumes of a DECLARED design surface against the detected existing
     ground, inside one polygon (page pt).
 
@@ -1325,6 +1363,13 @@ def zone_cut_fill(existing: Surface, polygon, ft_per_pt: float,
           offset from the existing mean.
       {mode:"strip_only"}                   no design surface: cut/fill are
           zero and only the strip term computes.
+      {mode:"proposed"}                     the sheet's OWN proposed surface
+          (contours and spot grades assigned PROPOSED, passed as
+          `proposed`), differenced inside this zone only - one zone per
+          building, in the shape of an engineer's volume exhibit;
+          design.subgrade_offset_ft lowers it (the proposed layer stack).
+          Cells the proposed surface does not reach are left out and
+          `coverage` says so.
 
     strip_in > 0 lowers the EXISTING surface by that many inches before
     differencing (same convention as cut_fill's existing_offset_ft:
@@ -1349,9 +1394,9 @@ def zone_cut_fill(existing: Surface, polygon, ft_per_pt: float,
                          f"{zone_area_sf:.3f} SF of ground. Draw a region, "
                          f"not a line."}
     mode = str((design or {}).get("mode") or "")
-    if mode not in ("pad", "plane", "balance", "strip_only"):
+    if mode not in ("pad", "plane", "balance", "strip_only", "proposed"):
         return {"error": f"unknown design mode {mode!r} - expected pad, "
-                         "plane, balance or strip_only"}
+                         "plane, balance, strip_only or proposed"}
     # THE FLOOR, ON THE EXISTING SURFACE (see _floor_refusal for the
     # /earthwork one). Until 2026-09-02 this route's only entry test was "3
     # sample points", so the very rows /earthwork refuses published a volume
@@ -1483,6 +1528,30 @@ def zone_cut_fill(existing: Surface, polygon, ft_per_pt: float,
         d_ft = ((GX - ax) * ux + (GY - ay) * uy) * ft_per_pt
         zp = elev - (slope / 100.0) * d_ft
         dz = zp - zs
+    elif mode == "proposed":
+        if proposed is None or (not proposed.contours and not proposed.points):
+            return {"error": "proposed mode needs the sheet's PROPOSED surface - "
+                             "assign labelled contours or spot grades to PROPOSED "
+                             "first",
+                    "error_code": "surface_empty"}
+        fp, _pp = proposed.interpolator()
+        if fp is None:
+            return {"error": "the proposed surface needs at least 3 sample points "
+                             "off one straight line - assign more PROPOSED contours "
+                             "or spot grades",
+                    "error_code": "surface_too_few_samples"}
+        zp = fp(GX, GY)
+        try:
+            zp = zp - float((design or {}).get("subgrade_offset_ft") or 0.0)
+        except (TypeError, ValueError):
+            pass
+        ok = ok & ~np.isnan(zp)
+        if not ok.any():
+            return {"error": "the proposed surface does not reach this zone - the "
+                             "TIN built from the PROPOSED contours and spot grades "
+                             "is undefined everywhere inside it. Assign proposed "
+                             "elevations nearer the zone, or move it."}
+        dz = np.where(ok, zp - zs, np.nan)
     elif mode == "balance":
         # net = fill - cut is strictly increasing in the pad elevation, so
         # bisection cannot miss; 0.5 CY is the requested tolerance

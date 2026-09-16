@@ -7332,6 +7332,7 @@ function calcStatePayload() {
       design: z.design, strip_in: z.strip_in,
       base_in: isFinite(+z.base_in) ? +z.base_in : 0, base_name: z.base_name || "Base",
       added: !!z.added, show_nums: !!z.showNums,
+      named_from: z.named_from === "text" ? "text" : null,
     }));
   // Review-queue check-offs (additive key, same carry-forward rule as the
   // panels above: until the queue has seeded from the sidecar, the earlier
@@ -15239,7 +15240,18 @@ async function ewFetchMap() {
   const blob = await r.blob();
   const img = await createImageBitmap(blob);
   if (!state.ew) return;
-  state.ew.map = { img, bbox, refDz: refDz ? parseFloat(refDz) : null };
+  state.ew.map = { img, bbox, refDz: refDz ? parseFloat(refDz) : null, labels: [] };
+  // the block depths ride in the map's cached meta (one number per block;
+  // the crew's copy of this map has them printed)
+  try {
+    const mr = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/map?meta=1`);
+    if (mr.ok) {
+      const m = await mr.json();
+      if (state.ew && state.ew.map) { state.ew.map.labels = m.labels || []; state.ew.map.spacing = m.label_spacing_ft || null; }
+    }
+  } catch (e) { /* the map still paints without its numbers */ }
+  const nw = $("ewMapNumsWrap");
+  if (nw) nw.hidden = !(state.ew.map.labels && state.ew.map.labels.length);
   // the legend makes the ramp readable: full color = the ref depth
   const leg = $("ewMapLegend");
   if (leg) {
@@ -15257,9 +15269,11 @@ $("ewMap").onchange = async () => {
   if ($("ewMap").checked) await ewFetchMap();
   else {
     state.ew.map = null; $("ewMapLegend").hidden = true;
+    if ($("ewMapNumsWrap")) $("ewMapNumsWrap").hidden = true;
     ewMapNote(null, null); draw();
   }
 };
+if ($("ewMapNums")) $("ewMapNums").onchange = () => draw();
 
 // ---------- pipe trench calculator ----------
 // Bedding rules from the underground-utilities spec discussed with the
@@ -17408,6 +17422,26 @@ function draw() {
     ctx.globalAlpha = 0.55;
     ctx.drawImage(state.ew.map.img, bx0 * fm, by0 * fm, (bx1 - bx0) * fm, (by1 - by0) * fm);
     ctx.globalAlpha = 1.0;
+    // PRINTED DEPTHS: one number per block, the block's mean dz - cut red
+    // with a minus, fill blue with a plus - the same ink as the zone
+    // numbers, so a map and a zone never disagree on what red means
+    const lab = state.ew.map.labels;
+    if (lab && lab.length && $("ewMapNums") && $("ewMapNums").checked) {
+      const spPt = state.ew.map.spacing && stFtPerPt() ? state.ew.map.spacing / stFtPerPt() : 0;
+      const fontPx = Math.max(spPt ? spPt * fm * 0.30 : 0, 9 / k);
+      ctx.font = `600 ${fontPx}px "IBM Plex Sans", -apple-system, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = fontPx / 5;
+      ctx.strokeStyle = CV_LABEL_HALO;
+      for (const c of lab) {
+        const dzv = c.dz === 0 ? 0 : c.dz;
+        const t = (dzv > 0 ? "+" : "") + dzv.toFixed(1);
+        ctx.fillStyle = dzv < 0 ? CV_GZ_CUT_LAB : dzv > 0 ? CV_GZ_FILL_LAB : CV_GZ_ZERO_LAB;
+        ctx.strokeText(t, c.x * fm, c.y * fm);
+        ctx.fillText(t, c.x * fm, c.y * fm);
+      }
+    }
   }
   // GRADING ZONES: each saved zone's dz map, clipped to its own polygon so
   // the tint reads as the zone, not the zone's bounding box. Same result
@@ -23319,6 +23353,16 @@ function gzExistingPoints() {
   if (!state.ew || state.ew.spotSide !== "existing") return [];
   return ewActiveSpots().map(g => ({ x: g.x, y: g.y, z: g.z }));
 }
+// mode "proposed": the sheet's own design surface, the same rows the
+// whole-sheet cut/fill uses for PROPOSED
+function gzProposedRows() {
+  if (!state.ew) return [];
+  return state.ew.rows.filter(r => r.surface === "proposed" && isFinite(r.z));
+}
+function gzProposedPoints() {
+  if (!state.ew || state.ew.spotSide !== "proposed") return [];
+  return ewActiveSpots().map(g => ({ x: g.x, y: g.y, z: g.z }));
+}
 
 // client-side count for the modal header line: which of the assigned
 // existing rows/spots actually sit inside this polygon
@@ -23354,12 +23398,19 @@ function gzBody(polygon, design, strip_in, base) {
     proposed_layers: b,
     existing_rows: gzExistingRows().map(r => ({ chain_id: r.chain_id, z: r.z })),
     existing_points: gzExistingPoints(),
+    proposed_rows: gzProposedRows().map(r => ({ chain_id: r.chain_id, z: r.z })),
+    proposed_points: gzProposedPoints(),
   };
 }
 
 // ---- compute (shared by save, edit and restore) --------------------------
 async function gzCompute(z, gen) {
   if (gen == null) gen = state.gen;
+  // only a zone JUST DRAWN may take the name printed inside it (below): one
+  // restored from the sidecar or recomputed never renames itself - the
+  // first run of this renamed a restored "Zone 1" whose takeoff rows kept
+  // the old name
+  const fresh = !!z.autoName; delete z.autoName;
   z.err = null; z.result = null; z.img = null;
   renderGz(); draw();
   try {
@@ -23381,6 +23432,14 @@ async function gzCompute(z, gen) {
       const j = await r.json();
       if (gen !== state.gen) return;
       z.result = j;
+      // AUTO-LABEL: the biggest text inside the polygon names the zone,
+      // but only while it still wears "Zone N" - a typed name is never
+      // overwritten, and the zone remembers where its name came from
+      if (fresh && !z.added && j.suggested_name && /^Zone \d+$/.test(z.name || "")) {
+        z.name = String(j.suggested_name).slice(0, 40);
+        z.named_from = "text";
+        calcStateDirty();
+      }
       const img = new Image();
       img.onload = () => { if (gen === state.gen) { z.img = img; draw(); } };
       img.src = "data:image/png;base64," + j.map_png_base64;
@@ -23416,6 +23475,7 @@ function gzApplySaved() {
       base_in: isFinite(+s.base_in) ? Math.max(+s.base_in, 0) : 0,
       base_name: String(s.base_name || "Base").slice(0, 30),
       added: !!s.added, showNums: !!s.show_nums,
+      named_from: s.named_from === "text" ? "text" : null,
       result: null, img: null, err: null,
     });
     seq++;
@@ -23505,7 +23565,9 @@ function renderGz() {
     const name = document.createElement("input");
     name.className = "gz-name";
     name.value = z.name;
-    name.title = "zone name - its takeoff rows are named after it";
+    name.title = z.named_from === "text"
+      ? "named from the text printed inside it - type to rename (its takeoff rows follow the name)"
+      : "zone name - its takeoff rows are named after it";
     name.onchange = () => {
       const v = name.value.trim().slice(0, 40) || z.name;
       if (v === z.name) { name.value = z.name; return; }
@@ -23638,6 +23700,9 @@ function gzDesignSummary(z) {
   else if (d.mode === "balance")
     s = (z.result && z.result.balance_elev_ft !== undefined)
       ? `balance @ ${z.result.balance_elev_ft}` : "balance";
+  else if (d.mode === "proposed")
+    s = "proposed contours" + ((z.result && isFinite(z.result.coverage) && z.result.coverage < 0.995)
+      ? ` (${Math.round(z.result.coverage * 100)}% reached)` : "");
   else s = "strip only";
   if (z.strip_in > 0) s += ` · strip ${z.strip_in}"`;
   if (z.base_in > 0) s += ` · base ${z.base_in}" ${gzBase(z).name}`;
@@ -23969,6 +24034,7 @@ $("gzMSave").onclick = () => {
       base_in: c.base.thickness_in, base_name: c.base.name,
       added: false, showNums: false,
       result: null, img: null, err: null,
+      autoName: true,   // just drawn: may take the structure's name printed inside it
     };
     state.gzones.push(z);
   } else {

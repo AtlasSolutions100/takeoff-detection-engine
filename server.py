@@ -5001,6 +5001,7 @@ class EarthworkBody(BaseModel):
     # (where both surfaces are defined) - override with the clear & grub
     # area when the strip extends beyond the graded region.
     strip_area_sf: float | None = None
+    label_spacing_ft: float | None = None   # spot depths on the cut/fill map, one per block this wide
     place_depth_in: float | None = None     # Rough Place Topsoil: depth over the green area (Beaumont)
     place_less_sf: float | None = None      # footprints + paving taken off the limit of work
     # --- material balance (F87 B7) -------------------------------------
@@ -5784,11 +5785,16 @@ def earthwork_map(job_id: str, page: int, body: EarthworkBody):
       X-Map-Ref-Dz  |dz| in ft at which the colour reaches full opacity
     The PNG + its meta are cached as the LAST map for (job, page); GET the
     same path to re-read them without recomputing."""
-    from takeoff_engine.earthwork import render_cut_fill_map
+    from takeoff_engine.earthwork import map_labels, render_cut_fill_map
 
     JOBS.get(job_id) or _404()      # writes: see _forbidden_job
     result = _earthwork_run(job_id, page, body, return_grid=True)
-    png, meta = render_cut_fill_map(result.pop("grid"))
+    grid = result.pop("grid")
+    png, meta = render_cut_fill_map(grid)
+    # spot depths, one per block: the crew's map has the numbers on it
+    meta["labels"] = map_labels(grid, result.get("cell_ft") or 2.0,
+                                body.label_spacing_ft or 30.0)
+    meta["label_spacing_ft"] = body.label_spacing_ft or 30.0
     meta.update({k: result[k] for k in
                  ("cut_yd3", "fill_yd3", "net_yd3", "area_sf", "cell_ft",
                   "existing_offset_ft", "proposed_offset_ft")})
@@ -5857,7 +5863,112 @@ class GradingZoneBody(BaseModel):
     # rows [{chain_id, z}] and spot points [{x, y, z}]
     existing_rows: list[dict] = []
     existing_points: list[dict] = []
+    proposed_rows: list[dict] = []          # mode "proposed": the sheet's own design surface
+    proposed_points: list[dict] = []
     cell_ft: float | None = None
+
+
+# Words that name a STRUCTURE on a civil sheet. A grading zone is one
+# building's volume exhibit (Beaumont, call 2026-09-15), so only text with
+# one of these may name it. Measured on Barn C3.0 (2026-09-16): the tallest
+# text inside a zone drawn round the barn was the water-line label "WL", a
+# zone over it "SS", and the patio note "SLAB ONGRADE / STONE PATIO; RE. TO
+# / STRUCTURAL & ARCH" is taller than either - none of them is a name.
+_ZONE_NAME_WORDS = frozenset("""
+RESIDENCE HOUSE HOME BARN GARAGE SHOP BUILDING BLDG CABIN STUDIO GUEST SHED
+PAVILION CASITA CLUBHOUSE OFFICE WAREHOUSE STORE UNIT ARENA STABLE STABLES
+SUBSTATION HANGAR LODGE ADU DWELLING APARTMENT APARTMENTS CONDO CONDOS DUPLEX
+TOWNHOME TOWNHOMES SCHOOL CHURCH CLINIC HOTEL MOTEL RESTAURANT RETAIL BANK
+STATION GYM PLANT TOWER SILO SHELTER KENNEL GREENHOUSE WORKSHOP CARPORT
+ADDITION DORM DORMITORY LIBRARY GATEHOUSE BOATHOUSE BUNKHOUSE
+""".split())
+_ZONE_TEXT_CACHE: dict = {}
+
+
+def _zone_page_text(job_id: str, page: int) -> list:
+    """[(x0, y0, x1, y1, text)] of the page's text lines, cached per (file,
+    mtime, page): the zone modal's live preview asks on every keystroke."""
+    job = JOBS.get(job_id)
+    if not job:
+        return []
+    path = job.get("path")
+    try:
+        key = (path, os.path.getmtime(path), int(page))
+    except (OSError, TypeError, ValueError):
+        return []
+    hit = _ZONE_TEXT_CACHE.get(key)
+    if hit is not None:
+        return hit
+    from takeoff_engine.extract import page_lines as _page_lines
+    try:
+        doc = pymupdf.open(path)
+        try:
+            lines = [(float(a), float(b), float(c), float(d), " ".join(str(t).split()))
+                     for a, b, c, d, t in _page_lines(doc[page])]
+        finally:
+            doc.close()
+    except Exception:
+        return []
+    if len(_ZONE_TEXT_CACHE) > 32:
+        _ZONE_TEXT_CACHE.clear()
+    _ZONE_TEXT_CACHE[key] = lines
+    return lines
+
+
+def _zone_text_name(job_id: str, page: int, polygon) -> str | None:
+    """The structure's name printed inside the polygon - "BARN", "GUIDE
+    RESIDENCE" - offered as the zone's name; None when nothing inside it
+    names a structure, so the zone keeps "Zone N" (an abstention, never a
+    guess). A candidate line is plain words (letters, digits, spaces,
+    hyphen, apostrophe - no colon, semicolon, period or ampersand, which
+    mark notes, elevations and sheet references), stacked lines of one
+    size join into one name ("GUIDE" over "RESIDENCE"), and the block must
+    carry a word from _ZONE_NAME_WORDS. The tallest such block wins. The
+    UI takes the suggestion only for a zone just drawn, still "Zone N",
+    not yet added to the takeoff."""
+    import numpy as _np
+    from takeoff_engine.earthwork import _points_in_poly
+    try:
+        poly = _np.asarray(polygon, float)
+        if poly.ndim != 2 or poly.shape[0] < 3:
+            return None
+    except (TypeError, ValueError):
+        return None
+    cands = []
+    for x0, y0, x1, y1, t in _zone_page_text(job_id, page):
+        if not t or len(t) > 30 or (y1 - y0) < 4.0:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9' \-]*", t) or not re.search(r"[A-Za-z]{3,}", t):
+            continue
+        cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        try:
+            inside = bool(_points_in_poly(_np.array([[cx]]), _np.array([[cy]]), poly)[0, 0])
+        except Exception:
+            inside = False
+        if inside:
+            cands.append((y0, x0, x1, y1, t))
+    cands.sort()
+    blocks: list = []
+    for y0, x0, x1, y1, t in cands:
+        h = y1 - y0
+        if blocks and len(blocks[-1]) < 3:
+            py0, px0, px1, py1, _pt = blocks[-1][-1]
+            ph = py1 - py0
+            if (abs(h - ph) <= 0.3 * max(h, ph)
+                    and (y0 - py1) < 0.8 * max(h, ph)
+                    and min(x1, px1) - max(x0, px0) > 0.3 * min(x1 - x0, px1 - px0)):
+                blocks[-1].append((y0, x0, x1, y1, t))
+                continue
+        blocks.append([(y0, x0, x1, y1, t)])
+    best = None
+    for b in blocks:
+        text = " ".join(l[4] for l in b)
+        if len(text) > 40 or not (set(re.findall(r"[A-Z]+", text.upper())) & _ZONE_NAME_WORDS):
+            continue
+        h = max(l[3] - l[0] for l in b)
+        if best is None or h > best[0]:
+            best = (h, text)
+    return best[1] if best else None
 
 
 @app.post("/api/job/{job_id}/page/{page}/earthwork/zone")
@@ -5905,9 +6016,26 @@ def earthwork_zone(job_id: str, page: int, body: GradingZoneBody):
             continue
     # the base stack: the typed elevation is finished grade, the earthwork
     # stops at the subgrade below it
+    prop = None
+    if str((body.design or {}).get("mode") or "") == "proposed":
+        prop = Surface("proposed")
+        for r in body.proposed_rows:
+            try:
+                cid, z = int(r["chain_id"]), float(r["z"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if cid in pts_by_id:
+                prop.contours.append((pts_by_id[cid], z))
+        for q in body.proposed_points:
+            try:
+                prop.points.append((float(q["x"]), float(q["y"]), float(q["z"])))
+            except (KeyError, TypeError, ValueError):
+                continue
     pr_layers, pr_off = _layer_stack(body.proposed_layers)
     design = dict(body.design or {})
     mode = design.get("mode")
+    if mode == "proposed" and pr_off > 0:
+        design["subgrade_offset_ft"] = pr_off
     if pr_off > 0 and mode in ("pad", "plane"):
         try:
             design["elev_ft"] = float(design["elev_ft"]) - pr_off
@@ -5915,7 +6043,11 @@ def earthwork_zone(job_id: str, page: int, body: GradingZoneBody):
             pass
     out = zone_cut_fill(surf, body.polygon, ft_per_pt, design,
                         cell_ft=body.cell_ft or 2.0,
-                        strip_in=body.strip_in)
+                        strip_in=body.strip_in, proposed=prop)
+    if "error" not in out:
+        # AUTO-LABEL: the biggest text inside the polygon, offered as the
+        # zone's name (the UI takes it only while the zone is still "Zone N")
+        out["suggested_name"] = _zone_text_name(job_id, page, body.polygon)
     if "error" in out:
         # The SAME shape as /earthwork and /earthwork/map. This route was the
         # third door to the volume floor and the only one still answering a
