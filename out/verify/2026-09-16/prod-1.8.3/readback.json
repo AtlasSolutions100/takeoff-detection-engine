@@ -1,0 +1,56 @@
+{
+ "errors": [
+  "console: Failed to load resource: the server responded with a status of 404 ()",
+  "console: Failed to load resource: the server responded with a status of 404 ()"
+ ],
+ "me": {
+  "staff": true,
+  "accounts": true,
+  "must_change": false
+ },
+ "build": {
+  "app_js": [
+   "v=184"
+  ],
+  "css": [
+   "v=89"
+  ],
+  "fns": [
+   [
+    "stFootingsBlock",
+    true
+   ],
+   [
+    "stDatumBlock",
+    true
+   ],
+   [
+    "stMk",
+    true
+   ],
+   [
+    "stCivil",
+    true
+   ],
+   [
+    "gzRenderTable",
+    true
+   ],
+   [
+    "stPolyInsetPerim",
+    true
+   ]
+  ],
+  "datumInput": true,
+  "accountsNav": true
+ },
+ "routes": {
+  "/api/job/nosuchjob/datum": 404,
+  "/api/job/nosuchjob/page/0/footings": 404
+ },
+ "accounts": {
+  "nav": true,
+  "section": true,
+  "rows": 26
+ }
+}
