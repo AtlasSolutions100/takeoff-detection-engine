@@ -261,6 +261,24 @@ def _seg_witness(word, runs: list, seg_arr=None) -> list:
     return out
 
 
+def _pick_reading(readings: list, best_med: float, tol: float) -> dict:
+    """The reading a consensus word stands behind: the one nearest the
+    cluster median among those within `tol` of it, else simply the nearest.
+
+    The cluster is grown with the tolerance measured from its SEED value,
+    so a word can be a member through a reading that is outside `tol` of
+    the MEDIAN (seed 10, tol 10 percent, members 9 / 9 / 11: median 9,
+    window 8.1-9.9, the word whose only reading is 11 has nothing inside
+    it). Barn Structural S1-1.3 hit exactly that and /scale/dimensions
+    answered 500 (2026-09-16). Never empty, so never a crash: the nearest
+    reading is still this word's best claim.
+    """
+    inside = [r for r in readings
+              if abs(r["implied_ft_per_in"] - best_med) <= tol * best_med]
+    return min(inside or readings,
+               key=lambda r: abs(r["implied_ft_per_in"] - best_med))
+
+
 def dimension_check(words: list, chains: list, ft_per_paper_inch: float | None) -> dict:
     """Every printed dimension paired with its line, and the verdict.
 
@@ -326,9 +344,7 @@ def dimension_check(words: list, chains: list, ft_per_paper_inch: float | None) 
     for i, w in enumerate(witnesses):
         pick = w["readings"][0]
         if best_med is not None and i in best_words:
-            pick = min((r for r in w["readings"]
-                        if abs(r["implied_ft_per_in"] - best_med) <= AGREE_TOL * best_med),
-                       key=lambda r: abs(r["implied_ft_per_in"] - best_med))
+            pick = _pick_reading(w["readings"], best_med, AGREE_TOL)
         w["line_pt"] = pick["line_pt"]
         w["chain_id"] = pick["chain_id"]
         w["implied_ft_per_in"] = pick["implied_ft_per_in"]

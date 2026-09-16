@@ -5845,6 +5845,93 @@ def earthwork_zone(job_id: str, page: int, body: GradingZoneBody):
     return JSONResponse(out)
 
 
+def _doc_footing_schedule(job_id: str, path: str) -> dict:
+    """The footing schedule for this DOCUMENT, cached per job.
+
+    A structural set prints its schedule once, on the notes sheet (Barn
+    S0-0.4, Ellis's notes page), while the marks that need it sit on every
+    foundation plan - so this looks at the pages whose text says FOOTING
+    SCHEDULE first, then the rest, and keeps the first row it finds for
+    each mark with the page it came from. Cached because it is the same
+    answer for every page of the job.
+    """
+    from takeoff_engine.footing_callouts import read_footing_schedule
+    cache = _job_dir(job_id) / "footing_schedule.json"
+    if cache.exists():
+        try:
+            return json.loads(cache.read_text())
+        except (OSError, ValueError):
+            pass
+    out = {"rows": {}, "pages": [], "scanned": 0}
+    try:
+        doc = pymupdf.open(path)
+    except Exception:
+        return out
+    try:
+        n = doc.page_count
+        heads, rest = [], []
+        for i in range(min(n, 80)):
+            try:
+                t = doc[i].get_text().upper()
+            except Exception:
+                t = ""
+            (heads if "FOOTING SCHEDULE" in t else rest).append(i)
+        for i in heads + rest[:40]:
+            # the header pages are all read; the rest only until a
+            # schedule turns up somewhere (a set without the words FOOTING
+            # SCHEDULE over its table)
+            if i in rest and out["rows"]:
+                break
+            out["scanned"] += 1
+            try:
+                words = page_words(doc[i])
+            except Exception:
+                continue
+            s = read_footing_schedule(words)
+            if not s["found"]:
+                continue
+            out["pages"].append(i)
+            for mark, row in s["rows"].items():
+                out["rows"].setdefault(mark, dict(row, page=i))
+            # every header page is read; a schedule found elsewhere ends
+            # the search once the header pages are done
+            if i in rest:
+                break
+    finally:
+        doc.close()
+    try:
+        cache.write_text(json.dumps(out))
+    except OSError:
+        pass
+    return out
+
+
+@app.get("/api/job/{job_id}/page/{page}/footings")
+def footings(job_id: str, page: int):
+    """The footing marks on this sheet, each with the elevations printed
+    beside it and its schedule row (or its own digits, flagged). Words
+    only - no detect needed - and every value carries its evidence, so the
+    structure panel can offer them as chips the operator confirms."""
+    from takeoff_engine.footing_callouts import (find_footing_callouts,
+                                                 join_schedule)
+    job = JOBS.get(job_id) or _404()
+    doc = pymupdf.open(job["path"])
+    try:
+        if page < 0 or page >= doc.page_count:
+            raise HTTPException(404, "no such page")
+        words = page_words(doc[page])
+    finally:
+        doc.close()
+    c = find_footing_callouts(words)
+    sched = _doc_footing_schedule(job_id, job["path"])
+    join_schedule(c, sched)
+    return JSONResponse({"callouts": c["callouts"], "slabs": c["slabs"],
+                         "by_mark": c["by_mark"],
+                         "schedule": {"pages": sched.get("pages", []),
+                                      "rows": len(sched.get("rows") or {}),
+                                      "scanned": sched.get("scanned", 0)}})
+
+
 @app.get("/api/job/{job_id}/page/{page}/callouts")
 def callouts(job_id: str, page: int):
     """The sheet's own callouts as data: every detected leader paired with

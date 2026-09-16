@@ -789,6 +789,11 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 
 /* ---------- structure calculator (footprint dig + layback) ---------- */
 .st-modes { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+/* footing-mark chips: the sheet's own CF / F / S marks with their schedule row */
+.st-footings { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.st-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.st-chip { font-size: var(--t-fs-xs); text-align: left; white-space: normal; }
+.st-chip.st-chip-guess { border-style: dashed; color: var(--t-warn); }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }

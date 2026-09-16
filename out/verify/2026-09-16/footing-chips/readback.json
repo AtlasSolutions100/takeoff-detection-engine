@@ -1,0 +1,233 @@
+{
+ "errors": [],
+ "reused_job": "fa8627f870f1",
+ "job": "fa8627f870f1",
+ "appJs": "v=183",
+ "barn_chips": {
+  "head": "Footing marks printed on this sheet \u2014 click one to set the draft's footing width and depth \u00b7 schedule read from page 12",
+  "chips": [
+   [
+    "CF2.0 \u00d714 \u00b7 2 ft wide \u00d7 1 ft deep \u00b7 BOF 86\u2032 \u00d74, 87\u2032, 96\u2032 \u00d72, 84.1667\u2032 \u00d73, 86.5\u2032 \u00d72, 85.1667\u2032, 94.5\u2032",
+    "from the footing schedule (page 12) \u00b7 (2)#5 BOTTOM #5@16\"",
+    false
+   ],
+   [
+    "F5.5 \u00d75 \u00b7 5.5 ft \u00d7 5.5 ft \u00d7 1 ft deep \u00b7 BOF 86\u2032, 96\u2032 \u00d73, 84.1667\u2032",
+    "from the footing schedule (page 12) \u00b7 (6)#5 BOTTOM (6)#5 BOTTOM",
+    false
+   ],
+   [
+    "CF3.0 \u00d74 \u00b7 3 ft wide \u00d7 1 ft deep \u00b7 BOF 83\u2032 \u00d72, 96\u2032 \u00d72",
+    "from the footing schedule (page 12) \u00b7 (3)#5 BOTTOM #5@12\"",
+    false
+   ],
+   [
+    "CF5.0 \u00d73 \u00b7 5 ft wide \u00d7 1 ft deep \u00b7 BOF 87\u2032, 86.5\u2032 \u00d72",
+    "from the footing schedule (page 12) \u00b7 (5)#5 BOTTOM #5@12\"",
+    false
+   ],
+   [
+    "CF7.0 \u00d73 \u00b7 7 ft wide \u00d7 1 ft deep \u00b7 BOF 86.5\u2032 \u00d72",
+    "from the footing schedule (page 12) \u00b7 1 with no elevation beside it",
+    false
+   ],
+   [
+    "CF4.0 \u00d73 \u00b7 4 ft wide \u00d7 1 ft deep \u00b7 BOF 86.5\u2032 \u00d73",
+    "from the footing schedule (page 12) \u00b7 (5)#5 BOTTOM #5@12\"",
+    false
+   ],
+   [
+    "F4.0 \u00d72 \u00b7 4 ft \u00d7 4 ft \u00d7 1 ft deep \u00b7 BOF 86\u2032, 84.1667\u2032",
+    "from the footing schedule (page 12) \u00b7 (5)#5 BOTTOM (5)#5 BOTTOM",
+    false
+   ],
+   [
+    "F3.0 \u00d72 \u00b7 3 ft \u00d7 3 ft \u00d7 1 ft deep \u00b7 BOF 96\u2032, 94.5\u2032",
+    "from the footing schedule (page 12) \u00b7 (3)#5 BOTTOM (3)#5 BOTTOM",
+    false
+   ],
+   [
+    "F10.0x6.0 \u00d72 \u00b7 10 ft \u00d7 6 ft \u00d7 1.33 ft deep \u00b7 BOF 86.5\u2032 \u00d72",
+    "from the footing schedule (page 12) \u00b7 (8)#5 BOTTOM (12)#5 BOTTOM",
+    false
+   ],
+   [
+    "CF9.5 \u00d71 \u00b7 9.5 ft wide \u00d7 1.5 ft deep \u00b7 BOF 87\u2032",
+    "from the footing schedule (page 12) \u00b7 (10)#5 BOTTOM #6@9\"",
+    false
+   ],
+   [
+    "F7.5 \u00d71 \u00b7 7.5 ft \u00d7 7.5 ft \u00d7 1.5 ft deep \u00b7 BOF 84.1667\u2032",
+    "from the footing schedule (page 12) \u00b7 (8)#5 BOTTOM (8)#5 BOTTOM",
+    false
+   ],
+   [
+    "F5.0 \u00d71 \u00b7 5 ft \u00d7 5 ft \u00d7 1 ft deep \u00b7 BOF 86\u2032",
+    "from the footing schedule (page 12) \u00b7 (5)#5 BOTTOM (5)#5 BOTTOM",
+    false
+   ],
+   [
+    "F9.0 \u00d71 \u00b7 9 ft \u00d7 9 ft \u00d7 1.67 ft deep \u00b7 BOF 86\u2032",
+    "from the footing schedule (page 12) \u00b7 (13)#5 BOTTOM (13)#5 BOTTOM",
+    false
+   ],
+   [
+    "F6.0 \u00d71 \u00b7 6 ft \u00d7 6 ft \u00d7 1 ft deep \u00b7 BOF 96\u2032",
+    "from the footing schedule (page 12) \u00b7 (6)#5 BOTTOM (6)#5 BOTTOM",
+    false
+   ],
+   [
+    "F10.0x7.0 \u00d71 \u00b7 10 ft \u00d7 7 ft \u00d7 1.33 ft deep \u00b7 BOF 86.5\u2032",
+    "from the footing schedule (page 12) \u00b7 (10)#5 BOTTOM (12)#5 BOTTOM",
+    false
+   ],
+   [
+    "F10.0x8.0 \u00d71 \u00b7 10 ft \u00d7 8 ft \u00d7 1.33 ft deep \u00b7 BOF 86.5\u2032",
+    "from the footing schedule (page 12) \u00b7 (10)#5 BOTTOM (12)#5 BOTTOM",
+    false
+   ]
+  ],
+  "slabs": "slab elevations printed: (87'-0\"), (85'-10\"), (84'-8\"), (87'-6\"), (84'-2\"), (100'-2\")",
+  "data": {
+   "marks": [
+    "CF2.0",
+    "CF5.0",
+    "CF9.5",
+    "CF3.0",
+    "F5.5",
+    "F4.0",
+    "F7.5",
+    "CF7.0",
+    "CF4.0",
+    "F5.0",
+    "F9.0",
+    "F6.0",
+    "F3.0",
+    "F10.0x6.0",
+    "F10.0x7.0",
+    "F10.0x8.0"
+   ],
+   "schedule": {
+    "pages": [
+     11
+    ],
+    "rows": 17,
+    "scanned": 2
+   }
+  }
+ },
+ "rects_b1": {
+  "footings": [
+   149,
+   411,
+   337,
+   560
+  ]
+ },
+ "fpp": 0.07407407407407407,
+ "draft": {
+  "n": 3,
+  "footing_w_ft": 2,
+  "footing_ft": 0
+ },
+ "after_click": {
+  "draft": {
+   "footing_w_ft": 2,
+   "footing_ft": 1,
+   "footing_mark": "CF2.0"
+  },
+  "status": "CF2.0: footing 2 ft wide, 1 ft below the slab (from the footing schedule)",
+  "inputs": {
+   "w": "2",
+   "ft": "1"
+  },
+  "result": "mass 88.9 CY \u00b7 structure dig 186.5 CY \u00b7 backfill 186.5 CY (fill depth assumed = dig) \u00b7 slab prep 300 SF \u00b7 perimeter drain 86 LF \u00b7 radon 78 LF"
+ },
+ "rects_b2": {
+  "footings": [
+   149,
+   -341,
+   337,
+   560
+  ],
+  "w": [
+   413,
+   457.9375,
+   64,
+   23.59375
+  ],
+  "ft": [
+   413,
+   405.15625,
+   64,
+   23.59375
+  ],
+  "status": [
+   472.8125,
+   914.5,
+   583.421875,
+   18
+  ],
+  "result": [
+   149,
+   701.6875,
+   337,
+   54
+  ]
+ },
+ "ellis_chips": {
+  "head": "Footing marks printed on this sheet \u2014 click one to set the draft's footing width and depth \u00b7 schedule read from page 51",
+  "chips": [
+   [
+    "F-24 \u00d715 \u00b7 2 ft wide \u00d7 0.83 ft deep",
+    "from the footing schedule (page 51) \u00b7 # 4 BARS CONT. \u00b7 15 with no elevation beside it",
+    false
+   ],
+   [
+    "S-36 \u00d712 \u00b7 3 ft \u00d7 3 ft \u00d7 0.83 ft deep",
+    "from the footing schedule (page 51) \u00b7 # 4 BARS EACH WAY \u00b7 12 with no elevation beside it",
+    false
+   ],
+   [
+    "F-20 \u00d711 \u00b7 1.67 ft wide \u00d7 0.83 ft deep",
+    "from the footing schedule (page 51) \u00b7 # 4 BARS CONT. \u00b7 11 with no elevation beside it",
+    false
+   ],
+   [
+    "S-60 \u00d78 \u00b7 5 ft \u00d7 5 ft \u00d7 1 ft deep",
+    "from the footing schedule (page 51) \u00b7 # 4 BARS EACH WAY \u00b7 8 with no elevation beside it",
+    false
+   ],
+   [
+    "S-48 \u00d72 \u00b7 4 ft \u00d7 4 ft \u00d7 1 ft deep",
+    "from the footing schedule (page 51) \u00b7 # 4 BARS EACH WAY \u00b7 2 with no elevation beside it",
+    false
+   ]
+  ],
+  "slabs": null,
+  "data": {
+   "marks": [
+    "S-60",
+    "S-48",
+    "F-20",
+    "F-24",
+    "S-36"
+   ],
+   "schedule": {
+    "pages": [
+     50
+    ],
+    "rows": 12,
+    "scanned": 1
+   }
+  }
+ },
+ "rects_e": {
+  "footings": [
+   149,
+   411,
+   337,
+   176
+  ]
+ }
+}

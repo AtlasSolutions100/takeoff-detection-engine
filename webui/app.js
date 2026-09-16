@@ -22209,6 +22209,83 @@ function stResultText(c) {
     ` · backfill ${stFmt(stR1(c.backfill_cy))} CY${c.backfill_assumed ? " (fill depth assumed = dig)" : ""}` +
     ` · slab prep ${stFmt(c.slab_sf, 0)} SF · perimeter drain ${stFmt(c.drain_lf, 0)} LF · radon ${stFmt(c.radon_lf, 0)} LF`;
 }
+// ---- footing marks: the sheet's callouts + the set's schedule, as chips ----
+// (`mk` is a per-function local everywhere in this file; the chip block has its own)
+function stMk(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+function stFt(v) { return v == null ? "?" : (Math.round(v * 100) / 100) + " ft"; }
+function stFootingsBlock(st) {
+  const box = stMk("div", "st-footings");
+  const f = st.footings;
+  if (!f || f.job !== state.job || f.page !== state.page) {
+    st.footings = { job: state.job, page: state.page, loading: true, data: null, err: null };
+    stFetchFootings();
+    box.appendChild(stMk("div", "ew-meta", "reading the footing marks on this sheet\u2026"));
+    return box;
+  }
+  if (f.loading) { box.appendChild(stMk("div", "ew-meta", "reading the footing marks on this sheet\u2026")); return box; }
+  if (f.err) { box.appendChild(stMk("div", "ew-meta", "footing marks: " + f.err)); return box; }
+  const d = f.data || {};
+  const marks = Object.entries(d.by_mark || {}).sort((a, b) => b[1].count - a[1].count);
+  if (!marks.length) {
+    box.appendChild(stMk("div", "ew-meta", "no footing marks (CF2.0, F5.5, F-24, S-36\u2026) printed on this sheet"));
+    return box;
+  }
+  const sch = d.schedule || {};
+  box.appendChild(stMk("div", "ew-meta", "Footing marks printed on this sheet \u2014 click one to set the draft's footing width and depth"
+    + (sch.rows ? ` \u00b7 schedule read from page ${(sch.pages || []).map(p => p + 1).join(", ")}`
+                : " \u00b7 no footing schedule found in this set, widths come from the marks' own digits")));
+  const row = stMk("div", "st-chips");
+  for (const [mark, m] of marks) {
+    const s = m.schedule || {};
+    const chip = stMk("button", "mini st-chip");
+    const dims = s.kind === "spread" && s.length_ft != null ? `${stFt(s.length_ft)} \u00d7 ${stFt(s.width_ft)}` : `${stFt(s.width_ft)} wide`;
+    const depth = s.depth_ft != null ? ` \u00d7 ${stFt(s.depth_ft)} deep` : "";
+    const bof = Object.entries(m.bof || {}).map(([z, n]) => `${z}\u2032${n > 1 ? " \u00d7" + n : ""}`).join(", ");
+    chip.textContent = `${mark} \u00d7${m.count} \u00b7 ${dims}${depth}` + (bof ? ` \u00b7 BOF ${bof}` : "");
+    chip.title = (s.from === "schedule" ? `from the footing schedule (page ${(s.page || 0) + 1})` : "no schedule row: width from the mark's digits, depth unknown")
+      + (s.reinf ? ` \u00b7 ${s.reinf}` : "") + (m.unpaired ? ` \u00b7 ${m.unpaired} with no elevation beside it` : "");
+    if (s.from !== "schedule") chip.classList.add("st-chip-guess");
+    chip.onclick = () => stApplyFooting(mark, s);
+    row.appendChild(chip);
+  }
+  box.appendChild(row);
+  if (d.slabs && d.slabs.length)
+    box.appendChild(stMk("div", "ew-meta", "slab elevations printed: " + [...new Set(d.slabs.map(x => x.text))].join(", ")));
+  return box;
+}
+async function stFetchFootings() {
+  const st = state.st, f = st && st.footings, gen = state.gen;
+  if (!f) return;
+  try {
+    const r = await fetch(`/api/job/${state.job}/page/${state.page}/footings`);
+    if (!r.ok) throw new Error("failed (" + r.status + ")");
+    const j = await r.json();
+    if (gen !== state.gen || state.st !== st) return;
+    f.loading = false; f.data = j;
+  } catch (e) {
+    if (gen !== state.gen || state.st !== st) return;
+    f.loading = false; f.err = String((e && e.message) || e);
+  }
+  renderSt();
+}
+function stApplyFooting(mark, s) {
+  const st = stSync();
+  const d = st.draft;
+  if (!d) { setStatus(`${mark}: pick or draw the outline first, then click the mark to set its footing`, "err"); return; }
+  if (s && s.width_ft != null) d.footing_w_ft = s.width_ft;
+  if (s && s.depth_ft != null) d.footing_ft = s.depth_ft;
+  d.footing_mark = mark;
+  $("stResult").textContent = stResultText(stCalc(d));
+  renderSt();
+  setStatus(`${mark}: footing ${stFt(s && s.width_ft)} wide, `
+    + (s && s.depth_ft != null ? `${stFt(s.depth_ft)} below the slab` : "depth not in the schedule \u2014 type it")
+    + (s && s.from === "schedule" ? " (from the footing schedule)" : " (from the mark's digits, no schedule row)"));
+}
 function renderSt() {
   const st = stSync();
   const body = $("stBody"), rows = $("stRows");
@@ -22233,6 +22310,13 @@ function renderSt() {
     fpp ? `scale ${state.result.scale.text}` : "NO SCALE SET — pt only");
   modes.appendChild(scaleNote);
   body.appendChild(modes);
+  // FOOTING MARKS ON THIS SHEET (Beaumont, call 2026-09-15 28:00-31:17:
+  // "CF3.0 vs CF7.5 doubles the dig"; Jeff Ellis: footings by schedule
+  // mark). The sheet's own marks, each with its schedule row, offered as
+  // chips: a click sets the draft's footing width and depth, the typed
+  // number always wins, and a mark with no schedule row says its width
+  // came from its digits.
+  body.appendChild(stFootingsBlock(st));
 
   // draft: the outline just taken, with its inputs and live numbers
   const d = st.draft;
