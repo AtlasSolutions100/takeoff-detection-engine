@@ -6159,7 +6159,10 @@ def _symbols_raster(job: dict, page: int, vocab: list, sched: dict,
 
 class StructureBody(BaseModel):
     # [{name?, points: [[x_pt, y_pt], ...] (>= 3 corners, page pt),
-    #   depth_ft, layback_ft, footing_ft?}] - one entry per building
+    #   depth_ft, fill_depth_ft?, footing_ft?, footing_w_ft?, layback_hv?}]
+    # - one entry per building. `layback_ft` (a constant trench width) was
+    # the pre-2026-09-16 shape and is ignored: the trench is now the
+    # depth-proportional wedge the client bids (see _structure_one).
     structures: list[dict] = []
 
 
@@ -6168,10 +6171,24 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
     Same arithmetic as the review UI (webui/app.js stCalc); this is the
     server-side source of truth for the export/report path.
 
-      Mass Excavation CY      = footprint SF x depth / 27
-      Structure Excavation CY = wall LF x (depth + footing) x layback / 27
-      Structure Backfill CY   = Structure Excavation (dig it, fill it back)
+    Beaumont Excavating's own rule (call of 2026-09-15, 28:00-31:17; bid
+    sheet p.3 items 8 and 9): the trench outside the wall is dug to the
+    bottom of the footing with the sides laid back at 1:1 for safety, so
+    per foot of wall the section is depth x (footing width + half the
+    depth); "a 6 ft cut is 6 by 6 by 3" plus the footing sticking out.
+    Backfill is the SAME section figured to the PROPOSED grade, which can
+    be higher or lower than the ground he dug from - so it is not the dig.
+
+      Dt = depth_ft + footing_ft                (ground -> footing bottom)
+      Df = (fill_depth_ft or depth_ft) + footing_ft   (proposed -> bottom)
+      Mass Excavation CY      = footprint SF x depth_ft / 27
+      Structure Excavation CY = wall LF x Dt x (W + 0.5 x hv x Dt) / 27
+      Structure Backfill CY   = wall LF x Df x (W + 0.5 x hv x Df) / 27
       Slab Prep SF            = footprint SF
+    with W = footing_w_ft (default 2, a CF2.0 footing) and hv = layback_hv
+    (horizontal per vertical, default 1.0 = 1:1). When fill_depth_ft is
+    blank the backfill is figured to the dig depth and the reply says so
+    (backfill_assumed), so a bid never silently carries that guess.
     """
     pts = s.get("points") or []
     try:
@@ -6196,7 +6213,13 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
         if v != v or v < 0 or v > 1000:
             raise HTTPException(400, f"{key} out of range (0-1000 ft)")
         return v
-    depth, layback, footing = num("depth_ft"), num("layback_ft", 4.0), num("footing_ft")
+    depth, footing = num("depth_ft"), num("footing_ft")
+    width, hv = num("footing_w_ft", 2.0), num("layback_hv", 1.0)
+    fill_raw = s.get("fill_depth_ft")
+    assumed = fill_raw is None or fill_raw == ""
+    fill = depth if assumed else num("fill_depth_ft")
+    dt = depth + footing
+    df = fill + footing
     area2 = 0.0
     perim = 0.0
     n = len(ring)
@@ -6207,16 +6230,20 @@ def _structure_one(s: dict, ft_per_pt: float) -> dict:
         perim += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
     area_sf = abs(area2) / 2.0 * ft_per_pt * ft_per_pt
     perim_lf = perim * ft_per_pt
-    struct = perim_lf * (depth + footing) * layback / 27.0
+    struct = perim_lf * dt * (width + 0.5 * hv * dt) / 27.0
+    backfill = perim_lf * df * (width + 0.5 * hv * df) / 27.0
     return {
         "name": str(s.get("name", ""))[:60],
         "corners": n,
         "area_sf": round(area_sf, 1),
         "perim_lf": round(perim_lf, 1),
-        "depth_ft": depth, "layback_ft": layback, "footing_ft": footing,
+        "depth_ft": depth, "fill_depth_ft": fill, "footing_ft": footing,
+        "footing_w_ft": width, "layback_hv": hv,
+        "dig_w_ft": round(width + 0.5 * hv * dt, 2),
+        "backfill_assumed": bool(assumed),
         "mass_cy": round(area_sf * depth / 27.0, 1),
         "struct_cy": round(struct, 1),
-        "backfill_cy": round(struct, 1),
+        "backfill_cy": round(backfill, 1),
         "slab_sf": round(area_sf, 1),
     }
 

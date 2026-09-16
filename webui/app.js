@@ -7294,10 +7294,12 @@ function calcStatePayload() {
         name: it.name, pts: it.pts.map(p => [p[0], p[1]]),
         source: it.source, chain_id: it.chain_id == null ? null : it.chain_id,
         gap_pt: it.gap_pt || 0, depth_ft: it.depth_ft,
-        layback_ft: it.layback_ft, footing_ft: it.footing_ft,
+        fill_depth_ft: isFinite(+it.fill_depth_ft) && it.fill_depth_ft !== null ? +it.fill_depth_ft : null,
+        footing_ft: it.footing_ft, footing_w_ft: it.footing_w_ft, layback_hv: it.layback_hv,
       })),
       seq: st.seq, depth_ft: st.depth_ft,
-      layback_ft: st.layback_ft, footing_ft: st.footing_ft,
+      fill_depth_ft: isFinite(+st.fill_depth_ft) && st.fill_depth_ft !== null ? +st.fill_depth_ft : null,
+      footing_ft: st.footing_ft, footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv,
     };
   } else if (saved.st) out.st = saved.st;
   // WORK AREA boxes (additive key "zones"): plain page-pt rects, keyed to
@@ -7590,15 +7592,19 @@ function stApplySaved() {
         chain_id: typeof it.chain_id === "number" ? it.chain_id : null,
         gap_pt: calcNum(it.gap_pt) || 0,
         depth_ft: calcNum(it.depth_ft) !== null ? it.depth_ft : 8,
-        layback_ft: calcNum(it.layback_ft) !== null ? it.layback_ft : 4,
+        fill_depth_ft: calcNum(it.fill_depth_ft) !== null ? it.fill_depth_ft : NaN,
         footing_ft: calcNum(it.footing_ft) !== null ? it.footing_ft : 0,
+        footing_w_ft: calcNum(it.footing_w_ft) !== null ? it.footing_w_ft : 2,
+        layback_hv: calcNum(it.layback_hv) !== null ? it.layback_hv : 1,
       });
     }
   }
   if (calcNum(sv.seq) !== null) st.seq = sv.seq;
   if (calcNum(sv.depth_ft) !== null) st.depth_ft = sv.depth_ft;
-  if (calcNum(sv.layback_ft) !== null) st.layback_ft = sv.layback_ft;
+  if (calcNum(sv.fill_depth_ft) !== null) st.fill_depth_ft = sv.fill_depth_ft;
   if (calcNum(sv.footing_ft) !== null) st.footing_ft = sv.footing_ft;
+  if (calcNum(sv.footing_w_ft) !== null) st.footing_w_ft = sv.footing_w_ft;
+  if (calcNum(sv.layback_hv) !== null) st.layback_hv = sv.layback_hv;
   if (st.items.length && stFtPerPt()) {
     stApplyItems();
     if (!$("stPanel").hidden) renderSt();
@@ -21769,7 +21775,8 @@ function stFtPerPt() {
 function stSync() {
   if (!state.st || state.st.result !== state.result) {
     state.st = { result: state.result, items: [], draft: null, drawPts: [], hover: null,
-                 hot: null, seq: 1, depth_ft: 8, layback_ft: 4, footing_ft: 0 };
+                 hot: null, seq: 1, depth_ft: 8, fill_depth_ft: NaN, footing_ft: 0,
+                 footing_w_ft: 2, layback_hv: 1 };
     if (state.tool === "st-pick" || state.tool === "st-draw") state.tool = null;
     $("stPanel").hidden = true;
     $("stResult").textContent = "";
@@ -21804,14 +21811,24 @@ function stCalc(it) {
   out.area_sf = area_pt2 * fpp * fpp;
   out.perim_lf = perim_pt * fpp;
   const d = Math.max(0, +it.depth_ft || 0);
-  const lb = Math.max(0, +it.layback_ft || 0);
   const fd = Math.max(0, +it.footing_ft || 0);
+  const w = Math.max(0, isFinite(+it.footing_w_ft) ? +it.footing_w_ft : 2);
+  const hv = Math.max(0, isFinite(+it.layback_hv) ? +it.layback_hv : 1);
+  // blank fill depth = figured to the dig depth, and SAID (backfill_assumed)
+  const assumed = !(isFinite(+it.fill_depth_ft) && it.fill_depth_ft !== null && it.fill_depth_ft !== "");
+  const fdep = assumed ? d : Math.max(0, +it.fill_depth_ft);
   out.mass_cy = out.area_sf * d / 27;
-  // the perimeter trench goes to the BOTTOM OF THE FOOTING: the dig depth
-  // plus whatever the footing sits below the slab (0 when the depth typed
-  // already is the footing bottom)
-  out.struct_cy = out.perim_lf * (d + fd) * lb / 27;
-  out.backfill_cy = out.struct_cy;
+  // BEAUMONT'S RULE (2026-09-15, 28:00-31:17; bid sheet items 8 and 9): the
+  // trench outside the wall goes to the BOTTOM OF THE FOOTING (dig depth
+  // plus whatever the footing sits below the slab) with the sides laid
+  // back at hv:1, so the section per foot of wall is depth x (footing
+  // width + half the depth x hv). Backfill is the same section figured
+  // from the footing bottom up to the PROPOSED grade - not the dig.
+  const dt = d + fd, df = fdep + fd;
+  out.dig_w_ft = w + 0.5 * hv * dt;
+  out.struct_cy = out.perim_lf * dt * (w + 0.5 * hv * dt) / 27;
+  out.backfill_cy = out.perim_lf * df * (w + 0.5 * hv * df) / 27;
+  out.backfill_assumed = assumed;
   out.slab_sf = out.area_sf;
   return out;
 }
@@ -21895,7 +21912,8 @@ function stPickAt(px, py) {
   if (gap < 0.5) pts.pop();   // first == last: one ring vertex, not two
   const st = stSync();
   st.draft = { name: `Structure ${st.seq}`, pts, source: "line", chain_id: best.chain_id, gap_pt: gap,
-               depth_ft: st.depth_ft, layback_ft: st.layback_ft, footing_ft: st.footing_ft };
+               depth_ft: st.depth_ft, fill_depth_ft: st.fill_depth_ft, footing_ft: st.footing_ft,
+               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv };
   state.tool = null;
   const c = stCalc(st.draft);
   setStatus(c.area_sf !== null
@@ -21933,7 +21951,8 @@ function stFinishDraw() {
     return setStatus(`an outline needs at least 3 corners (have ${pts.length}) — keep clicking, or Esc to cancel`, "err");
   }
   st.draft = { name: `Structure ${st.seq}`, pts, source: "drawn", chain_id: null, gap_pt: 0,
-               depth_ft: st.depth_ft, layback_ft: st.layback_ft, footing_ft: st.footing_ft };
+               depth_ft: st.depth_ft, fill_depth_ft: st.fill_depth_ft, footing_ft: st.footing_ft,
+               footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv };
   state.tool = null; st.drawPts = []; st.hover = null;
   polySnapClear();
   const c = stCalc(st.draft);
@@ -22058,7 +22077,8 @@ function stResultText(c) {
   if (c.area_sf === null)
     return `${stFmt(c.area_pt2, 0)} pt² · ${stFmt(c.perim_pt, 0)} pt — no scale set on this page, volumes need feet`;
   return `mass ${stFmt(stR1(c.mass_cy))} CY · structure dig ${stFmt(stR1(c.struct_cy))} CY` +
-    ` · backfill ${stFmt(stR1(c.backfill_cy))} CY · slab prep ${stFmt(c.slab_sf, 0)} SF`;
+    ` · backfill ${stFmt(stR1(c.backfill_cy))} CY${c.backfill_assumed ? " (fill depth assumed = dig)" : ""}` +
+    ` · slab prep ${stFmt(c.slab_sf, 0)} SF`;
 }
 function renderSt() {
   const st = stSync();
@@ -22104,16 +22124,21 @@ function renderSt() {
       : `${stFmt(c.area_pt2, 0)} pt² · ${stFmt(c.perim_pt, 0)} pt`) + ` · ${srcTxt}`));
     const grid = mk("div", "tr-grid");
     const upd = () => {
-      st.depth_ft = d.depth_ft; st.layback_ft = d.layback_ft; st.footing_ft = d.footing_ft;
+      st.depth_ft = d.depth_ft; st.fill_depth_ft = d.fill_depth_ft; st.footing_ft = d.footing_ft;
+      st.footing_w_ft = d.footing_w_ft; st.layback_hv = d.layback_hv;
       $("stResult").textContent = stResultText(stCalc(d));
       draw();
     };
-    grid.append(mk("div", null, "Dig depth (ft): ground down to the basement slab, or to the footing bottom when there is no basement"),
+    grid.append(mk("div", null, "Dig depth (ft): existing ground down to the basement slab, or to the footing bottom when there is no basement"),
                 stNumInput(d, "depth_ft", "0.5", upd));
-    grid.append(mk("div", null, "Layback width (ft): working room dug outside the foundation wall, all the way around"),
-                stNumInput(d, "layback_ft", "0.5", upd));
-    grid.append(mk("div", null, "Footing below slab (ft): extra depth the perimeter trench goes past the slab; 0 if the depth above already is the footing bottom"),
+    grid.append(mk("div", null, "Fill depth (ft): PROPOSED grade down to the same slab. Blank = same as the dig, and the row says so"),
+                stNumInput(d, "fill_depth_ft", "0.5", upd));
+    grid.append(mk("div", null, "Footing below slab (ft): extra depth the trench goes past the slab; 0 if the depth above already is the footing bottom"),
                 stNumInput(d, "footing_ft", "0.5", upd));
+    grid.append(mk("div", null, "Footing width (ft): from the footing mark (CF2.0 = 2 ft); the trench floor is this wide outside the wall"),
+                stNumInput(d, "footing_w_ft", "0.5", upd));
+    grid.append(mk("div", null, "Layback, horizontal per vertical: 1 = a 1:1 slope (half the depth per side); 0 = vertical walls or a trench box"),
+                stNumInput(d, "layback_hv", "0.25", upd));
     box.appendChild(grid);
     const acts = mk("div", "st-draft-acts");
     const discard = mk("button", "mini", "discard outline");
@@ -22147,9 +22172,11 @@ function renderSt() {
     row.appendChild(top);
     const g = mk("div", "st-row-in");
     const upd = () => { stApplyItems(); $("stResult").textContent = stResultText(stCalc(it)); draw(); };
-    g.append(mk("span", null, "depth"), stNumInput(it, "depth_ft", "0.5", upd),
-             mk("span", null, "layback"), stNumInput(it, "layback_ft", "0.5", upd),
-             mk("span", null, "ftg"), stNumInput(it, "footing_ft", "0.5", upd));
+    g.append(mk("span", null, "dig"), stNumInput(it, "depth_ft", "0.5", upd),
+             mk("span", null, "fill"), stNumInput(it, "fill_depth_ft", "0.5", upd),
+             mk("span", null, "ftg below"), stNumInput(it, "footing_ft", "0.5", upd),
+             mk("span", null, "ftg width"), stNumInput(it, "footing_w_ft", "0.5", upd),
+             mk("span", null, "layback h:v"), stNumInput(it, "layback_hv", "0.25", upd));
     row.appendChild(g);
     row.appendChild(mk("div", "ew-meta", c.mass_cy !== null
       ? `mass ${stFmt(stR1(c.mass_cy))} · dig ${stFmt(stR1(c.struct_cy))} · backfill ${stFmt(stR1(c.backfill_cy))} CY`
@@ -22159,10 +22186,10 @@ function renderSt() {
     rows.appendChild(row);
   });
   if (st.items.length > 1 && fpp) {
-    const tot = { mass: 0, dig: 0, slab: 0 };
-    for (const it of st.items) { const c = stCalc(it); tot.mass += c.mass_cy; tot.dig += c.struct_cy; tot.slab += c.slab_sf; }
+    const tot = { mass: 0, dig: 0, back: 0, slab: 0 };
+    for (const it of st.items) { const c = stCalc(it); tot.mass += c.mass_cy; tot.dig += c.struct_cy; tot.back += c.backfill_cy; tot.slab += c.slab_sf; }
     rows.appendChild(mk("div", "st-total",
-      `${st.items.length} structures → mass ${stFmt(stR1(tot.mass))} CY · dig ${stFmt(stR1(tot.dig))} CY · backfill ${stFmt(stR1(tot.dig))} CY · slab prep ${stFmt(tot.slab, 0)} SF`));
+      `${st.items.length} structures → mass ${stFmt(stR1(tot.mass))} CY · dig ${stFmt(stR1(tot.dig))} CY · backfill ${stFmt(stR1(tot.back))} CY · slab prep ${stFmt(tot.slab, 0)} SF`));
   }
 }
 $("stAdd").onclick = async () => {
@@ -22181,7 +22208,9 @@ $("stAdd").onclick = async () => {
     const r = await fetch(`/api/job/${state.job}/page/${state.page}/structure`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ structures: [{ name: d.name, points: d.pts, depth_ft: d.depth_ft,
-                                            layback_ft: d.layback_ft, footing_ft: d.footing_ft }] }),
+                                            fill_depth_ft: isFinite(+d.fill_depth_ft) && d.fill_depth_ft !== null ? +d.fill_depth_ft : null,
+                                            footing_ft: d.footing_ft, footing_w_ft: d.footing_w_ft,
+                                            layback_hv: d.layback_hv }] }),
     });
     if (!r.ok) { $("stResult").textContent += ` · server check failed (${r.status})`; return; }
     const j = await r.json();
@@ -22210,7 +22239,10 @@ function drawStructural(ctx, k) {
   const paint = (it, color, band, hot) => {
     const pts = it.pts;
     if (pts.length < 3) return;
-    const lbPt = fpp && it.layback_ft > 0 ? it.layback_ft / fpp : 0;
+    // the band is the trench's top width outside the wall: footing width
+    // plus the laid-back side (half the depth at 1:1)
+    const digW = stCalc(it).dig_w_ft || 0;
+    const lbPt = fpp && digW > 0 ? digW / fpp : 0;
     if (lbPt > 0) {
       ctx.save();
       // clip = whole sheet minus the polygon (even-odd)

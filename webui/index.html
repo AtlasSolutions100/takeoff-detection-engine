@@ -760,11 +760,14 @@
     <div id="stPanel" class="ew-panel" hidden>
       <div class="side-head" id="stHead"><h2>Structure &mdash; dig &amp; backfill</h2>
         <button id="stClose" class="mini">close</button></div>
-      <div class="ew-hint" id="stHint">Outline the building, then type the dig depth. <b>Mass Excavation</b> is the
-        whole footprint dug to that depth (footprint &times; depth). <b>Structure Excavation</b> is the working
-        trench around the outside of the foundation wall (wall length &times; depth &times; layback width), and
-        <b>Structure Backfill</b> is that same trench filled back in after the wall is built (the same number).
-        <b>Slab Prep</b> is the footprint area. All volumes in cubic yards (&divide; 27).</div>
+      <div class="ew-hint" id="stHint">Outline the building, then type the depths. <b>Mass Excavation</b> is the
+        whole footprint dug to the slab (footprint &times; depth). <b>Structure Excavation</b> is the trench
+        outside the foundation wall, dug to the bottom of the footing with the sides laid back for safety:
+        per foot of wall it is depth &times; (footing width + half the depth at 1:1). A 6 ft dig with a 2 ft footing
+        is 6 &times; (2 + 3) = 30 SF of section. <b>Structure Backfill</b> is the same section figured from the
+        footing bottom up to the <i>proposed</i> grade, which is not always the ground you dug from &mdash; leave
+        fill depth blank and it is assumed equal to the dig, and the row says so. <b>Slab Prep</b> is the
+        footprint area. All volumes in cubic yards (&divide; 27).</div>
       <div id="stBody" class="tr-body"></div>
       <div id="stRows" class="ew-rows"></div>
       <div class="ew-actions" id="stActions">
@@ -1238,6 +1241,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=177"></script>
+<script src="app.js?v=178"></script>
 </body>
 </html>
