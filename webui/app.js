@@ -1207,7 +1207,7 @@ function pageReset() {
   $("rollPanel").hidden = true; $("rollBtn").hidden = false;
   // CROSS SECTIONS and CALLOUTS
   state.xs = null; $("xsPanel").hidden = true; $("xsBtn").hidden = false;
-  state.co = null; state.watch = null; $("coPanel").hidden = true; $("coBtn").hidden = false;
+  state.co = null; state.watch = null; state.pipes = null; $("coPanel").hidden = true; $("coBtn").hidden = false;
 }
 
 async function loadResult(gen = state.gen) {
@@ -10239,7 +10239,8 @@ function renderBidView(groups, ftPerIn) {
     d.appendChild(sum);
     // Storm by size, when any member's own label carries a size token
     // (Pierce: pipe separated by size).
-    if (B.bucket === "Storm Drainage") {
+    // by size: the storm bucket always; in sheet mode every LF line (his "storm LF per size")
+    if (B.bucket === "Storm Drainage" || (sheetMode && B.line && B.line.unit === "LF")) {
       const bs = bidBySize(B.members, u);
       const keys = Object.keys(bs);
       if (keys.length > 1 || (keys.length === 1 && keys[0] !== "no size in name")) {
@@ -16132,6 +16133,7 @@ $("coBtn").onclick = async () => {
     state.co = (await r.json()).callouts;
   }
   renderCo();
+  loadPipeSizes();   // the leaders are cached now, so the sizes can read them
 };
 $("coClose").onclick = () => { $("coPanel").hidden = true; };
 // ---- the watch-list (Wave 2 item 7; takeoff_engine/watchlist.py) -------------------
@@ -16207,6 +16209,77 @@ function renderWatch() {
     row.onmouseenter = () => { state.symMarks = items.map((it) => [it.x, it.y]); draw(); };
     row.onmouseleave = () => { state.symMarks = null; draw(); };
     row.appendChild(list);
+    box.appendChild(row);
+  }
+}
+// ---- pipe sizes on runs (Wave 2 item 8; takeoff_engine/pipesize.py) --------------------
+// Where a family's size comes from: its name, inline codes on the line,
+// leader callouts pointing at it. A nameless family with one size on its
+// runs can be named with it here - the size then reaches every export by
+// name (the bid view's "by size", the bid sheet's breakdown). A mixed
+// family is said to be mixed: split it first, never guess.
+async function loadPipeSizes() {
+  const box = $("psRows");
+  if (!box || !state.result) return;
+  box.innerHTML = '<div class="ew-hint">reading pipe sizes on the runs\u2026</div>';
+  try {
+    const labels = {};
+    for (const [sid, name] of state.labels) labels[sid] = name;
+    const r = await fetch(`/api/job/${state.job}/page/${state.page}/pipesizes`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ labels }) });
+    state.pipes = r.ok ? await r.json() : { err: "failed (" + r.status + ")" };
+  } catch (e) { state.pipes = { err: String((e && e.message) || e) }; }
+  renderPipes();
+}
+function psName(f) {
+  const st = state.result && state.result.styles.find((s) => s.style_id === f.style_id);
+  if (!st || !f.suggest) return;
+  const nm = ((state.labels.get(f.style_id) || f.label || "").trim() + " " + f.suggest).trim();
+  state.labels.set(f.style_id, nm);
+  colorBust(); memSave(st);
+  renderStyles(); renderItemized(); renderMiniLegend();
+  const ev = f.by_size[f.suggest] || {};
+  setStatus(`${nm}: named from the ${ev.inline ? "inline code" : "leader callout"} on its runs - the size now travels with the name`);
+  loadPipeSizes();
+}
+function renderPipes() {
+  const box = $("psRows");
+  if (!box) return;
+  box.innerHTML = "";
+  const p = state.pipes;
+  if (!p) return;
+  if (p.err) { box.appendChild(wlMk("div", "ew-hint", "pipe sizes: " + p.err)); return; }
+  const head = wlMk("div", "wl-title", "Pipe sizes on runs");
+  head.title = "Where each family's size comes from: its name, inline codes on the line (8\"SD), leader callouts pointing at it. A nameless family with one size on its runs can be named with it; a mixed one must be split first.";
+  box.appendChild(head);
+  if (p.leaders_note) box.appendChild(wlMk("div", "ew-meta", p.leaders_note));
+  const fams = (p.families || []).filter((f) => f.verdict !== "none");
+  if (!fams.length) { box.appendChild(wlMk("div", "ew-meta", "no size printed on or beside any run, and none in a family name")); return; }
+  const u = p.unit || "ft";
+  const ftTxt = (v) => (Math.round(v * 10) / 10).toLocaleString() + " " + u;
+  for (const f of fams) {
+    const row = wlMk("div", "wl-row ps-row");
+    const line = wlMk("div", "wl-line");
+    const nm = wlMk("div", "wl-name", f.label || ("family " + f.style_id));
+    const ev = Object.entries(f.by_size || {}).map(([s, r]) => `${s} on ${ftTxt(r.ft)} (`
+      + [r.inline ? r.inline + " inline" : "", r.leader ? r.leader + " leader" : ""].filter(Boolean).join(", ") + ")").join(" \u00b7 ");
+    let txt;
+    if (f.verdict === "named") txt = `named ${f.name_size}` + (f.agrees === false ? ` \u2014 but its runs print ${ev}` : (ev ? ` \u2014 the runs agree (${ev})` : ""));
+    else if (f.verdict === "single") txt = ev + (f.no_size_ft ? ` \u00b7 ${ftTxt(f.no_size_ft)} unsized` : "");
+    else txt = `mixed: ${ev} \u2014 split the family first, never guessed`;
+    const m = wlMk("div", "ew-meta", txt);
+    line.append(nm, m);
+    if (f.verdict === "single" && f.suggest) {
+      const b = wlMk("button", "mini", `name it ${f.suggest}`);
+      b.title = `renames the family "${f.label}" to "${f.label} ${f.suggest}" so the size reaches every export by name`;
+      b.onclick = (e) => { e.stopPropagation(); psName(f); };
+      line.appendChild(b);
+    } else if (f.verdict === "single") {
+      line.appendChild(wlMk("span", "ew-meta", "too little of the run is sized to name it"));
+    }
+    row.appendChild(line);
+    row.onmouseenter = () => hotFam([f.style_id]);
+    row.onmouseleave = () => hotFamOff();
     box.appendChild(row);
   }
 }

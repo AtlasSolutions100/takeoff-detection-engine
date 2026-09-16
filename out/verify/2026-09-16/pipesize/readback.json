@@ -1,0 +1,167 @@
+{
+ "errors": [],
+ "oncor_detect": false,
+ "appJs": "v=189",
+ "oncor": {
+  "rows": [
+   [
+    "solid solid",
+    "30\" on 468.7 ft (1 leader) \u00b7 2,716 ft unsized",
+    null
+   ],
+   [
+    "dash1 d18.0 g9.0",
+    "18\" on 152.7 ft (1 leader) \u00b7 2,531.2 ft unsized",
+    null
+   ],
+   [
+    "dash1 d58.6 g21.6",
+    "30\" on 91.2 ft (1 leader) \u00b7 180 ft unsized",
+    "name it 30\""
+   ],
+   [
+    "solid solid",
+    "18\" on 20.5 ft (1 leader) \u00b7 244.4 ft unsized",
+    null
+   ]
+  ],
+  "note": null,
+  "data": {
+   "n": 4,
+   "leaders": 61,
+   "unit": "ft"
+  }
+ },
+ "rect_p1": {
+  "ps": [
+   137,
+   283,
+   361,
+   228
+  ],
+  "wl": [
+   137,
+   217,
+   361,
+   58
+  ]
+ },
+ "named": {
+  "was": "dash1 d58.6 g21.6",
+  "status": "dash1 d58.6 g21.6 30\": named from the leader callout on its runs - the size now travels with the name",
+  "labels_with_inch": [
+   [
+    35,
+    "dash1 d58.6 g21.6 30\""
+   ]
+  ],
+  "rows_after": [
+   [
+    "solid solid",
+    "30\" on 468.7 ft (1 leader) \u00b7 2,716 ft unsized",
+    null
+   ],
+   [
+    "dash1 d18.0 g9.0",
+    "18\" on 152.7 ft (1 leader) \u00b7 2,531.2 ft unsized",
+    null
+   ],
+   [
+    "dash1 d58.6 g21.6 30\"",
+    "named 30\" \u2014 the runs agree (30\" on 91.2 ft (1 leader))",
+    null
+   ],
+   [
+    "solid solid",
+    "18\" on 20.5 ft (1 leader) \u00b7 244.4 ft unsized",
+    null
+   ]
+  ]
+ },
+ "rect_p2": {
+  "ps": [
+   137,
+   283,
+   361,
+   228
+  ],
+  "status": [
+   487.21875,
+   914.5,
+   460.15625,
+   18
+  ]
+ },
+ "barn_detect": false,
+ "barn": {
+  "rows": [
+   [
+    "SE-P-UT-WATER-10''",
+    "named 10\"",
+    null
+   ],
+   [
+    "SE-P-UT-WATER-SRV",
+    "12\" on 88.2 ft (1 leader) \u00b7 133.8 ft unsized",
+    "name it 12\""
+   ],
+   [
+    "solid solid",
+    "10\" on 16 ft (1 leader) \u00b7 197.1 ft unsized",
+    null
+   ],
+   [
+    "SE-P-UT-WATER-6''",
+    "named 6\"",
+    null
+   ],
+   [
+    "dash1 misc",
+    "10\" on 64.4 ft (1 leader)",
+    "name it 10\""
+   ],
+   [
+    "SE-P-EOG MR",
+    "6\" on 17.7 ft (1 leader) \u00b7 16.6 ft unsized",
+    "name it 6\""
+   ],
+   [
+    "SE-P-UT-WATER-6''",
+    "named 6\"",
+    null
+   ]
+  ],
+  "note": null,
+  "data": {
+   "n": 7,
+   "leaders": 28,
+   "unit": "ft"
+  }
+ },
+ "rect_p3": {
+  "ps": [
+   137,
+   260,
+   361,
+   315
+  ]
+ },
+ "water_by_size": {
+  "sub": "2.3k ft \u00b7 5 rows",
+  "bysize": "by size: 10\" 1.8k ft \u00b7 6\" 154 ft \u00b7 no size in name 409 ft"
+ },
+ "all_by_size": [
+  [
+   "16. Water",
+   "by size: 10\" 1.8k ft \u00b7 6\" 154 ft \u00b7 no size in name 409 ft"
+  ]
+ ],
+ "rect_p4": {
+  "water": [
+   147,
+   328.453125,
+   331,
+   178.59375
+  ]
+ }
+}

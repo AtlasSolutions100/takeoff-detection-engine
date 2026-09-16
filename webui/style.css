@@ -829,6 +829,7 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .wl-item { font-size: var(--t-fs-xs); cursor: pointer; color: var(--dim); }
 .wl-item:hover { color: inherit; }
 .wl-item.oos { text-decoration: line-through; }
+.ps-row .wl-line { flex-wrap: wrap; }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }

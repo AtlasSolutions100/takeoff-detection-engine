@@ -6158,6 +6158,43 @@ def watchlist(job_id: str, page: int):
     return JSONResponse(find_watch_callouts(lines))
 
 
+class PipeSizesBody(BaseModel):
+    labels: dict | None = None
+
+
+@app.post("/api/job/{job_id}/page/{page}/pipesizes")
+def pipesizes(job_id: str, page: int, body: PipeSizesBody):
+    """Pipe sizes on this sheet's runs, per line family: the size in the
+    family's name, and the sizes its runs carry (inline codes on the line,
+    leader callouts pointing at it) weighted by run length - so a nameless
+    storm family can be named from what the sheet prints beside it, and a
+    mixed one is said to be mixed rather than guessed. Needs the detect
+    result; leaders come from the callouts cache once Sheet callouts has
+    been opened. `labels` are the UI's current family names."""
+    from takeoff_engine.pipesize import family_sizes
+    job = JOBS.get(job_id) or _404()
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    if not rf.exists():
+        raise HTTPException(404, "run detect first")
+    res = json.loads(rf.read_text())
+    det = _page_scale(job_id, page, res)
+    fpp = det["ft_per_paper_inch"] / 72.0 if det else 1.0
+    cf = _job_dir(job_id) / f"p{page}_callouts.json"
+    callouts = None
+    if cf.exists():
+        try:
+            callouts = json.loads(cf.read_text()).get("callouts", [])
+        except (OSError, ValueError):
+            callouts = None
+    labels = {int(k): str(v) for k, v in (body.labels or {}).items()
+              if str(k).lstrip("-").isdigit() and isinstance(v, str)}
+    fams = family_sizes(res.get("chains", []), res.get("styles", []), labels, callouts, fpp)
+    return JSONResponse({"families": fams, "unit": "ft" if det else "pt",
+                         "leaders": len(callouts) if callouts is not None else None,
+                         "leaders_note": None if callouts is not None
+                         else "leader callouts not read yet - open Sheet callouts once"})
+
+
 @app.get("/api/job/{job_id}/page/{page}/callouts")
 def callouts(job_id: str, page: int):
     """The sheet's own callouts as data: every detected leader paired with

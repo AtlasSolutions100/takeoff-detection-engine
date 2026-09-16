@@ -41,6 +41,8 @@ import re
 import uuid
 from pathlib import Path
 
+from takeoff_engine.pipesize import size_token
+
 UNITS = ("LS", "SF", "CY", "LF", "EA", "SY", "TON", "GAL")
 LINE_MAX = 60
 NAME_MAX = 60
@@ -200,7 +202,7 @@ def build(lines, pages, ignore=None) -> dict:
     for i, ln in enumerate(lines):
         out.append({"n": ln.get("n") or i + 1, "name": ln.get("name", ""), "unit": ln.get("unit", "EA"),
                     "qty": None if ln.get("unit") == "LS" else 0.0, "rows": [], "other": {},
-                    "note": ln.get("note", "")})
+                    "by_size": {}, "no_size_ft": 0.0, "note": ln.get("note", "")})
     unmatched = []
     ignored = 0
     for pg in pages:
@@ -223,6 +225,12 @@ def build(lines, pages, ignore=None) -> dict:
             row["ok"] = ok
             if ok:
                 L["qty"] += qty
+                if L["unit"] == "LF":          # storm LF per size: the size token in the row's name
+                    sz = size_token(label)
+                    if sz:
+                        L["by_size"][sz] = L["by_size"].get(sz, 0.0) + qty
+                    else:
+                        L["no_size_ft"] += qty
             else:
                 L["other"][unit] = L["other"].get(unit, 0.0) + qty
             L["rows"].append(row)
@@ -230,6 +238,8 @@ def build(lines, pages, ignore=None) -> dict:
         if L["qty"] is not None:
             L["qty"] = round(L["qty"], 1)
         L["other"] = {k: round(v, 1) for k, v in L["other"].items()}
+        L["by_size"] = {k: round(v, 1) for k, v in sorted(L["by_size"].items(), key=lambda kv: -kv[1])}
+        L["no_size_ft"] = round(L["no_size_ft"], 1)
     return {"lines": out, "unmatched": unmatched, "pages": [pg.get("page") for pg in pages], "ignored": ignored}
 
 
@@ -261,9 +271,14 @@ def to_csv(res: dict, doc_name: str, scope: str) -> str:
         src = "; ".join(f"p{r['page'] + 1}: {r['label']} {_q(r['qty'])} {r['unit']}" + ("" if r["ok"] else " (not summed: other unit)")
                         for r in L["rows"])
         other = ", ".join(f"{_q(v)} {u}" for u, v in L["other"].items())
+        # '10 in', not 10": an inch mark inside a quoted CSV cell doubles to ""
+        bysz = "; ".join(f"{k.rstrip(chr(34))} in {_q(v)} ft" for k, v in (L.get("by_size") or {}).items())
+        if bysz and L.get("no_size_ft"):
+            bysz += f"; no size {_q(L['no_size_ft'])} ft"
         w.writerow([L["n"], L["name"], L["unit"],
                     _q(L["qty"]) if L["qty"] not in (None, 0.0) or L["rows"] else "",
-                    len(L["rows"]), src + (f" [also {other} in other units]" if other else "")])
+                    len(L["rows"]), src + (f" [also {other} in other units]" if other else "")
+                    + (f" [by size: {bysz}]" if bysz else "")])
     if res["unmatched"]:
         w.writerow([])
         w.writerow(["", "Not on the bid sheet", "", "", "", "rows no line matched - add a word to a line in Settings, or leave them out on purpose"])
