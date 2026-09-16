@@ -48,7 +48,7 @@ function check(cond, msg) {
 function bucket(label, layer) { return T.bidBucketFor(label, layer).bucket; }
 
 // ---- the bucket list itself, pinned (display order; UNASSIGNED last) ----
-check(T.BID_BUCKETS.length === 10, "ten buckets");
+check(T.BID_BUCKETS.length === 12, "twelve buckets (Gas and Electric/Comm joined on 2026-09-16 - Beaumont bids each dry utility's trench as its own line)");
 check(T.BID_BUCKETS[T.BID_BUCKETS.length - 1] === T.BID_UNASSIGNED,
       "UNASSIGNED is the last bucket");
 check(new Set(T.BID_BUCKETS).size === T.BID_BUCKETS.length,
@@ -236,8 +236,8 @@ check(bucket("solid solid", "") === T.BID_UNASSIGNED,
       "a signature-named row -> UNASSIGNED (no keyword invents a family)");
 check(bucket("dash1 d1.0 g7.6", "") === T.BID_UNASSIGNED,
       "a dash-signature row -> UNASSIGNED");
-check(bucket("P-UT-ELEC-UG", "") === T.BID_UNASSIGNED,
-      "dry utilities -> UNASSIGNED (deliberately: not a section 0 family)");
+check(bucket("P-UT-ELEC-UG", "") === "Electric/Comm",
+      "dry utilities -> their own bucket since 2026-09-16 (was UNASSIGNED on purpose before Beaumont's bid sheet asked for the line)");
 check(bucket("BG-THERMAL WELLS", "IMEG-SW-UTILITIES|BG-THERMAL WELLS") === T.BID_UNASSIGNED,
       "thermal wells -> UNASSIGNED");
 check(bucket("", "") === T.BID_UNASSIGNED, "empty row -> UNASSIGNED");

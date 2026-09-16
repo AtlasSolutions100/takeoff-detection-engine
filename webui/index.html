@@ -672,7 +672,10 @@
         <button id="trClose" class="mini">close</button></div>
       <div class="ew-hint" id="trHint">Pick the pipe run, set its size and invert depths, and adjust the
         bedding rules to the spec. Depth interpolates start&rarr;end along each line; trench width =
-        pipe OD + clearance each side, growing with depth per the rules.</div>
+        pipe OD + clearance each side, growing with depth per the rules. Sides are vertical unless you
+        lay them back: a 1:1 layback adds a V of depth &times; depth per foot of run (a 6 ft trench adds
+        36 SF of section), and it goes to backfill, not bedding. Water and sewer here run about 6 ft
+        and are laid back; gas and electric usually are not &mdash; the Utility box fills those in.</div>
       <div id="trBody" class="tr-body"></div>
       <!-- Pierce's per-foot depth bands, read-only. Rendered by
            renderTrBands() only after Calculate has run. Class .off, not the
@@ -1241,6 +1244,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=178"></script>
+<script src="app.js?v=179"></script>
 </body>
 </html>

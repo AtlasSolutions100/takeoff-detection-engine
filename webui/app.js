@@ -7284,6 +7284,8 @@ function calcStatePayload() {
       style_id: typeof state.tr.style_id === "number" ? state.tr.style_id : null,
       od_in: state.tr.od_in, d0_ft: state.tr.d0_ft, d1_ft: state.tr.d1_ft,
       rules: state.tr.rules.map(r => ({ to_ft: r.to_ft, clr_in: r.clr_in })),
+      utility: state.tr.utility || "",
+      layback_hv: state.tr.layback_hv, layback_from_ft: state.tr.layback_from_ft,
     };
   } else if (saved.tr) out.tr = saved.tr;
   const st = (state.st && state.st.result === state.result
@@ -7556,6 +7558,9 @@ function trApplySaved() {
     if (calcNum(sv.od_in) !== null) t.od_in = sv.od_in;
     if (calcNum(sv.d0_ft) !== null) t.d0_ft = sv.d0_ft;
     if (calcNum(sv.d1_ft) !== null) t.d1_ft = sv.d1_ft;
+    if (typeof sv.utility === "string") t.utility = sv.utility;
+    if (calcNum(sv.layback_hv) !== null) t.layback_hv = sv.layback_hv;
+    if (calcNum(sv.layback_from_ft) !== null) t.layback_from_ft = sv.layback_from_ft;
     if (Array.isArray(sv.rules) && sv.rules.length)
       t.rules = sv.rules.map(r => ({
         to_ft: calcNum(r && r.to_ft) !== null ? r.to_ft : 99,
@@ -9698,9 +9703,11 @@ function panelRefocus(root, f) {
 // the Pierce transcript conventions (section 13: pipe separated by size,
 // sewer priced in 2-ft depth bands). Structures (manholes, inlets,
 // hydrants) ride their SYSTEM's bucket, which is how #853 bills them.
-// There is deliberately no dry-utilities bucket: gas/electric/telecom are
-// not in section 0's families, so they land in UNASSIGNED - which says so
-// - rather than being filed under a wet system by default.
+// Dry utilities have their own two buckets since 2026-09-16: Beaumont bids
+// "Gas Trench only" and "Elec/Phone/TV Trench" as their own lines (bid
+// sheet items 17-18; call 2026-09-15, 11:12-11:32 and 58:44: every
+// utility's trench LF, per utility). Before that they fell to UNASSIGNED
+// on purpose, so as never to be filed under a wet system by default.
 const BID_UNASSIGNED = "UNASSIGNED";
 const BID_BUCKETS = [
   "Erosion & Sediment Control",
@@ -9709,6 +9716,8 @@ const BID_BUCKETS = [
   "Storm Drainage",
   "Sanitary Sewer",
   "Water",
+  "Gas",
+  "Electric/Comm",
   "Site Concrete/Paving",
   "Walls",
   "Landscape/Other",
@@ -9815,6 +9824,18 @@ const BID_RULES = [
     tokens: ["WATER", "WATR", "HYDRANT", "GATE VALVE", "DOMESTIC",
              "POTABLE", "FIRE LINE", "FIRELINE", "FIREWATER", "IRRIG",
              "WM", "W"] },
+  // 8b. Dry utilities - Beaumont's "Gas Trench only" and "Elec/Phone/TV
+  //     Trench" lines (bid sheet items 17-18). G and E are the lettered run
+  //     codes ("the E is for electric", 2026-09-15 11:26), label-only like
+  //     W. ELEC is whole-word so SELECTED never reads as electric; TELE and
+  //     COMM are substrings on purpose (TELEPHONE, COMMUNICATION, COMMON
+  //     TRENCH - his own "1 Common Trench").
+  { bucket: "Gas",
+    tokens: ["GAS", "PROPANE", "LPG", "G"] },
+  { bucket: "Electric/Comm",
+    tokens: ["ELECTRIC", "=ELEC", "UGE", "UE", "OHE", "CONDUIT", "TRANSFORMER",
+             "TELEPHONE", "TELE", "COMM", "CATV", "FIBER", "FO", "JOINT TRENCH",
+             "E"] },
   // 9. Walls BEFORE concrete/paving, mirroring tradeFor()'s
   //    footing-before-paving precedent: CONCRETE RETAINING WALL is a wall.
   //    A-WALL is C4.3's own building-wall layer (section 15 item 14).
@@ -9860,7 +9881,7 @@ const BID_RULES = [
 // Tokens matched against the LABEL alone, never the CAD layer: a single
 // letter is a line code only when the legend or the lettered-run
 // classifier wrote it; in a layer path it is noise.
-const BID_LABEL_ONLY = ["W"];
+const BID_LABEL_ONLY = ["W", "G", "E"];
 
 // Uppercase, and collapse every non-alphanumeric run to one space, so
 // hyphenated CAD layer paths split into words. Padded with spaces so
@@ -15060,6 +15081,18 @@ $("ewMap").onchange = async () => {
 // Bedding rules from the underground-utilities spec discussed with the
 // client: clearance around the pipe grows with burial depth. Editable
 // because every jurisdiction's spec differs.
+// Utility presets (Beaumont, 2026-09-15 call, 31:17-32:04): water and sewer
+// run about 6 ft here for frost and get laid back 1:1; gas and electric are
+// shallower and "not so much". The preset only FILLS the fields - every one
+// stays editable - and the gas / electric depths are placeholders to confirm
+// with him (he named only the 6 ft).
+const TR_UTILITY_PRESETS = {
+  water:    { d: 6, hv: 1, from: 4 },
+  sewer:    { d: 6, hv: 1, from: 4 },
+  storm:    { d: 4, hv: 0, from: 4 },
+  gas:      { d: 3, hv: 0, from: 4 },
+  electric: { d: 3, hv: 0, from: 4 },
+};
 const TR_DEFAULT_RULES = [
   { to_ft: 2, clr_in: 6 },
   { to_ft: 4, clr_in: 12 },
@@ -15076,6 +15109,9 @@ $("trBtn").onclick = () => {
     state.tr = {
       style_id: null, od_in: 6, d0_ft: 2, d1_ft: 8,
       rules: TR_DEFAULT_RULES.map(r => ({ ...r })),
+      // sides vertical unless the operator (or a utility preset) lays them
+      // back - the standing convention, and Pierce's, is the vertical cut
+      utility: "", layback_hv: 0, layback_from_ft: 4,
     };
     if (state.calcSavedLoaded) trApplySaved();
     else if (state.calcSaveBroken)
@@ -15119,6 +15155,28 @@ function renderTr() {
   grid.append(mkLabel("Pipe OD (inches)"), num("od_in", "0.5"));
   grid.append(mkLabel("Invert depth at start (ft)"), num("d0_ft", "0.5"));
   grid.append(mkLabel("Invert depth at end (ft)"), num("d1_ft", "0.5"));
+  // utility preset: fills the depths and the layback, then gets out of the way
+  const ut = document.createElement("select");
+  ut.name = "tr-utility";
+  for (const [v, lab] of [["", "\u2014 none \u2014"],
+                          ["water", "Water \u2014 6 ft, laid back 1:1"],
+                          ["sewer", "Sewer \u2014 6 ft, laid back 1:1"],
+                          ["storm", "Storm \u2014 4 ft, vertical"],
+                          ["gas", "Gas \u2014 3 ft, vertical"],
+                          ["electric", "Electric / comm \u2014 3 ft, vertical"]]) {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = lab;
+    if ((t.utility || "") === v) o.selected = true;
+    ut.appendChild(o);
+  }
+  ut.onchange = () => {
+    t.utility = ut.value;
+    const p = TR_UTILITY_PRESETS[ut.value];
+    if (p) { t.d0_ft = p.d; t.d1_ft = p.d; t.layback_hv = p.hv; t.layback_from_ft = p.from; renderTr(); }
+  };
+  grid.append(mkLabel("Utility (fills the depths and layback below \u2014 edit them after)"), ut);
+  grid.append(mkLabel("Layback, horizontal per vertical (0 = vertical walls or a trench box; 1 = a 1:1 V)"), num("layback_hv", "0.25"));
+  grid.append(mkLabel("Lay back only when deeper than (ft)"), num("layback_from_ft", "0.5"));
   box.appendChild(grid);
 
   const rl = document.createElement("div");
@@ -15187,9 +15245,18 @@ function trClrAt(rs, d) {
 // WAS a bug is fixed downstream: along a sloped run each slice is split
 // at rule-edge crossings (trRunVolumes), so the integral is exact for a
 // linear profile instead of whole slices snapping with their midpoints.
-function trHoleArea(rs, odFt, d) {
+function trHoleArea(rs, odFt, d, lb) {
   if (!(d > 0)) return 0;
-  return (odFt + 2 * trClrAt(rs, d)) * d;
+  let a = (odFt + 2 * trClrAt(rs, d)) * d;
+  // LAYBACK (Beaumont, 2026-09-15 call, 28:00-32:04): "every trench we dig
+  // kind of has to be in a V shape" - water and sewer at about 6 ft here are
+  // laid back, gas and electric usually not. lb = {hv, from}: once a trench
+  // is deeper than `from` ft its sides are laid back at hv:1 over the FULL
+  // depth (a shallower one stays vertical): two triangles of 0.5 x hv x d x
+  // d each, so + hv x d^2 on top of the vertical-wall column. lb off (hv 0,
+  // or no lb at all) is the reading above, unchanged to the last digit.
+  if (lb && lb.hv > 0 && d > (lb.from || 0)) a += lb.hv * d * d;
+  return a;
 }
 
 // Bedding-envelope cross-section (sf): the pipe zone - a square of side
@@ -15215,7 +15282,10 @@ function trEnvArea(rs, odFt, d) {
 // profile under the full-width model - the old code let whole slices
 // snap with their midpoint sample, a genuine staircase error on sloped
 // runs, which is the part of audit 6b that was a bug.
-function trRunVolumes(rs, odFt, lenFt, d0, d1, N) {
+// `lb` (optional) is the layback the hole area takes; the wedge is quadratic
+// in d, so the midpoint rule below is exact for the column and within
+// hv x span^2 / 12 per piece for the wedge - at N = 60 slices, noise.
+function trRunVolumes(rs, odFt, lenFt, d0, d1, N, lb) {
   const a0 = Math.max(isFinite(d0) ? d0 : 0, 0);
   const a1 = Math.max(isFinite(d1) ? d1 : 0, 0);
   let dig = 0, env = 0;
@@ -15225,7 +15295,7 @@ function trRunVolumes(rs, odFt, lenFt, d0, d1, N) {
     const dB = a0 + (a1 - a0) * ((i + 1) / N);
     const lo = Math.min(dA, dB), hi = Math.max(dA, dB), span = hi - lo;
     if (span <= 0) {  // level slice: nothing to split
-      dig += trHoleArea(rs, odFt, dA) * dL;
+      dig += trHoleArea(rs, odFt, dA, lb) * dL;
       env += trEnvArea(rs, odFt, dA) * dL;
       continue;
     }
@@ -15237,7 +15307,7 @@ function trRunVolumes(rs, odFt, lenFt, d0, d1, N) {
       const u1 = cuts[k], u2 = cuts[k + 1], f = (u2 - u1) / span;
       if (!(f > 0)) continue;
       const dm = (u1 + u2) / 2;
-      dig += trHoleArea(rs, odFt, dm) * f * dL;
+      dig += trHoleArea(rs, odFt, dm, lb) * f * dL;
       env += trEnvArea(rs, odFt, dm) * f * dL;
     }
   }
@@ -15314,19 +15384,21 @@ $("trCalc").onclick = () => {
   if (!(odFt > 0)) { $("trResult").textContent = "pipe OD must be a positive number"; return; }
   if (!isFinite(t.d0_ft) || !isFinite(t.d1_ft)) { $("trResult").textContent = "type both invert depths"; return; }
   const rs = trNormRules(t.rules);
+  const lb = { hv: Math.max(0, +t.layback_hv || 0), from: Math.max(0, +t.layback_from_ft || 0) };
   const N = 60;  // slices along each run, as before; rule-edge splits happen inside
   let digRaw = 0, envRaw = 0, runFt = 0;
   for (const c of chains) {
     const L = chainLenPt(c) * ftPerPt;
     runFt += L;
-    const v = trRunVolumes(rs, odFt, L, t.d0_ft, t.d1_ft, N);
+    const v = trRunVolumes(rs, odFt, L, t.d0_ft, t.d1_ft, N, lb);
     digRaw += v.dig; envRaw += v.env;
   }
   const pipeVol = Math.PI * (odFt / 2) ** 2 * runFt;
   const { dig, bed, backfill } = trTotals(digRaw, envRaw, pipeVol);
   $("trResult").innerHTML =
     `<b>dig ${trCY(dig).toLocaleString()} CY</b> · <b>bedding ${trCY(bed).toLocaleString()} CY</b>` +
-    ` · backfill ${trCY(backfill).toLocaleString()} CY · ${Math.round(runFt).toLocaleString()} LF of pipe`;
+    ` · backfill ${trCY(backfill).toLocaleString()} CY · ${Math.round(runFt).toLocaleString()} LF of pipe` +
+    (lb.hv > 0 ? ` · sides laid back ${lb.hv}:1 where deeper than ${lb.from} ft` : " · vertical sides");
   const name = (state.labels.get(t.style_id) || "pipe").slice(0, 40);
   // Consent is per system: recalculating the SAME style while its rows are
   // added refreshes them in place - consent was given for THIS calculation,
@@ -15335,7 +15407,7 @@ $("trCalc").onclick = () => {
   // system's consented rows stay, and the exact-label filter in
   // trClearItems scopes every apply/remove to one system's four rows.
   if (t.added && t.result && t.result.style_id !== t.style_id) t.added = false;
-  t.result = { style_id: t.style_id, name, runFt, dig, bed, backfill };
+  t.result = { style_id: t.style_id, name, runFt, dig, bed, backfill, layback: lb, utility: t.utility || "" };
   t.calc = { runFt, d0: t.d0_ft, d1: t.d1_ft };  // the band table reads THIS snapshot
   // Audit item 5, the consent gate: Calculate only LOOKS. Rows reach
   // state.extraItems - and through it the priced report - only via the
