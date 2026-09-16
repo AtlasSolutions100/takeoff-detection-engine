@@ -1,0 +1,45 @@
+{
+ "errors": [],
+ "saved_rows_before": 17,
+ "appJs": "v=182",
+ "read": {
+  "rows": 60,
+  "busy": "",
+  "byHow": {
+   "radius": 16,
+   "interval-infill": 42,
+   "inline": 1,
+   "inherited": 1
+  },
+  "inferredNoSide": 42,
+  "sided": 18,
+  "unsplitHint": null,
+  "coverage": "How much of this sheet is behind the volumeThe engine found 350 contour lines. 60 carry an elevation (41% of that contour footage); 290 carry none at all and hold no height in any surface.Of all 1289 lines of plan linework here (418,859 pt) the elevated share is 23% - the floor, since 939 lines sit outside the contour count.The 939 outside that count: 4 in families this sheet's legend named someth"
+ },
+ "adopted": {
+  "clicks": 42,
+  "after": {
+   "sided": 60,
+   "existing": 34,
+   "proposed": 26,
+   "noSide": 0
+  }
+ },
+ "bound": "10 lines stitched (BG-Limit of disturbance) \u2014 329 points \u2014 312,044 SF inside, 2,159 LF around",
+ "result": {
+  "cut_yd3": 6323.2,
+  "fill_yd3": 13418.3,
+  "net_yd3": 7095.1,
+  "area_sf": 168776,
+  "layer_area_sf": 312044,
+  "existing_contours": 34,
+  "proposed_contours": 26,
+  "surface_model": "linear",
+  "max_cut_ft": 9.83,
+  "max_fill_ft": 12.68,
+  "existing_offset_ft": 0.6667
+ },
+ "result_text": "cut 6,323 CY \u00b7 fill 13,418 CY \u00b7 net 7,095 CY over 168,776 SFdeepest cut 9.83 ft \u00b7 deepest fill 12.68 ft \u2014 eyeball these against the contours; a peak that surprises you is a row to checksurfaces lowered: existing \u22120.67 ft",
+ "basis": "Interpolated from 34 existing and 26 proposed contours, sampled on a 2 ft grid over 168,776 SF.The engine found 350 contour lines. 60 carry an elevation (41% of that contour footage); 290 carry none at all and hold no height in any surface.Of all 1289 lines of plan linework here (418,859 pt) the elevated share is 23% - the floor, since 939 lines sit outside the contour count.60 of the 350 are assigned to a surface and behind this volume. The other 290 are not in it.The 939 outside that count: 4 in families this sheet's legend named something other than a contour (PROPERTY/TRACT LINE), 4 drawn ",
+ "rows_in_takeoff": []
+}

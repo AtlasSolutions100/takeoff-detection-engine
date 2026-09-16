@@ -5123,6 +5123,23 @@ def earthwork_suggest(job_id: str, page: int):
         fam_excluded.append({"style_id": None, "label": "near-white strokes",
                              "reason": "white ink (mask)",
                              "n_chains": n_white})
+    # UTILITY LINES ARE NOT CONTOURS (Barn C3.0): a family whose layer or
+    # name says water / sewer / storm / gas / electric / pipe never seeds
+    # and never joins a fan, and the panel says so in the excluded list.
+    from takeoff_engine.earthwork import is_utility_name as _is_util
+    style_name = {int(s["style_id"]): (s.get("suggested_label") or s.get("layer") or "")
+                  for s in (res.get("styles") or []) if s.get("style_id") is not None}
+    n_util: dict = {}
+    for c in chains:
+        if int(c.chain_id) in excl:
+            continue
+        if _is_util(c.layer) or _is_util(style_name.get(c.style_id, "")):
+            excl.add(int(c.chain_id))
+            n_util[c.style_id] = n_util.get(c.style_id, 0) + 1
+    for sid, n in sorted(n_util.items(), key=lambda t: (t[0] is None, t[0])):
+        fam_excluded.append({"style_id": sid, "label": style_name.get(sid, ""),
+                             "reason": "utility line, not a contour",
+                             "n_chains": n})
     # contour labels printed inside line breaks are rotated + often
     # exploded to vectors: read them by deskewing each gap with the
     # line's own angle. OCR of a fixed raster is deterministic, so the
@@ -5324,12 +5341,29 @@ def earthwork_suggest(job_id: str, page: int):
     for side in ("existing", "proposed"):
         assigned = [{"chain_id": int(r["chain_id"]),
                      "pts": by_cid[r["chain_id"]].pts, "z": r["z"],
-                     "family": by_cid[r["chain_id"]].style_id}
+                     "family": "side:" + side}
                     for r in sug
                     if r.get("surface") == side and r.get("z") is not None
                     and r["chain_id"] in by_cid]
+        # SIBLINGS BY SIDE, NOT BY STYLE (Barn C3.0, 2026-09-16): the index
+        # contours (C-TOPO, labelled) and the 1 ft intermediates (the legend's
+        # PROPOSED CONTOUR families) are different linetypes by drafting
+        # convention, so a same-style rule left all 161 intermediates
+        # outside every fan. A chain joins this side's fan when the legend
+        # calls its family this side's contour (or a contour with no side),
+        # or when it shares a style with one of the side's anchors; any
+        # other family keeps its own key and never matches.
+        anchor_sids = {by_cid[r["chain_id"]].style_id for r in sug
+                       if r.get("surface") == side and r.get("z") is not None
+                       and r["chain_id"] in by_cid}
+
+        def _fam_key(c, _side=side, _anchor_sids=anchor_sids):
+            role = (verdicts.get(c.style_id) or {}).get("role")
+            if role in (_side, "contour") or c.style_id in _anchor_sids:
+                return "side:" + _side
+            return c.style_id
         cands = [{"chain_id": int(c.chain_id), "pts": c.pts,
-                  "family": c.style_id}
+                  "family": _fam_key(c)}
                  for c in chains
                  if int(c.chain_id) not in seeded
                  and int(c.chain_id) not in excl

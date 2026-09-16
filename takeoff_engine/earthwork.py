@@ -2989,6 +2989,29 @@ def _median_contour_spacing(items) -> float:
     return float(np.median(d))
 
 
+def minor_k(adjacent_runs) -> int:
+    """The modal sibling count of the adjacent-label refusals (0 = none)."""
+    if not adjacent_runs:
+        return 0
+    from collections import Counter
+    k, n = Counter(int(r) for r in adjacent_runs).most_common(1)[0]
+    return int(k)
+
+
+def _minor_interval(step: float, adjacent_runs: list):
+    """A finer contour interval implied by the fans between ADJACENT labels.
+    step/(k+1) when at least 3 such fans exist and >= 60% of them crossed the
+    same k >= 1 unlabelled siblings; else None. Deliberately a consensus, not
+    a single fan: one stray line between two labels is not an interval."""
+    if not adjacent_runs or len(adjacent_runs) < 3:
+        return None
+    from collections import Counter
+    k, n = Counter(int(r) for r in adjacent_runs).most_common(1)[0]
+    if k < 1 or n / len(adjacent_runs) < 0.6:
+        return None
+    return float(step) / (k + 1)
+
+
 def infill_intervals(assigned: list, candidates: list,
                      interval_ft=None, note_ft=None,
                      anchor_how: dict | None = None) -> dict:
@@ -3087,92 +3110,135 @@ def infill_intervals(assigned: list, candidates: list,
     if reach <= 0:
         return out
 
-    votes: dict = {}
-    conflicted: set = set()
-    for oid, opts, oz, _of in assigned:
-        if out["n_transects"] >= _INFILL_MAX_TRANSECTS:
-            break
-        n = len(opts)
-        idxs = np.unique(np.linspace(0, n - 1, _INFILL_STATIONS).astype(int))
-        for i in idxs:
-            j0 = max(0, i - 2)
-            j1 = min(n - 1, i + 2)
-            tan = opts[j1] - opts[j0]
-            L = float(np.hypot(*tan))
-            if L < 1e-9:
-                continue
-            nrm = np.array([-tan[1] / L, tan[0] / L])
-            origin = opts[i]
-            out["n_transects"] += 1
-            for sign in (1.0, -1.0):
-                a = origin
-                b = origin + sign * reach * nrm
-                lo = np.minimum(a, b)
-                hi = np.maximum(a, b)
-                near = ((box[:, 0] <= hi[0]) & (box[:, 2] >= lo[0])
-                        & (box[:, 1] <= hi[1]) & (box[:, 3] >= lo[1]))
-                hits = []
-                for k in np.nonzero(near)[0]:
-                    cid = allc[k][0]
-                    if cid == oid:
+    def _fan(step, adjacent_runs):
+        """One counting pass at `step`; returns (votes, conflicted).
+        `adjacent_runs` collects, for every transect refused as 'adjacent
+        labels, nothing between', how many unlabelled siblings it crossed."""
+        votes: dict = {}
+        conflicted: set = set()
+        for oid, opts, oz, _of in assigned:
+            if out["n_transects"] >= _INFILL_MAX_TRANSECTS:
+                break
+            n = len(opts)
+            idxs = np.unique(np.linspace(0, n - 1, _INFILL_STATIONS).astype(int))
+            for i in idxs:
+                j0 = max(0, i - 2)
+                j1 = min(n - 1, i + 2)
+                tan = opts[j1] - opts[j0]
+                L = float(np.hypot(*tan))
+                if L < 1e-9:
+                    continue
+                nrm = np.array([-tan[1] / L, tan[0] / L])
+                origin = opts[i]
+                out["n_transects"] += 1
+                for sign in (1.0, -1.0):
+                    a = origin
+                    b = origin + sign * reach * nrm
+                    lo = np.minimum(a, b)
+                    hi = np.maximum(a, b)
+                    near = ((box[:, 0] <= hi[0]) & (box[:, 2] >= lo[0])
+                            & (box[:, 1] <= hi[1]) & (box[:, 3] >= lo[1]))
+                    hits = []
+                    for k in np.nonzero(near)[0]:
+                        cid = allc[k][0]
+                        if cid == oid:
+                            continue
+                        for t in _seg_crossings(a, b, allc[k][1]):
+                            hits.append((float(t), cid))
+                    if not hits:
                         continue
-                    for t in _seg_crossings(a, b, allc[k][1]):
-                        hits.append((float(t), cid))
-                if not hits:
-                    continue
-                hits.sort()
-                # walk outward to the first LABELLED crossing
-                run = []
-                zend = None
-                cend = None
-                for t, cid in hits:
-                    if zof.get(cid) is None:
-                        run.append(cid)
-                    else:
-                        zend = zof[cid]
-                        cend = cid
-                        break
-                if zend is None:
-                    out["refused"]["no_flanking_label"] += 1
-                    continue
-                if len(run) != len(set(run)):
-                    # the transect clipped one contour twice - it is running
-                    # along a curve, not across the fan
-                    out["refused"]["repeat_crossing"] += 1
-                    continue
-                dz = zend - oz
-                steps = dz / step
-                rs = round(steps)
-                if abs(steps - rs) > _INFILL_STEP_TOL:
-                    out["refused"]["not_whole_steps"] += 1
-                    continue
-                if abs(rs) < 2:
-                    # the two labels are one interval apart: there is
-                    # nothing between them. Not a refusal - a walk with
-                    # nothing to say. Counted separately so the refusal
-                    # buckets stay readable as failures.
-                    out["refused"]["adjacent_labels_nothing_between"] += 1
-                    continue
-                if abs(rs) - 1 > _INFILL_MAX_FAN:
-                    out["refused"]["fan_too_wide"] += 1
-                    continue
-                # THE RULE: crossed unlabelled siblings must be exactly
-                # dz/interval - 1, or nothing is assigned
-                if len(run) != abs(rs) - 1:
-                    out["refused"]["count_mismatch"] += 1
-                    continue
-                sgn = 1.0 if dz > 0 else -1.0
-                for m, cid in enumerate(run, start=1):
-                    z = round(oz + sgn * m * step, 4)
-                    prev = votes.get(cid)
-                    if prev is None:
-                        votes[cid] = {"z": z, "n": 1,
-                                      "src": (oid, oz, cend, zend)}
-                    elif abs(prev["z"] - z) > 1e-6:
-                        # two transects read this line differently: refuse it
-                        conflicted.add(cid)
-                    else:
-                        prev["n"] += 1
+                    hits.sort()
+                    # walk outward to the first LABELLED crossing
+                    run = []
+                    zend = None
+                    cend = None
+                    for t, cid in hits:
+                        if zof.get(cid) is None:
+                            run.append(cid)
+                        else:
+                            zend = zof[cid]
+                            cend = cid
+                            break
+                    if zend is None:
+                        out["refused"]["no_flanking_label"] += 1
+                        continue
+                    if len(run) != len(set(run)):
+                        # the transect clipped one contour twice - it is running
+                        # along a curve, not across the fan
+                        out["refused"]["repeat_crossing"] += 1
+                        continue
+                    dz = zend - oz
+                    steps = dz / step
+                    rs = round(steps)
+                    if abs(steps - rs) > _INFILL_STEP_TOL:
+                        out["refused"]["not_whole_steps"] += 1
+                        continue
+                    if abs(rs) < 2:
+                        # the two labels are one interval apart: there is
+                        # nothing between them. Not a refusal - a walk with
+                        # nothing to say. Counted separately so the refusal
+                        # buckets stay readable as failures - and when the walk
+                        # DID cross unlabelled siblings, the sheet's interval is
+                        # finer than its labels: remembered for the minor pass.
+                        out["refused"]["adjacent_labels_nothing_between"] += 1
+                        if abs(rs) == 1 and run:
+                            adjacent_runs.append(len(run))
+                        continue
+                    if abs(rs) - 1 > _INFILL_MAX_FAN:
+                        out["refused"]["fan_too_wide"] += 1
+                        continue
+                    # THE RULE: crossed unlabelled siblings must be exactly
+                    # dz/interval - 1, or nothing is assigned
+                    if len(run) != abs(rs) - 1:
+                        out["refused"]["count_mismatch"] += 1
+                        continue
+                    sgn = 1.0 if dz > 0 else -1.0
+                    for m, cid in enumerate(run, start=1):
+                        z = round(oz + sgn * m * step, 4)
+                        prev = votes.get(cid)
+                        if prev is None:
+                            votes[cid] = {"z": z, "n": 1,
+                                          "src": (oid, oz, cend, zend)}
+                        elif abs(prev["z"] - z) > 1e-6:
+                            # two transects read this line differently: refuse it
+                            conflicted.add(cid)
+                        else:
+                            prev["n"] += 1
+        return votes, conflicted
+
+    adj_runs: list = []
+    votes, conflicted = _fan(step, adj_runs)
+    # THE MINOR INTERVAL (Barn C3.0, 2026-09-16): the labelled contours are
+    # the 5 ft index lines, the sheet draws 1 ft intermediates between them,
+    # and every fan between two adjacent labels was refused as "adjacent
+    # labels, nothing between" - 133 of them - while 161 unlabelled contours
+    # waited. When those refusals consistently crossed the same k siblings,
+    # the sheet's interval is step / (k + 1): count the fans again at it and
+    # keep the index-step votes that already stood.
+    minor = _minor_interval(step, adj_runs)
+    if minor:
+        out["interval"] = dict(out["interval"],
+                               index_interval_ft=float(step),
+                               interval_ft=float(minor),
+                               source=(f"{_fmt_z(step)} ft between the labelled contours, "
+                                       f"{minor_k(adj_runs)} unlabelled contours drawn between "
+                                       f"adjacent labels: a {_fmt_z(minor)} ft interval"),
+                               minor_from={"k": minor_k(adj_runs), "transects": len(adj_runs)})
+        out["refused_at_index_interval"] = dict(out["refused"])
+        for k in out["refused"]:
+            out["refused"][k] = 0
+        out["n_transects"] = 0
+        v2, c2 = _fan(minor, [])
+        for cid, v in v2.items():
+            prev = votes.get(cid)
+            if prev is None:
+                votes[cid] = v
+            elif abs(prev["z"] - v["z"]) > 1e-6:
+                conflicted.add(cid)
+            else:
+                prev["n"] += v["n"]
+        conflicted |= c2
+        step = minor
     for cid in conflicted:
         votes.pop(cid, None)
     out["refused"]["vote_conflict"] = len(conflicted)
@@ -3230,8 +3296,35 @@ def _fmt_z(v: float) -> str:
 # The tokens are read off the layer names in Beaumont's Guide and Barn civil
 # sets. That they carry the same meaning under other CAD layer standards is
 # an INFERENCE, not something these sheets establish.
+# UTILITY LINES ARE NOT CONTOURS (Barn C3.0, 2026-09-16): the 10 in water
+# main on layer SE-P-UT-WATER-10'' took a 7720 label by radius and became a
+# quarter of the proposed surface's length. Whole tokens only, so DRAINAGE /
+# WATERSHED in a topo layer name do not match.
+_UTILITY_LAYER_TOKENS = (
+    r"WATER|WTR|SEWER|SEW|SAN|SANITARY|SS|STORM|STM|SD|GAS|ELEC|ELECTRIC"
+    r"|UGE|OHE|OHP|UT|UTIL|UTILITY|PIPE|CULV|CULVERT|FORCE|FM|IRR|IRRIG"
+    r"|CATV|TELE|TEL|COMM|FIBER|FO|DRAIN")
+_UTILITY_LAYER = re.compile(
+    r"(?i)(?:^|[-_|\s])(" + _UTILITY_LAYER_TOKENS + r")(?:[-_|\s]|$)")
 _NON_PLAN_LAYER = re.compile(
-    r"(?i)(?:^|[-_|\s])(PROF|PROFILE|SECT|SECTION|TTLB|TITLEBLOCK)(?:[-_|\s]|$)")
+    r"(?i)(?:^|[-_|\s])(PROF|PROFILE|SECT|SECTION|TTLB|TITLEBLOCK"
+    r"|" + _UTILITY_LAYER_TOKENS + r")(?:[-_|\s]|$)")
+# the same question asked of a style's NAME (legend row or typed label):
+# a family the sheet calls a water line, a sewer or a pipe is not a contour
+# whatever its layer says.
+UTILITY_NAME_RE = re.compile(
+    r"(?i)\b(WATER(?:\s?(?:LINE|MAIN|SERVICE))?|SEWER|SANITARY|STORM|GAS|ELECTRIC"
+    r"|ELEC\.?|UNDERGROUND|CONDUIT|TELEPHONE|CABLE|FIBER|PIPE|CULVERT"
+    r"|FORCE\s?MAIN|IRRIGATION|DRAIN(?:\s?(?:PIPE|LINE))?)\b")
+
+
+def is_utility_name(name: str) -> bool:
+    """True when a style/legend name says utility line (see UTILITY_NAME_RE);
+    a name that also says CONTOUR is a contour (the legend wins)."""
+    s = str(name or "")
+    if not s or "CONTOUR" in s.upper():
+        return False
+    return bool(UTILITY_NAME_RE.search(s)) or bool(_UTILITY_LAYER.search(s))
 
 
 def _is_plan_chain(c) -> bool:
