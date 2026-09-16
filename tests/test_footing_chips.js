@@ -34,7 +34,7 @@ const calls = { status: [], rendered: 0 };
 const H = new Function("state", "calls",
   "const $ = () => ({ textContent: '' }); const setStatus = (m, k) => calls.status.push([m, k || '']);\n"
   + "const renderSt = () => { calls.rendered++; }; const stResultText = () => ''; const stCalc = () => ({});\n"
-  + "const stSync = () => state.st; const stFetchFootings = () => {};\n"
+  + "const stSync = () => state.st; const stFetchFootings = () => {}; const stGroupsTable = () => stMk('div', 'st-groups');\n"
   + "function stMk(tag, cls, text) { const el = { tag, className: cls || '', textContent: text || '', children: [], classList: { add(c) { el.className += ' ' + c; } }, appendChild(c) { el.children.push(c); return c; } }; return el; }\n"
   + fnSrc("stFt") + "\n" + fnSrc("stFootingsBlock") + "\n" + fnSrc("stApplyFooting")
   + "\nreturn { stFootingsBlock, stApplyFooting };")(null, calls);
@@ -42,7 +42,7 @@ const state = { job: "j", page: 3, gen: 1, st: { draft: null, footings: null } }
 const H2 = new Function("state", "calls",
   "const $ = () => ({ textContent: '' }); const setStatus = (m, k) => calls.status.push([m, k || '']);\n"
   + "const renderSt = () => { calls.rendered++; }; const stResultText = () => ''; const stCalc = () => ({});\n"
-  + "const stSync = () => state.st; const stFetchFootings = () => { calls.fetched = (calls.fetched || 0) + 1; };\n"
+  + "const stSync = () => state.st; const stFetchFootings = () => { calls.fetched = (calls.fetched || 0) + 1; }; const stGroupsTable = () => stMk('div', 'st-groups');\n"
   + "function stMk(tag, cls, text) { const el = { tag, className: cls || '', textContent: text || '', title: '', children: [], classList: { add(c) { el.className += ' ' + c; } }, appendChild(c) { el.children.push(c); return c; } }; return el; }\n"
   + fnSrc("stFt") + "\n" + fnSrc("stFootingsBlock") + "\n" + fnSrc("stApplyFooting")
   + "\nreturn { stFootingsBlock, stApplyFooting };")(state, calls);
@@ -57,7 +57,7 @@ const chips = b.children.find(c => c.className === "st-chips").children;
 check(chips.length === 2 && chips[0].textContent.startsWith("CF2.0 ×14 · 2 ft wide × 1 ft deep · BOF"), "the busiest mark first, with its schedule width and depth and the bottom-of-footing elevations (" + chips[0].textContent + ")");
 check(/86′ ×3/.test(chips[0].textContent) && /from the footing schedule \(page 12\)/.test(chips[0].title), "elevations carry their counts; the tooltip names the schedule page");
 check(/st-chip-guess/.test(chips[1].className) && /5\.5 ft × 5\.5 ft/.test(chips[1].textContent) && /no schedule row/.test(chips[1].title), "a mark without a schedule row is a dashed guess chip from its digits");
-check(/schedule read from page 12/.test(b.children[0].textContent) && /slab elevations printed: \(87'-0"\)/.test(b.children[b.children.length - 1].textContent), "the head names the schedule page; the slab elevations are listed");
+check(/schedule read from page 12/.test(b.children[0].textContent) && b.children.some(c => /slab elevations printed: \(87'-0"\)/.test(c.textContent)), "the head names the schedule page; the slab elevations are listed");
 // the click
 H2.stApplyFooting("CF2.0", state.st.footings.data.by_mark["CF2.0"].schedule);
 check(calls.status[calls.status.length - 1][1] === "err" && /outline first/.test(calls.status[calls.status.length - 1][0]), "no draft: the click says to outline first");

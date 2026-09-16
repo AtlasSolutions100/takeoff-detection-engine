@@ -797,6 +797,16 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .st-datum { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .st-datum .ew-meta input { margin-left: 6px; width: 88px; }
 .st-chip:disabled { opacity: .7; cursor: default; }
+.st-groups { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; overflow-x: auto; }
+.st-groups table { border-collapse: collapse; font-size: var(--t-fs-xs); width: 100%; }
+.st-groups td.st-wrap { white-space: normal; }
+.st-groups td:first-child { min-width: 72px; }
+.st-groups th, .st-groups td { padding: 2px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; }
+.st-groups th { color: var(--dim); font-weight: 500; }
+.st-groups th.num, .st-groups td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.st-groups tbody tr:hover td, .st-groups tr:hover td { background: rgba(127, 127, 127, .14); }
+.st-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; border: 1px solid rgba(0, 0, 0, .4); margin-right: 2px; }
+.st-paint { display: flex; align-items: center; gap: 4px; }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }

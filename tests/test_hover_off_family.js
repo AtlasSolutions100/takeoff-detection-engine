@@ -179,6 +179,7 @@ function runLoop(over) {
                                               : !!state.include.get(sid),
     chainCssColor: () => "#ff7700",
     dashArray: () => [4, 4],
+    gcol: null,            // wall-group colours (structure panel, 2026-09-16): off here
   };
   const names = Object.keys(scope);
   new Function(...names, LOOP)(...names.map(n => scope[n]));

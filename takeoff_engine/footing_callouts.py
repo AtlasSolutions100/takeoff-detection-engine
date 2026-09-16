@@ -277,3 +277,292 @@ def join_schedule(callouts: dict, schedule: dict) -> dict:
     for mark, d in callouts.get("by_mark", {}).items():
         d["schedule"] = rows.get(mark) or mark_fallback(mark)
     return callouts["by_mark"]
+
+
+# ---- walls grouped by bottom of footing ---------------------------------------------
+# Beaumont colours every wall by the elevation its footing bottoms at (the
+# Bluebeam legend on Barn S1-1.3: cyan 96'-98', red 85'-2", magenta 84'-2",
+# blue 83'-0") because the dig depth differs per group. Two readings of the
+# same idea, both suggestions, one rule: a line takes the callouts within
+# reach of it; one callout claims the whole line, several split it between
+# their projections - at a WALL STEP word printed between them, else
+# halfway - and a line beside no callout stays unassigned, said in feet.
+#   * SHEET-WIDE: every plan chain, piece by piece; the family whose lines
+#     the callouts sit on most often is the footing outline, and its length
+#     per group is reported AS DRAWN (a footing drawn as a closed rectangle
+#     counts both long sides - said on the row, never halved silently).
+#   * ON THE OUTLINE the operator drew: edge by edge, so the pieces add up
+#     to the outline's perimeter exactly - the split of the wall the dig
+#     formula runs on.
+# Whole-chain-to-nearest-callout was the first cut; measured on S1-1.3
+# against Beaumont's own colour bands it sent his 64.6 ft red (85'-2")
+# stroke whole to 84'-2" because its legs run down past the 84'-2" callouts.
+GROUP_COLOURS = ["#00c8ff", "#ff2d2d", "#ff3df0", "#2d5bff", "#19c46a", "#ff9b1f", "#9b5cff", "#a06a2c"]
+
+
+def _poly_dist(px, py, pts):
+    """Distance from a point to a polyline (page pt)."""
+    return _project(px, py, pts, None)[1]
+
+
+def _cum(pts):
+    """Arc length at each vertex of a polyline."""
+    out = [0.0]
+    for i in range(len(pts) - 1):
+        out.append(out[-1] + ((float(pts[i + 1][0]) - float(pts[i][0])) ** 2
+                              + (float(pts[i + 1][1]) - float(pts[i][1])) ** 2) ** 0.5)
+    return out
+
+
+def _project(px, py, pts, cum):
+    """(arc-length position of the closest point, distance) of a point on a
+    polyline; `cum` from _cum (computed here when None)."""
+    if cum is None:
+        cum = _cum(pts)
+    n = len(pts)
+    if n == 1:
+        return 0.0, ((float(pts[0][0]) - px) ** 2 + (float(pts[0][1]) - py) ** 2) ** 0.5
+    best_d, best_s = float("inf"), 0.0
+    for i in range(n - 1):
+        ax, ay = float(pts[i][0]), float(pts[i][1])
+        bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy
+        t = 0.0 if L2 <= 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+        qx, qy = ax + t * dx, ay + t * dy
+        d = ((qx - px) ** 2 + (qy - py) ** 2) ** 0.5
+        if d < best_d:
+            best_d, best_s = d, cum[i] + t * (cum[i + 1] - cum[i])
+    return best_s, best_d
+
+
+def _point_at(pts, cum, s_):
+    """The point at arc length s_ on a polyline."""
+    if s_ <= 0:
+        return float(pts[0][0]), float(pts[0][1])
+    for i in range(len(pts) - 1):
+        if s_ <= cum[i + 1]:
+            seg = cum[i + 1] - cum[i]
+            t = 0.0 if seg <= 1e-12 else (s_ - cum[i]) / seg
+            return (float(pts[i][0]) + t * (float(pts[i + 1][0]) - float(pts[i][0])),
+                    float(pts[i][1]) + t * (float(pts[i + 1][1]) - float(pts[i][1])))
+    return float(pts[-1][0]), float(pts[-1][1])
+
+
+def _pieces_along(pts, calls, steps, reach_pt):
+    """Split a polyline between the callouts within `reach_pt` of it.
+    Returns [(bof_ft or None, length_pt, s0, s1)] covering the whole
+    polyline in arc length. No callout in reach -> one unassigned piece;
+    one -> the whole line; several -> every point of the line belongs to
+    the NEAREST of them by true distance (so a callout 0.6 ft off the wall
+    beats one 9 ft away across the room), the boundaries found by
+    bisection, then each boundary between two elevations snapped to the
+    WALL STEP word printed between those two callouts (the step nearest
+    the boundary, within reach of the line). Adjacent pieces of one
+    elevation merge."""
+    cum = _cum(pts)
+    L = cum[-1]
+    if L <= 1e-9:
+        return []
+    cand = []
+    for c in calls:
+        s_, d = _project(c["x"], c["y"], pts, cum)
+        if d <= reach_pt:
+            cand.append((s_, d, round(float(c["bof_ft"]), 3), float(c["x"]), float(c["y"])))
+    if not cand:
+        return [(None, L, 0.0, L)]
+    if len(cand) == 1:
+        return [(cand[0][2], L, 0.0, L)]
+
+    def dist(k, s_):
+        x, y = _point_at(pts, cum, s_)
+        return ((x - cand[k][3]) ** 2 + (y - cand[k][4]) ** 2) ** 0.5
+
+    def owner(s_):
+        best, k = None, 0
+        for idx in range(len(cand)):
+            d = dist(idx, s_)
+            if best is None or d < best - 1e-9:
+                best, k = d, idx
+        return k
+
+    step = max(0.5, min(3.0, L / 100.0))
+    n = max(2, int(L / step) + 1)
+    samples = [min(L, k * step) for k in range(n)]
+    if samples[-1] < L:
+        samples.append(L)
+    owners = [owner(s_) for s_ in samples]
+    # runs of one owner; each boundary refined by bisection between the two samples
+    runs = []
+    start = 0.0
+    for k in range(1, len(samples)):
+        if owners[k] != owners[k - 1]:
+            a, b = owners[k - 1], owners[k]
+            lo, hi = samples[k - 1], samples[k]
+            for _ in range(24):
+                mid = (lo + hi) / 2.0
+                if dist(a, mid) <= dist(b, mid):
+                    lo = mid
+                else:
+                    hi = mid
+            cut = (lo + hi) / 2.0
+            runs.append([a, start, cut])
+            start = cut
+    runs.append([owners[-1], start, L])
+    # a WALL STEP printed between two callouts of different elevation is the boundary
+    stp = []
+    for w in steps or ():
+        s_, d = _project(w[0], w[1], pts, cum)
+        if d <= reach_pt:
+            stp.append(s_)
+    for k in range(1, len(runs)):
+        a, b = runs[k - 1][0], runs[k][0]
+        if cand[a][2] == cand[b][2] or not stp:
+            continue
+        lo_s, hi_s = min(cand[a][0], cand[b][0]), max(cand[a][0], cand[b][0])
+        lo_s, hi_s = max(lo_s, runs[k - 1][1]), min(hi_s, runs[k][2])
+        cur = runs[k][1]
+        best = None
+        for s_ in stp:
+            if lo_s < s_ < hi_s and (best is None or abs(s_ - cur) < abs(best - cur)):
+                best = s_
+        if best is not None:
+            runs[k - 1][2] = best
+            runs[k][1] = best
+    out = []
+    for o, s0, s1 in runs:
+        z = cand[o][2]
+        if out and out[-1][0] == z:
+            out[-1] = (z, out[-1][1] + (s1 - s0), out[-1][2], s1)
+        elif s1 - s0 > 1e-9:
+            out.append((z, s1 - s0, s0, s1))
+    return out
+
+
+def _steps_xy(steps):
+    return [(float(w["x"]), float(w["y"])) for w in (steps or [])]
+
+
+def group_walls_by_bof(callouts: list, chains: list, ft_per_pt: float,
+                       schedule: dict | None = None, reach_ft: float = 10.0,
+                       steps: list | None = None) -> dict:
+    """Sheet-wide groups: {"groups": [{bof_ft, callouts, marks, width_ft,
+    width_from, lf_ft, chain_ids, chain_major, families, colour}],
+    "footing_style": {style_id, label, share}, "reach_ft", "unassigned_ft",
+    "families", "outline_note"}.
+    `chains` are the detect result's rows (chain_id, class, style_id,
+    length_pt, points, plus label/layer when known); annotation and chains
+    under 12 pt are ignored. `schedule` is the document's schedule (rows by
+    mark) for the width. `steps` are the WALL STEP words' centres.
+    `chain_ids` lists every chain with a piece in the group (for hover);
+    `chain_major` the chains whose largest piece is in it (for paint)."""
+    calls = [c for c in callouts if c.get("bof_ft") is not None]
+    out = {"groups": [], "footing_style": None, "reach_ft": reach_ft,
+           "unassigned_ft": 0.0, "families": {},
+           "outline_note": "outline length as drawn - a footing drawn as a closed rectangle counts both long sides"}
+    if not calls or not chains or not ft_per_pt:
+        return out
+    reach_pt = reach_ft / ft_per_pt
+    stp = _steps_xy(steps)
+    plan = [c for c in chains if c.get("class") != "annotation" and float(c.get("length_pt", 0)) >= 12.0
+            and c.get("points") and len(c["points"]) >= 2]
+    # the footing family: the style the callouts sit on most often (nearest chain)
+    nearest_style = Counter()
+    for c in calls:
+        best, sid = None, None
+        for ch in plan:
+            d = _poly_dist(c["x"], c["y"], ch["points"])
+            if best is None or d < best:
+                best, sid = d, ch.get("style_id")
+        if sid is not None and best is not None and best <= reach_pt:
+            nearest_style[sid] += 1
+    foot_sid, foot_n = (nearest_style.most_common(1)[0] if nearest_style else (None, 0))
+    groups: dict = {}
+    fam_label: dict = {}
+
+    def grp(key):
+        return groups.setdefault(key, {"bof_ft": key, "callouts": 0, "marks": Counter(), "chain_ids": [],
+                                       "chain_major": [], "families": defaultdict(float), "lf_ft": 0.0})
+
+    for ch in plan:
+        sid = ch.get("style_id")
+        fam_label.setdefault(sid, ch.get("label") or ch.get("layer") or f"family {sid}")
+        per: dict = {}
+        for z, ln, _s0, _s1 in _pieces_along(ch["points"], calls, stp, reach_pt):
+            if z is None:
+                out["unassigned_ft"] += ln * ft_per_pt
+                continue
+            per[z] = per.get(z, 0.0) + ln * ft_per_pt
+        if not per:
+            continue
+        major = max(per.items(), key=lambda kv: kv[1])[0]
+        for z, ft in per.items():
+            g = grp(z)
+            g["families"][sid] += ft
+            if sid == foot_sid:
+                g["lf_ft"] += ft
+                g["chain_ids"].append(int(ch["chain_id"]))
+                if z == major:
+                    g["chain_major"].append(int(ch["chain_id"]))
+    for c in calls:
+        g = grp(round(float(c["bof_ft"]), 3))
+        g["callouts"] += 1
+        g["marks"][c["mark"]] += 1
+    rows = (schedule or {}).get("rows") if isinstance(schedule, dict) else (schedule or {})
+    for i, key in enumerate(sorted(groups)):
+        g = groups[key]
+        top = g["marks"].most_common(1)[0][0] if g["marks"] else None
+        srow = (rows or {}).get(top) if top else None
+        width = (srow or {}).get("width_ft") if srow else (mark_fallback(top) or {}).get("width_ft") if top else None
+        out["groups"].append({
+            "bof_ft": key, "callouts": g["callouts"], "marks": dict(g["marks"]),
+            "width_ft": width, "width_from": ("schedule" if srow else ("mark digits" if width is not None else None)),
+            "lf_ft": round(g["lf_ft"], 1), "chain_ids": g["chain_ids"], "chain_major": g["chain_major"],
+            "families": {str(k2): round(v, 1) for k2, v in sorted(g["families"].items(), key=lambda kv: -kv[1])[:4]},
+            "colour": GROUP_COLOURS[i % len(GROUP_COLOURS)],
+        })
+    out["footing_style"] = ({"style_id": foot_sid, "label": fam_label.get(foot_sid, f"family {foot_sid}"),
+                             "share": round(foot_n / max(len(calls), 1), 3)} if foot_sid is not None else None)
+    out["families"] = {str(k): v for k, v in fam_label.items()}
+    out["unassigned_ft"] = round(out["unassigned_ft"], 1)
+    return out
+
+
+def split_outline_by_bof(outline_pts: list, callouts: list, ft_per_pt: float,
+                         reach_ft: float = 15.0, steps: list | None = None) -> dict:
+    """The drawn outline's perimeter split by bottom-of-footing elevation,
+    edge by edge with `_pieces_along` (a corner is a wall boundary), so the
+    groups plus `unassigned_ft` add up to `perimeter_ft` exactly. A
+    two-point outline is one open wall run. `steps` are {x, y} centres of
+    WALL STEP words. Returns {"groups": [{bof_ft, lf_ft, share}], "edges":
+    [{i, bof_ft, lf_ft, t0, t1}], "unassigned_ft", "perimeter_ft",
+    "reach_ft"}."""
+    calls = [c for c in callouts if c.get("bof_ft") is not None]
+    pts = [(float(p[0]), float(p[1])) for p in (outline_pts or [])]
+    out = {"groups": [], "edges": [], "unassigned_ft": 0.0, "perimeter_ft": 0.0, "reach_ft": reach_ft}
+    if len(pts) < 2 or not ft_per_pt:
+        return out
+    reach_pt = reach_ft / ft_per_pt
+    stp = _steps_xy(steps)
+    per: dict = {}
+    n = len(pts)
+    # a ring closes on itself; two points are one open wall run
+    for i in (range(n) if n >= 3 else [0]):
+        a, b = pts[i], pts[(i + 1) % n]
+        L = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+        if L <= 1e-9:
+            continue
+        out["perimeter_ft"] += L * ft_per_pt
+        for z, ln, s0, s1 in _pieces_along([a, b], calls, stp, reach_pt):
+            ft = ln * ft_per_pt
+            if z is None:
+                out["unassigned_ft"] += ft
+            else:
+                per[z] = per.get(z, 0.0) + ft
+            out["edges"].append({"i": i, "bof_ft": z, "lf_ft": round(ft, 1),
+                                 "t0": round(s0 / L, 4), "t1": round(s1 / L, 4)})
+    P = out["perimeter_ft"] or 1.0
+    out["groups"] = [{"bof_ft": k, "lf_ft": round(v, 1), "share": round(v / P, 3)} for k, v in sorted(per.items())]
+    out["unassigned_ft"] = round(out["unassigned_ft"], 1)
+    out["perimeter_ft"] = round(out["perimeter_ft"], 1)
+    return out

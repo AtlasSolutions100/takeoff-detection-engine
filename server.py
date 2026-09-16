@@ -5946,6 +5946,7 @@ def footings(job_id: str, page: int):
     only - no detect needed - and every value carries its evidence, so the
     structure panel can offer them as chips the operator confirms."""
     from takeoff_engine.footing_callouts import (find_footing_callouts,
+                                                 group_walls_by_bof,
                                                  join_schedule)
     job = JOBS.get(job_id) or _404()
     doc = pymupdf.open(job["path"])
@@ -5958,11 +5959,82 @@ def footings(job_id: str, page: int):
     c = find_footing_callouts(words)
     sched = _doc_footing_schedule(job_id, job["path"])
     join_schedule(c, sched)
+    steps = _wall_steps(words)
+    # WALLS GROUPED BY BOTTOM OF FOOTING (Beaumont colours every wall by the
+    # elevation its footing bottoms at): needs this sheet's lines and its
+    # scale, so it is absent - with the reason - until Detect has run.
+    groups, why = None, None
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    if not rf.exists():
+        why = "run Detect first - the wall groups need this sheet's lines"
+    else:
+        res = json.loads(rf.read_text())
+        det = _page_scale(job_id, page, res)
+        if not det:
+            why = "no scale on this page - the wall groups need real-world units"
+        else:
+            labels = {st["style_id"]: (st.get("label") or st.get("suggested_label"))
+                      for st in res.get("styles") or []}
+            chains = [dict(ch, label=labels.get(ch.get("style_id")))
+                      for ch in res.get("chains") or []]
+            groups = group_walls_by_bof(c["callouts"], chains,
+                                        det["ft_per_paper_inch"] / 72.0, sched,
+                                        steps=steps)
+            groups["ft_per_pt"] = round(det["ft_per_paper_inch"] / 72.0, 5)
     return JSONResponse({"callouts": c["callouts"], "slabs": c["slabs"],
-                         "by_mark": c["by_mark"],
+                         "by_mark": c["by_mark"], "steps": steps,
+                         "groups": groups, "groups_reason": why,
                          "schedule": {"pages": sched.get("pages", []),
                                       "rows": len(sched.get("rows") or {}),
                                       "scanned": sched.get("scanned", 0)}})
+
+
+def _wall_steps(words) -> list:
+    """Centres of the WALL STEP words on a sheet - the printed word STEP,
+    alone or fused with WALL - where a footing changes elevation along a
+    wall (19 on Barn S1-1.3, always a separate STEP word)."""
+    return [{"x": round((w[0] + w[2]) / 2, 1), "y": round((w[1] + w[3]) / 2, 1)}
+            for w in words if str(w[4]).strip().upper() in ("STEP", "WALL STEP")]
+
+
+class FootingSplitBody(BaseModel):
+    points: list
+    reach_ft: float = 15.0
+
+
+@app.post("/api/job/{job_id}/page/{page}/footings/split")
+def footings_split(job_id: str, page: int, body: FootingSplitBody):
+    """A drawn outline's perimeter split by bottom-of-footing elevation:
+    each edge joins the callouts within reach of it (a WALL STEP printed
+    between two callouts is where the split falls), so the groups add up
+    to the perimeter and the structure panel can say which part of the
+    wall digs to which elevation. A suggestion; nothing is written."""
+    from takeoff_engine.footing_callouts import (find_footing_callouts,
+                                                 split_outline_by_bof)
+    job = JOBS.get(job_id) or _404()
+    pts = body.points or []
+    if len(pts) < 2 or len(pts) > 2000 or any(not isinstance(q, (list, tuple)) or len(q) != 2 for q in pts):
+        raise HTTPException(400, "an outline needs at least two [x, y] points")
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    if not rf.exists():
+        raise HTTPException(404, "run detect first")
+    det = _page_scale(job_id, page, json.loads(rf.read_text()))
+    if not det:
+        raise HTTPException(400, "no scale on this page - type one into the "
+                                 "scale box in the sheet header first")
+    doc = pymupdf.open(job["path"])
+    try:
+        if page < 0 or page >= doc.page_count:
+            raise HTTPException(404, "no such page")
+        words = page_words(doc[page])
+    finally:
+        doc.close()
+    c = find_footing_callouts(words)
+    reach = max(2.0, min(60.0, float(body.reach_ft or 15.0)))
+    out = split_outline_by_bof(pts, c["callouts"], det["ft_per_paper_inch"] / 72.0,
+                               reach_ft=reach, steps=_wall_steps(words))
+    out["callouts"] = sum(1 for x in c["callouts"] if x.get("bof_ft") is not None)
+    return JSONResponse(out)
 
 
 @app.get("/api/job/{job_id}/page/{page}/callouts")

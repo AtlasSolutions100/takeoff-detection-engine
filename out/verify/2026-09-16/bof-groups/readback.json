@@ -1,0 +1,1154 @@
+{
+ "errors": [],
+ "needed_detect": false,
+ "appJs": "v=186",
+ "css": "v=91",
+ "chains": 556,
+ "table": {
+  "head": "Walls by bottom of footing \u2014 every line within 10 ft of a callout joins that callout's group; footing line = dash1 d6.8 g3.3 (64% of the callouts sit on it); outline length as drawn - a footing drawn as a closed rectangle counts both long sides. Hover a row to light its lines.",
+  "rows": [
+   [
+    "BOF",
+    "callouts",
+    "width",
+    "footing line",
+    "outline"
+   ],
+   [
+    " 83\u2032 (7,715\u2032 civil)",
+    "2: CF3.0 \u00d72",
+    "3 ft",
+    "103 ft",
+    "\u2014"
+   ],
+   [
+    " 84.167\u2032 (7,716.17\u2032 civil)",
+    "6: F5.5, CF2.0 \u00d73, F4.0, F7.5",
+    "2 ft",
+    "119 ft",
+    "\u2014"
+   ],
+   [
+    " 85.167\u2032 (7,717.17\u2032 civil)",
+    "1: CF2.0",
+    "2 ft",
+    "38 ft",
+    "\u2014"
+   ],
+   [
+    " 86\u2032 (7,718\u2032 civil)",
+    "8: CF2.0 \u00d74, F5.5, F5.0, F9.0, F4.0",
+    "2 ft",
+    "195 ft",
+    "\u2014"
+   ],
+   [
+    " 86.5\u2032 (7,718.5\u2032 civil)",
+    "13: CF5.0 \u00d72, CF2.0 \u00d72, CF7.0 \u00d72, CF4.0 \u00d73, F10.0x6.0 \u00d72, F10.0x7.0, F10.0x8.0",
+    "4 ft",
+    "258 ft",
+    "\u2014"
+   ],
+   [
+    " 87\u2032 (7,719\u2032 civil)",
+    "3: CF5.0, CF2.0, CF9.5",
+    "5 ft",
+    "108 ft",
+    "\u2014"
+   ],
+   [
+    " 94.5\u2032 (7,726.5\u2032 civil)",
+    "2: CF2.0, F3.0",
+    "2 ft",
+    "18 ft",
+    "\u2014"
+   ],
+   [
+    " 96\u2032 (7,728\u2032 civil)",
+    "9: CF2.0 \u00d72, CF3.0 \u00d72, F5.5 \u00d73, F6.0, F3.0",
+    "5.5 ft",
+    "144 ft",
+    "\u2014"
+   ]
+  ],
+  "swatches": [
+   "rgb(0, 200, 255)",
+   "rgb(255, 45, 45)",
+   "rgb(255, 61, 240)",
+   "rgb(45, 91, 255)",
+   "rgb(25, 196, 106)",
+   "rgb(255, 155, 31)",
+   "rgb(155, 92, 255)",
+   "rgb(160, 106, 44)"
+  ],
+  "titles": [
+   "solid solid: 172 ft\nsolid solid: 169 ft\nsolid solid: 141 ft\nsolid solid: 114 ft",
+   "solid solid: 232 ft\nsolid solid: 168 ft\ndash1 d6.8 g3.3: 119 ft\nsolid solid: 180 ft",
+   "solid solid: 36 ft\nsolid solid: 44 ft\ndash1 d6.8 g3.3: 38 ft\nsolid solid: 43 ft",
+   "solid solid: 473 ft\ndash1 d6.8 g3.3: 195 ft\nsolid solid: 267 ft\nsolid solid: 102 ft",
+   "solid solid: 424 ft\ndash1 d6.8 g3.3: 258 ft\nsolid solid: 415 ft\nsolid solid: 246 ft",
+   "solid solid: 203 ft\nsolid solid: 128 ft\nsolid solid: 149 ft\nsolid solid: 161 ft",
+   "solid solid: 22 ft\ndash1 d6.8 g3.3: 18 ft\nsolid solid: 32 ft\nsolid solid: 50 ft",
+   "dash1 d6.8 g3.3: 144 ft\nsolid solid: 257 ft\nsolid solid: 246 ft\nsolid solid: 131 ft"
+  ],
+  "foot": [
+   "1,131 ft of lines sit near no callout \u00b7 pick or draw an outline to see its walls split by elevation",
+   " colour the walls on the sheet by group"
+  ],
+  "toggle": true,
+  "data": {
+   "groups": {
+    "groups": [
+     {
+      "bof_ft": 83,
+      "callouts": 2,
+      "marks": {
+       "CF3.0": 2
+      },
+      "width_ft": 3,
+      "width_from": "schedule",
+      "lf_ft": 102.9,
+      "chain_ids": [
+       281,
+       324
+      ],
+      "chain_major": [
+       281,
+       324
+      ],
+      "families": {
+       "3": 172,
+       "7": 168.9,
+       "12": 141.4,
+       "20": 114.3
+      },
+      "colour": "#00c8ff"
+     },
+     {
+      "bof_ft": 84.167,
+      "callouts": 6,
+      "marks": {
+       "F5.5": 1,
+       "CF2.0": 3,
+       "F4.0": 1,
+       "F7.5": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 118.5,
+      "chain_ids": [
+       248,
+       249,
+       251,
+       253,
+       281,
+       324,
+       329,
+       333
+      ],
+      "chain_major": [
+       248,
+       249,
+       253,
+       329,
+       333
+      ],
+      "families": {
+       "3": 232.1,
+       "7": 167.9,
+       "11": 118.5,
+       "12": 180
+      },
+      "colour": "#ff2d2d"
+     },
+     {
+      "bof_ft": 85.167,
+      "callouts": 1,
+      "marks": {
+       "CF2.0": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 37.7,
+      "chain_ids": [
+       243,
+       278,
+       294,
+       295
+      ],
+      "chain_major": [
+       278
+      ],
+      "families": {
+       "3": 35.5,
+       "7": 44.1,
+       "11": 37.7,
+       "12": 43.3
+      },
+      "colour": "#ff3df0"
+     },
+     {
+      "bof_ft": 86,
+      "callouts": 8,
+      "marks": {
+       "CF2.0": 4,
+       "F5.5": 1,
+       "F5.0": 1,
+       "F9.0": 1,
+       "F4.0": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 195.4,
+      "chain_ids": [
+       243,
+       248,
+       266,
+       278,
+       289,
+       290,
+       292,
+       293,
+       294,
+       295,
+       300,
+       306,
+       309,
+       310,
+       314,
+       325,
+       359,
+       360,
+       362,
+       366
+      ],
+      "chain_major": [
+       243,
+       289,
+       290,
+       293,
+       294,
+       295,
+       309,
+       310,
+       314,
+       325,
+       359,
+       360,
+       362
+      ],
+      "families": {
+       "3": 473.2,
+       "11": 195.4,
+       "12": 266.5,
+       "35": 102
+      },
+      "colour": "#2d5bff"
+     },
+     {
+      "bof_ft": 86.5,
+      "callouts": 13,
+      "marks": {
+       "CF5.0": 2,
+       "CF2.0": 2,
+       "CF7.0": 2,
+       "CF4.0": 3,
+       "F10.0x6.0": 2,
+       "F10.0x7.0": 1,
+       "F10.0x8.0": 1
+      },
+      "width_ft": 4,
+      "width_from": "schedule",
+      "lf_ft": 258.2,
+      "chain_ids": [
+       247,
+       256,
+       258,
+       259,
+       263,
+       266,
+       270,
+       274,
+       284,
+       292,
+       300,
+       303,
+       306,
+       363,
+       364,
+       365,
+       366,
+       367,
+       368,
+       369,
+       370,
+       374
+      ],
+      "chain_major": [
+       247,
+       258,
+       259,
+       263,
+       266,
+       270,
+       292,
+       300,
+       306,
+       363,
+       364,
+       365,
+       366,
+       367,
+       368,
+       369,
+       374
+      ],
+      "families": {
+       "3": 423.7,
+       "11": 258.2,
+       "12": 414.9,
+       "27": 246
+      },
+      "colour": "#19c46a"
+     },
+     {
+      "bof_ft": 87,
+      "callouts": 3,
+      "marks": {
+       "CF5.0": 1,
+       "CF2.0": 1,
+       "CF9.5": 1
+      },
+      "width_ft": 5,
+      "width_from": "schedule",
+      "lf_ft": 107.5,
+      "chain_ids": [
+       271,
+       274,
+       277,
+       292,
+       303
+      ],
+      "chain_major": [
+       271,
+       274,
+       277,
+       303
+      ],
+      "families": {
+       "3": 203.1,
+       "12": 128.4,
+       "27": 148.5,
+       "35": 161.3
+      },
+      "colour": "#ff9b1f"
+     },
+     {
+      "bof_ft": 94.5,
+      "callouts": 2,
+      "marks": {
+       "CF2.0": 1,
+       "F3.0": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 18,
+      "chain_ids": [
+       251
+      ],
+      "chain_major": [
+       251
+      ],
+      "families": {
+       "7": 22,
+       "11": 18,
+       "12": 31.6,
+       "31": 49.6
+      },
+      "colour": "#9b5cff"
+     },
+     {
+      "bof_ft": 96,
+      "callouts": 9,
+      "marks": {
+       "CF2.0": 2,
+       "CF3.0": 2,
+       "F5.5": 3,
+       "F6.0": 1,
+       "F3.0": 1
+      },
+      "width_ft": 5.5,
+      "width_from": "schedule",
+      "lf_ft": 144.3,
+      "chain_ids": [
+       256,
+       258,
+       284,
+       287,
+       321,
+       322,
+       323,
+       336,
+       338,
+       342,
+       346,
+       370
+      ],
+      "chain_major": [
+       256,
+       284,
+       287,
+       321,
+       322,
+       323,
+       336,
+       338,
+       342,
+       346,
+       370
+      ],
+      "families": {
+       "11": 144.3,
+       "12": 256.8,
+       "20": 246,
+       "35": 131.3
+      },
+      "colour": "#a06a2c"
+     }
+    ],
+    "footing_style": {
+     "style_id": 11,
+     "label": "dash1 d6.8 g3.3",
+     "share": 0.636
+    },
+    "reach_ft": 10,
+    "unassigned_ft": 1131.4,
+    "families": {
+     "0": "solid solid",
+     "1": "dash1 d4.4 g17.5",
+     "2": "dash1 d4.4 g2.8",
+     "3": "solid solid",
+     "4": "dash2 d47.2 d153.0 g3.2",
+     "7": "solid solid",
+     "9": "dash1 d52.7 g1.3",
+     "10": "dash1 d6.7 g47.3",
+     "11": "dash1 d6.8 g3.3",
+     "12": "solid solid",
+     "13": "dash2 d6.8 d14.3 g3.3",
+     "14": "dash2 d3.4 d6.7 g3.3",
+     "16": "solid solid",
+     "17": "dash3 d2.2 d7.0 d18.0 g2.2",
+     "20": "solid solid",
+     "21": "dash1 d1.8 g0.0",
+     "25": "solid solid",
+     "26": "solid solid",
+     "27": "solid solid",
+     "28": "solid solid",
+     "29": "solid solid",
+     "30": "solid solid",
+     "31": "solid solid",
+     "32": "solid solid",
+     "33": "solid solid",
+     "34": "solid solid",
+     "35": "solid solid",
+     "37": "dash3 misc",
+     "38": "solid misc",
+     "40": "dash2 misc"
+    },
+    "outline_note": "outline length as drawn - a footing drawn as a closed rectangle counts both long sides",
+    "ft_per_pt": 0.07407
+   },
+   "steps": 19
+  }
+ },
+ "colour_map": {
+  "size": 54,
+  "sample": [
+   [
+    281,
+    "#00c8ff"
+   ],
+   [
+    324,
+    "#00c8ff"
+   ],
+   [
+    248,
+    "#ff2d2d"
+   ]
+  ]
+ },
+ "rect_table": [
+  149,
+  83,
+  337,
+  669
+ ],
+ "view": {
+  "k": 0.2752523067483697,
+  "callouts": 44,
+  "bbox": [
+   374,
+   585.7,
+   2209.8,
+   1588.8
+  ]
+ },
+ "view_f2": {
+  "x": -156.05276613150636,
+  "y": -113.34512731363122,
+  "k": 0.2752523067483697,
+  "f": 1.8055555555555556,
+  "cv": [
+   528,
+   52,
+   972,
+   854
+  ],
+  "dpr": 1.25
+ },
+ "hot": 22,
+ "hot_row": " 86.5\u2032 (7,718.5\u2032 civil)13: CF5.0 \u00d72, CF2.0 \u00d72, CF7.0 \u00d72, CF4.0 \u00d73, F10.0x6.0 \u00d72, F10.0x7.0, F10.0x8.04 ft258 ft\u2014",
+ "hot_after": null,
+ "longest_footing_chain": {
+  "id": 303,
+  "mid": [
+   1574.76,
+   655.08
+  ],
+  "len": 981.23,
+  "n": 180
+ },
+ "pick_draft": null,
+ "draft": {
+  "n": 4,
+  "source": "drawn",
+  "pts": [
+   [
+    718.2883950617282,
+    555.4953086419755
+   ],
+   [
+    2208.692510288066,
+    555.4953086419755
+   ],
+   [
+    2208.692510288066,
+    1534.6055967078191
+   ],
+   [
+    718.2883950617282,
+    1534.6055967078191
+   ]
+  ]
+ },
+ "split": {
+  "groups": [
+   {
+    "bof_ft": 83,
+    "lf_ft": 56.6,
+    "share": 0.155
+   },
+   {
+    "bof_ft": 84.167,
+    "lf_ft": 8.3,
+    "share": 0.023
+   },
+   {
+    "bof_ft": 86,
+    "lf_ft": 30.1,
+    "share": 0.082
+   },
+   {
+    "bof_ft": 86.5,
+    "lf_ft": 41.7,
+    "share": 0.114
+   },
+   {
+    "bof_ft": 87,
+    "lf_ft": 110.4,
+    "share": 0.302
+   },
+   {
+    "bof_ft": 94.5,
+    "lf_ft": 31.3,
+    "share": 0.086
+   },
+   {
+    "bof_ft": 96,
+    "lf_ft": 87.3,
+    "share": 0.239
+   }
+  ],
+  "edges": [
+   {
+    "i": 0,
+    "bof_ft": 87,
+    "lf_ft": 110.4,
+    "t0": 0,
+    "t1": 1
+   },
+   {
+    "i": 1,
+    "bof_ft": 86.5,
+    "lf_ft": 26.4,
+    "t0": 0,
+    "t1": 0.3641
+   },
+   {
+    "i": 1,
+    "bof_ft": 86,
+    "lf_ft": 30.1,
+    "t0": 0.3641,
+    "t1": 0.7794
+   },
+   {
+    "i": 1,
+    "bof_ft": 83,
+    "lf_ft": 16,
+    "t0": 0.7794,
+    "t1": 1
+   },
+   {
+    "i": 2,
+    "bof_ft": 83,
+    "lf_ft": 40.6,
+    "t0": 0,
+    "t1": 0.3678
+   },
+   {
+    "i": 2,
+    "bof_ft": 84.167,
+    "lf_ft": 8.3,
+    "t0": 0.3678,
+    "t1": 0.4434
+   },
+   {
+    "i": 2,
+    "bof_ft": 94.5,
+    "lf_ft": 31.3,
+    "t0": 0.4434,
+    "t1": 0.7271
+   },
+   {
+    "i": 2,
+    "bof_ft": 86.5,
+    "lf_ft": 3.5,
+    "t0": 0.7271,
+    "t1": 0.7587
+   },
+   {
+    "i": 2,
+    "bof_ft": 96,
+    "lf_ft": 26.6,
+    "t0": 0.7587,
+    "t1": 1
+   },
+   {
+    "i": 3,
+    "bof_ft": 96,
+    "lf_ft": 9.9,
+    "t0": 0,
+    "t1": 0.1364
+   },
+   {
+    "i": 3,
+    "bof_ft": 86.5,
+    "lf_ft": 11.8,
+    "t0": 0.1364,
+    "t1": 0.2997
+   },
+   {
+    "i": 3,
+    "bof_ft": 96,
+    "lf_ft": 50.8,
+    "t0": 0.2997,
+    "t1": 1
+   }
+  ],
+  "unassigned_ft": 0,
+  "perimeter_ft": 365.9,
+  "reach_ft": 15,
+  "callouts": 44
+ },
+ "table_after": {
+  "head": "Walls by bottom of footing \u2014 every line within 10 ft of a callout joins that callout's group; footing line = dash1 d6.8 g3.3 (64% of the callouts sit on it); outline length as drawn - a footing drawn as a closed rectangle counts both long sides. Hover a row to light its lines.",
+  "rows": [
+   [
+    "BOF",
+    "callouts",
+    "width",
+    "footing line",
+    "outline"
+   ],
+   [
+    " 83\u2032 (7,715\u2032 civil)",
+    "2: CF3.0 \u00d72",
+    "3 ft",
+    "103 ft",
+    "57 ft (16%)"
+   ],
+   [
+    " 84.167\u2032 (7,716.17\u2032 civil)",
+    "6: F5.5, CF2.0 \u00d73, F4.0, F7.5",
+    "2 ft",
+    "119 ft",
+    "8 ft (2%)"
+   ],
+   [
+    " 85.167\u2032 (7,717.17\u2032 civil)",
+    "1: CF2.0",
+    "2 ft",
+    "38 ft",
+    "\u2014"
+   ],
+   [
+    " 86\u2032 (7,718\u2032 civil)",
+    "8: CF2.0 \u00d74, F5.5, F5.0, F9.0, F4.0",
+    "2 ft",
+    "195 ft",
+    "30 ft (8%)"
+   ],
+   [
+    " 86.5\u2032 (7,718.5\u2032 civil)",
+    "13: CF5.0 \u00d72, CF2.0 \u00d72, CF7.0 \u00d72, CF4.0 \u00d73, F10.0x6.0 \u00d72, F10.0x7.0, F10.0x8.0",
+    "4 ft",
+    "258 ft",
+    "42 ft (11%)"
+   ],
+   [
+    " 87\u2032 (7,719\u2032 civil)",
+    "3: CF5.0, CF2.0, CF9.5",
+    "5 ft",
+    "108 ft",
+    "110 ft (30%)"
+   ],
+   [
+    " 94.5\u2032 (7,726.5\u2032 civil)",
+    "2: CF2.0, F3.0",
+    "2 ft",
+    "18 ft",
+    "31 ft (9%)"
+   ],
+   [
+    " 96\u2032 (7,728\u2032 civil)",
+    "9: CF2.0 \u00d72, CF3.0 \u00d72, F5.5 \u00d73, F6.0, F3.0",
+    "5.5 ft",
+    "144 ft",
+    "87 ft (24%)"
+   ]
+  ],
+  "swatches": [
+   "rgb(0, 200, 255)",
+   "rgb(255, 45, 45)",
+   "rgb(255, 61, 240)",
+   "rgb(45, 91, 255)",
+   "rgb(25, 196, 106)",
+   "rgb(255, 155, 31)",
+   "rgb(155, 92, 255)",
+   "rgb(160, 106, 44)"
+  ],
+  "titles": [
+   "solid solid: 172 ft\nsolid solid: 169 ft\nsolid solid: 141 ft\nsolid solid: 114 ft",
+   "solid solid: 232 ft\nsolid solid: 168 ft\ndash1 d6.8 g3.3: 119 ft\nsolid solid: 180 ft",
+   "solid solid: 36 ft\nsolid solid: 44 ft\ndash1 d6.8 g3.3: 38 ft\nsolid solid: 43 ft",
+   "solid solid: 473 ft\ndash1 d6.8 g3.3: 195 ft\nsolid solid: 267 ft\nsolid solid: 102 ft",
+   "solid solid: 424 ft\ndash1 d6.8 g3.3: 258 ft\nsolid solid: 415 ft\nsolid solid: 246 ft",
+   "solid solid: 203 ft\nsolid solid: 128 ft\nsolid solid: 149 ft\nsolid solid: 161 ft",
+   "solid solid: 22 ft\ndash1 d6.8 g3.3: 18 ft\nsolid solid: 32 ft\nsolid solid: 50 ft",
+   "dash1 d6.8 g3.3: 144 ft\nsolid solid: 257 ft\nsolid solid: 246 ft\nsolid solid: 131 ft"
+  ],
+  "foot": [
+   "1,131 ft of lines sit near no callout \u00b7 this outline: 366 ft, all of it beside a callout",
+   " colour the walls on the sheet by group"
+  ],
+  "toggle": true,
+  "data": {
+   "groups": {
+    "groups": [
+     {
+      "bof_ft": 83,
+      "callouts": 2,
+      "marks": {
+       "CF3.0": 2
+      },
+      "width_ft": 3,
+      "width_from": "schedule",
+      "lf_ft": 102.9,
+      "chain_ids": [
+       281,
+       324
+      ],
+      "chain_major": [
+       281,
+       324
+      ],
+      "families": {
+       "3": 172,
+       "7": 168.9,
+       "12": 141.4,
+       "20": 114.3
+      },
+      "colour": "#00c8ff"
+     },
+     {
+      "bof_ft": 84.167,
+      "callouts": 6,
+      "marks": {
+       "F5.5": 1,
+       "CF2.0": 3,
+       "F4.0": 1,
+       "F7.5": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 118.5,
+      "chain_ids": [
+       248,
+       249,
+       251,
+       253,
+       281,
+       324,
+       329,
+       333
+      ],
+      "chain_major": [
+       248,
+       249,
+       253,
+       329,
+       333
+      ],
+      "families": {
+       "3": 232.1,
+       "7": 167.9,
+       "11": 118.5,
+       "12": 180
+      },
+      "colour": "#ff2d2d"
+     },
+     {
+      "bof_ft": 85.167,
+      "callouts": 1,
+      "marks": {
+       "CF2.0": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 37.7,
+      "chain_ids": [
+       243,
+       278,
+       294,
+       295
+      ],
+      "chain_major": [
+       278
+      ],
+      "families": {
+       "3": 35.5,
+       "7": 44.1,
+       "11": 37.7,
+       "12": 43.3
+      },
+      "colour": "#ff3df0"
+     },
+     {
+      "bof_ft": 86,
+      "callouts": 8,
+      "marks": {
+       "CF2.0": 4,
+       "F5.5": 1,
+       "F5.0": 1,
+       "F9.0": 1,
+       "F4.0": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 195.4,
+      "chain_ids": [
+       243,
+       248,
+       266,
+       278,
+       289,
+       290,
+       292,
+       293,
+       294,
+       295,
+       300,
+       306,
+       309,
+       310,
+       314,
+       325,
+       359,
+       360,
+       362,
+       366
+      ],
+      "chain_major": [
+       243,
+       289,
+       290,
+       293,
+       294,
+       295,
+       309,
+       310,
+       314,
+       325,
+       359,
+       360,
+       362
+      ],
+      "families": {
+       "3": 473.2,
+       "11": 195.4,
+       "12": 266.5,
+       "35": 102
+      },
+      "colour": "#2d5bff"
+     },
+     {
+      "bof_ft": 86.5,
+      "callouts": 13,
+      "marks": {
+       "CF5.0": 2,
+       "CF2.0": 2,
+       "CF7.0": 2,
+       "CF4.0": 3,
+       "F10.0x6.0": 2,
+       "F10.0x7.0": 1,
+       "F10.0x8.0": 1
+      },
+      "width_ft": 4,
+      "width_from": "schedule",
+      "lf_ft": 258.2,
+      "chain_ids": [
+       247,
+       256,
+       258,
+       259,
+       263,
+       266,
+       270,
+       274,
+       284,
+       292,
+       300,
+       303,
+       306,
+       363,
+       364,
+       365,
+       366,
+       367,
+       368,
+       369,
+       370,
+       374
+      ],
+      "chain_major": [
+       247,
+       258,
+       259,
+       263,
+       266,
+       270,
+       292,
+       300,
+       306,
+       363,
+       364,
+       365,
+       366,
+       367,
+       368,
+       369,
+       374
+      ],
+      "families": {
+       "3": 423.7,
+       "11": 258.2,
+       "12": 414.9,
+       "27": 246
+      },
+      "colour": "#19c46a"
+     },
+     {
+      "bof_ft": 87,
+      "callouts": 3,
+      "marks": {
+       "CF5.0": 1,
+       "CF2.0": 1,
+       "CF9.5": 1
+      },
+      "width_ft": 5,
+      "width_from": "schedule",
+      "lf_ft": 107.5,
+      "chain_ids": [
+       271,
+       274,
+       277,
+       292,
+       303
+      ],
+      "chain_major": [
+       271,
+       274,
+       277,
+       303
+      ],
+      "families": {
+       "3": 203.1,
+       "12": 128.4,
+       "27": 148.5,
+       "35": 161.3
+      },
+      "colour": "#ff9b1f"
+     },
+     {
+      "bof_ft": 94.5,
+      "callouts": 2,
+      "marks": {
+       "CF2.0": 1,
+       "F3.0": 1
+      },
+      "width_ft": 2,
+      "width_from": "schedule",
+      "lf_ft": 18,
+      "chain_ids": [
+       251
+      ],
+      "chain_major": [
+       251
+      ],
+      "families": {
+       "7": 22,
+       "11": 18,
+       "12": 31.6,
+       "31": 49.6
+      },
+      "colour": "#9b5cff"
+     },
+     {
+      "bof_ft": 96,
+      "callouts": 9,
+      "marks": {
+       "CF2.0": 2,
+       "CF3.0": 2,
+       "F5.5": 3,
+       "F6.0": 1,
+       "F3.0": 1
+      },
+      "width_ft": 5.5,
+      "width_from": "schedule",
+      "lf_ft": 144.3,
+      "chain_ids": [
+       256,
+       258,
+       284,
+       287,
+       321,
+       322,
+       323,
+       336,
+       338,
+       342,
+       346,
+       370
+      ],
+      "chain_major": [
+       256,
+       284,
+       287,
+       321,
+       322,
+       323,
+       336,
+       338,
+       342,
+       346,
+       370
+      ],
+      "families": {
+       "11": 144.3,
+       "12": 256.8,
+       "20": 246,
+       "35": 131.3
+      },
+      "colour": "#a06a2c"
+     }
+    ],
+    "footing_style": {
+     "style_id": 11,
+     "label": "dash1 d6.8 g3.3",
+     "share": 0.636
+    },
+    "reach_ft": 10,
+    "unassigned_ft": 1131.4,
+    "families": {
+     "0": "solid solid",
+     "1": "dash1 d4.4 g17.5",
+     "2": "dash1 d4.4 g2.8",
+     "3": "solid solid",
+     "4": "dash2 d47.2 d153.0 g3.2",
+     "7": "solid solid",
+     "9": "dash1 d52.7 g1.3",
+     "10": "dash1 d6.7 g47.3",
+     "11": "dash1 d6.8 g3.3",
+     "12": "solid solid",
+     "13": "dash2 d6.8 d14.3 g3.3",
+     "14": "dash2 d3.4 d6.7 g3.3",
+     "16": "solid solid",
+     "17": "dash3 d2.2 d7.0 d18.0 g2.2",
+     "20": "solid solid",
+     "21": "dash1 d1.8 g0.0",
+     "25": "solid solid",
+     "26": "solid solid",
+     "27": "solid solid",
+     "28": "solid solid",
+     "29": "solid solid",
+     "30": "solid solid",
+     "31": "solid solid",
+     "32": "solid solid",
+     "33": "solid solid",
+     "34": "solid solid",
+     "35": "solid solid",
+     "37": "dash3 misc",
+     "38": "solid misc",
+     "40": "dash2 misc"
+    },
+    "outline_note": "outline length as drawn - a footing drawn as a closed rectangle counts both long sides",
+    "ft_per_pt": 0.07407
+   },
+   "steps": 19
+  }
+ },
+ "view2": 0.32618584537680545,
+ "view_f4": {
+  "x": -375.9178217481091,
+  "y": -188.47897913517636,
+  "k": 0.32618584537680545,
+  "f": 1.8055555555555556,
+  "cv": [
+   528,
+   52,
+   972,
+   854
+  ],
+  "dpr": 1.25
+ },
+ "rect_table2": [
+  149,
+  11,
+  337,
+  813
+ ],
+ "map_off": null,
+ "map_on": 54,
+ "map_closed": null
+}

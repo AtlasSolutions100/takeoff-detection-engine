@@ -39,7 +39,7 @@ const state = { job: "j", page: 14, gen: 1, st: { draft: null, datum_ft: NaN, fo
 const H = new Function("state", "calls",
   "const document = { createElement: (t) => ({ tag: t, value: '', className: '', placeholder: '' }) };\n"
   + "const setStatus = (m, k) => calls.status.push([m, k || '']); const renderSt = () => { calls.rendered++; }; const calcStateDirty = () => { calls.dirty++; };\n"
-  + "const stFetchDatum = () => { calls.fetched++; }; const stFetchFootings = () => {};\n" + mkStub
+  + "const stFetchDatum = () => { calls.fetched++; }; const stFetchFootings = () => {}; const stGroupsTable = () => stMk('div', 'st-groups');\n" + mkStub
   + fnSrc("stCivil") + "\n" + fnSrc("stFt") + "\n" + fnSrc("stDatumBlock") + "\n" + fnSrc("stFootingsBlock")
   + "\nreturn { stDatumBlock, stFootingsBlock, stCivil };")(state, calls);
 check(H.stCivil(86, 7732) === "7,718′" && H.stCivil(84.1667, 7732) === "7,716.17′", "86'-0\" on a 7732 datum reads 7,718 civil (rounded to 0.01)");
@@ -66,7 +66,7 @@ state.st.draft = { datum_ft: 7700 };
 const fb2 = H.stFootingsBlock(state.st);
 check(/86′ \(7,686′ civil\)/.test(fb2.children.find(c => c.className === "st-chips").children[0].textContent), "a draft's own datum wins over the panel's");
 check(/\.st-datum \{ display: flex; flex-direction: column; gap: 4px; margin-top: 6px; \}/.test(css), "datum block styled");
-check(/app\.js\?v=184/.test(html) && /style\.css\?v=89/.test(html), "cache busters moved");
+check(+((/app\.js\?v=(\d+)/.exec(html) || [])[1]) >= 184 && +((/style\.css\?v=(\d+)/.exec(html) || [])[1]) >= 89, "cache busters moved");
 
 if (fails) { console.error(fails + " failure(s)"); process.exit(1); }
 console.log("all datum-ui checks passed");

@@ -156,6 +156,7 @@ const state = window.state = {
   ckShowAll: false,         // "and N more" pressed: the cap is open
   ckCollapsed: false,       // queue body folded to its header (session-only)
   hotChain: null,           // chain highlighted from a calculator row
+  stHotChains: null,        // chain ids of a hovered wall group (structure panel)
   extraItems: [],           // calculator outputs: {label, qty, unit}
   areaInc: new Map(),       // area group_id -> included in the takeoff
   areaLabels: new Map(),    // area group_id -> reviewer's label
@@ -17104,6 +17105,8 @@ function draw() {
   }
   if (state.result) {
     const f = IMG_DPI / 72; // pt -> image px
+    // wall-group colours (structure panel open, "colour the walls" on)
+    const gcol = stGroupColorMap();
     for (const ch of state.result.chains) {
       const sid = ch.style_id;
       // deleted lines stay absolutely gone - hover does not resurrect them
@@ -17121,7 +17124,8 @@ function draw() {
       // wins over the tick in BOTH directions. What is new is that hover
       // now overrides both - which is the point.
       const hot = (state.hotStyle !== null && state.hotStyle.has(sid))
-        || state.hotChain === ch.chain_id;
+        || state.hotChain === ch.chain_id
+        || !!(state.stHotChains && state.stHotChains.has(ch.chain_id));
       const shown = famShown(sid);
       const sel = state.selected === ch.chain_id;
       // SELECTING IS POINTING AT IT TOO. A line of an unticked family could
@@ -17147,12 +17151,13 @@ function draw() {
       // the family's styleFp (and every set-level decision keyed on it) is
       // untouched by a recolour. Precedence: per-line > per-family >
       // convention > engine (colorResolve).
-    ctx.strokeStyle = (sel || msel) ? CV_SELECT : chainCssColor(ch, st2);
+      const gc = gcol ? (gcol.get(ch.chain_id) || null) : null;
+    ctx.strokeStyle = (sel || msel) ? CV_SELECT : (gc || chainCssColor(ch, st2));
       // real plotted weight, floored so a hairline stays visible zoomed out
       const wPt = Math.max(ch.width || 0.35, 0.35) * f;
       ctx.lineWidth = sel ? 4.5 / k
         : msel ? 3.2 / k
-        : Math.max(hot ? wPt * 2.0 : wPt, 1.4 / k);
+        : Math.max(hot ? wPt * 2.0 : (gc ? wPt * 3.0 : wPt), gc ? 3.0 / k : 1.4 / k);
       // selection recolors but keeps the true pattern - a solid magenta
       // overlay reads as "this line became solid", which it has not
       const pts = ch.points;
@@ -22289,6 +22294,140 @@ async function stFetchDatum() {
   }
   renderSt();
 }
+// ---- walls grouped by bottom of footing (Wave 2 item 3) ----------------------------
+// Beaumont colours every wall by the elevation its footing bottoms at, because
+// the dig depth differs per group (Barn S1-1.3: cyan 96', red 85'-2", magenta
+// 84'-2", blue 83'). Two readings, both suggestions and both from the sheet's
+// own callouts: the sheet-wide groups (every line within reach of a callout
+// joins it; the footing family's length per group is AS DRAWN, so a footing
+// drawn as a closed rectangle counts both long sides - the note says so) and
+// the draft outline split edge by edge, which adds up to the outline's
+// perimeter exactly. The canvas wears the group colours while the panel is
+// open; nothing here writes into the takeoff.
+function stGroupMap(j) {
+  // paint by the group holding the chain's larger piece (a footing line
+  // that runs past a WALL STEP belongs to two groups; hover lights all of it)
+  const m = new Map();
+  for (const r of ((j && j.groups && j.groups.groups) || []))
+    for (const id of (r.chain_major || r.chain_ids || [])) m.set(id, r.colour);
+  return m.size ? m : null;
+}
+function stGroupColorMap() {
+  const st = state.st;
+  if (!st || !st.groupColor || st.paintGroups === false || $("stPanel").hidden) return null;
+  return st.groupColor;
+}
+function stDatumOf(st) {
+  return (st.draft && Number.isFinite(+st.draft.datum_ft)) ? +st.draft.datum_ft
+       : (Number.isFinite(+st.datum_ft) ? +st.datum_ft : null);
+}
+function stSplitKey(st) {
+  return st.draft && st.draft.pts && st.draft.pts.length >= 2 ? JSON.stringify(st.draft.pts) : null;
+}
+function stEnsureSplit(st) {
+  const key = stSplitKey(st);
+  if (!key || (st.split && st.split.key === key)) return;
+  st.split = { key, loading: true, data: null, err: null };
+  stFetchSplit(st, key);
+}
+async function stFetchSplit(st, key) {
+  const gen = state.gen;
+  try {
+    const r = await fetch(`/api/job/${state.job}/page/${state.page}/footings/split`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points: st.draft.pts }) });
+    if (!r.ok) throw new Error("failed (" + r.status + ")");
+    const j = await r.json();
+    if (gen !== state.gen || state.st !== st || !st.split || st.split.key !== key) return;
+    st.split.loading = false; st.split.data = j;
+  } catch (e) {
+    if (gen !== state.gen || state.st !== st || !st.split || st.split.key !== key) return;
+    st.split.loading = false; st.split.err = String((e && e.message) || e);
+  }
+  renderSt(); draw();
+}
+function stSplitOf(st) {
+  const key = stSplitKey(st);
+  return key && st.split && st.split.key === key && st.split.data ? st.split.data : null;
+}
+function stGroupsTable(st, d) {
+  const box = stMk("div", "st-groups");
+  const g = d.groups;
+  if (!g || !g.groups || !g.groups.length) {
+    box.appendChild(stMk("div", "ew-meta", "walls by bottom of footing: "
+      + (d.groups_reason || "no callout on this sheet carries an elevation")));
+    return box;
+  }
+  if (st.draft) stEnsureSplit(st);
+  const sp = stSplitOf(st);
+  const dat = stDatumOf(st);
+  const fs = g.footing_style;
+  box.appendChild(stMk("div", "ew-meta", "Walls by bottom of footing \u2014 every line within "
+    + g.reach_ft + " ft of a callout joins that callout's group"
+    + (fs ? `; footing line = ${fs.label || ("family " + fs.style_id)} (${Math.round((fs.share || 0) * 100)}% of the callouts sit on it)` : "")
+    + "; " + g.outline_note + ". Hover a row to light its lines."));
+  const t = stMk("table");
+  const hd = stMk("tr");
+  for (const h of ["BOF", "callouts", "width", "footing line", "outline"])
+    hd.appendChild(stMk("th", ["width", "footing line", "outline"].includes(h) ? "num" : "", h));
+  t.appendChild(hd);
+  const spBy = {};
+  if (sp) for (const r of sp.groups || []) spBy[r.bof_ft] = r;
+  for (const r of g.groups) {
+    const tr = stMk("tr");
+    // swatch inside the BOF cell; BOF and callouts wrap so five columns fit the panel
+    const bc = stMk("td", "st-wrap"); const dot = stMk("span", "st-sw"); dot.style.background = r.colour;
+    bc.append(dot, ` ${r.bof_ft}\u2032` + (dat != null ? ` (${stCivil(r.bof_ft, dat)} civil)` : ""));
+    tr.appendChild(bc);
+    tr.appendChild(stMk("td", "st-wrap", `${r.callouts}: ` + Object.entries(r.marks || {}).map(([m, n]) => n > 1 ? `${m} \u00d7${n}` : m).join(", ")));
+    tr.appendChild(stMk("td", "num", r.width_ft != null ? stFt(r.width_ft) + (r.width_from === "schedule" ? "" : " ?") : "\u2014"));
+    const lf = stMk("td", "num", r.lf_ft ? `${Math.round(r.lf_ft).toLocaleString()} ft` : "none");
+    lf.title = Object.entries(r.families || {}).map(([sid, ft]) => `${(g.families || {})[sid] || ("family " + sid)}: ${Math.round(ft)} ft`).join("\n") || "no line within reach";
+    tr.appendChild(lf);
+    const s = spBy[r.bof_ft];
+    // a group the outline never touches reads "-" once the split is in; "..." only while it loads
+    tr.appendChild(stMk("td", "num", s ? `${Math.round(s.lf_ft).toLocaleString()} ft (${Math.round(s.share * 100)}%)`
+      : (st.draft && !sp ? (st.split && st.split.err ? "?" : "\u2026") : "\u2014")));
+    tr.onmouseenter = () => { state.stHotChains = new Set(r.chain_ids || []); draw(); };
+    tr.onmouseleave = () => { state.stHotChains = null; draw(); };
+    t.appendChild(tr);
+  }
+  box.appendChild(t);
+  const foot = [];
+  if (g.unassigned_ft) foot.push(`${Math.round(g.unassigned_ft).toLocaleString()} ft of lines sit near no callout`);
+  if (sp) foot.push(`this outline: ${Math.round(sp.perimeter_ft).toLocaleString()} ft`
+    + (sp.unassigned_ft ? `, ${Math.round(sp.unassigned_ft).toLocaleString()} ft of it beside no callout` : ", all of it beside a callout"));
+  else if (st.draft && st.split && st.split.err) foot.push("this outline: " + st.split.err);
+  else if (!st.draft) foot.push("pick or draw an outline to see its walls split by elevation");
+  if (foot.length) box.appendChild(stMk("div", "ew-meta", foot.join(" \u00b7 ")));
+  const tog = stMk("label", "ew-meta st-paint");
+  const cb = stMk("input"); cb.type = "checkbox"; cb.id = "stPaintGroups"; cb.checked = st.paintGroups !== false;
+  cb.onchange = () => { st.paintGroups = cb.checked; draw(); };
+  tog.append(cb, " colour the walls on the sheet by group");
+  box.appendChild(tog);
+  return box;
+}
+function stPaintSplit(ctx, k, f, st) {
+  const sp = st.draft ? stSplitOf(st) : null;
+  const fd = st.footings && st.footings.data && st.footings.data.groups;
+  if (!sp || !fd) return;
+  const col = {};
+  for (const r of fd.groups || []) col[r.bof_ft] = r.colour;
+  const P = st.draft.pts;
+  ctx.save();
+  ctx.setLineDash([]); ctx.lineCap = "butt"; ctx.lineWidth = 5 / k;
+  for (const e of sp.edges || []) {
+    if (e.bof_ft == null) continue;
+    const a = P[e.i], b = P[(e.i + 1) % P.length];
+    if (!a || !b) continue;
+    ctx.beginPath();
+    ctx.moveTo((a[0] + (b[0] - a[0]) * e.t0) * f, (a[1] + (b[1] - a[1]) * e.t0) * f);
+    ctx.lineTo((a[0] + (b[0] - a[0]) * e.t1) * f, (a[1] + (b[1] - a[1]) * e.t1) * f);
+    ctx.strokeStyle = col[e.bof_ft] || ST_DRAFT_COLOR;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 function stFootingsBlock(st) {
   const box = stMk("div", "st-footings");
   const f = st.footings;
@@ -22330,6 +22469,7 @@ function stFootingsBlock(st) {
   box.appendChild(row);
   if (d.slabs && d.slabs.length)
     box.appendChild(stMk("div", "ew-meta", "slab elevations printed: " + [...new Set(d.slabs.map(x => x.text))].join(", ")));
+  box.appendChild(stGroupsTable(st, d));
   return box;
 }
 async function stFetchFootings() {
@@ -22340,12 +22480,12 @@ async function stFetchFootings() {
     if (!r.ok) throw new Error("failed (" + r.status + ")");
     const j = await r.json();
     if (gen !== state.gen || state.st !== st) return;
-    f.loading = false; f.data = j;
+    f.loading = false; f.data = j; st.groupColor = stGroupMap(j);
   } catch (e) {
     if (gen !== state.gen || state.st !== st) return;
     f.loading = false; f.err = String((e && e.message) || e);
   }
-  renderSt();
+  renderSt(); draw();
 }
 function stApplyFooting(mark, s) {
   const st = stSync();
@@ -22575,6 +22715,7 @@ function drawStructural(ctx, k) {
   };
   st.items.forEach((it, i) => paint(it, ST_COLOR, "rgba(255,122,0,.30)", st.hot === i));
   if (st.draft) paint(st.draft, ST_DRAFT_COLOR, ST_DRAFT_BAND, true);
+  stPaintSplit(ctx, k, f, st);
   // in-progress polygon while drawing
   if (state.tool === "st-draw" && st.drawPts.length) {
     const P = st.drawPts;
