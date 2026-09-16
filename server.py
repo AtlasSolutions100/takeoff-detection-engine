@@ -6138,6 +6138,26 @@ def footings_split(job_id: str, page: int, body: FootingSplitBody):
     return JSONResponse(out)
 
 
+@app.get("/api/job/{job_id}/page/{page}/watchlist")
+def watchlist(job_id: str, page: int):
+    """The watch-list callouts on this sheet - septic tank, propane tank,
+    culvert, area inlet, cleanout, wye - each with the size printed beside
+    it and its BY OTHERS / N.I.C. / RE. TO tag. Words only, no detect; a
+    keyword list because the estimator rejected a full callout dump. Never
+    counted in the takeoff by itself (the panel's add button does that)."""
+    from takeoff_engine.extract import page_lines as _page_lines
+    from takeoff_engine.watchlist import find_watch_callouts
+    job = JOBS.get(job_id) or _404()
+    doc = pymupdf.open(job["path"])
+    try:
+        if page < 0 or page >= doc.page_count:
+            raise HTTPException(404, "no such page")
+        lines = _page_lines(doc[page])
+    finally:
+        doc.close()
+    return JSONResponse(find_watch_callouts(lines))
+
+
 @app.get("/api/job/{job_id}/page/{page}/callouts")
 def callouts(job_id: str, page: int):
     """The sheet's own callouts as data: every detected leader paired with

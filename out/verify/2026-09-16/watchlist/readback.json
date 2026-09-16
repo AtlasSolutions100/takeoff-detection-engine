@@ -1,0 +1,450 @@
+{
+ "errors": [],
+ "appJs": "v=188",
+ "c20_detected_before": false,
+ "c20": {
+  "rows": [
+   [
+    "Septic Tank \u00d71",
+    "1,500 gal \u00b7 RE. TO OWTS",
+    "+ 1 EA",
+    false,
+    [
+     [
+      "1,500 gal \u00b7 PROPOSED 1,500 GALLON SEPTIC TANK; RE. TO OWTS PLANS SUBMITTED SEPARATELY  [RE. TO OWTS]",
+      false
+     ]
+    ]
+   ],
+   [
+    "Propane Tank \u00d71",
+    "18,000 gal \u00b7 RE. TO MEP",
+    "+ 1 EA",
+    false,
+    [
+     [
+      "18,000 gal \u00b7 PROPOSED 18,000 GAL BURIED PROPANE TANK; RE. TO MEP FOR DETAILS  [RE. TO MEP]",
+      false
+     ]
+    ]
+   ],
+   [
+    "Area Inlet \u00d74",
+    "no size printed beside it",
+    "+ 4 EA",
+    false,
+    [
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "FIREPIT AREA INLET, ROUTE THROUGH",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "7'-2\" AREA INLET",
+      false
+     ]
+    ]
+   ],
+   [
+    "Cleanout \u00d79",
+    "2-way \u00d73 \u00b7 RE. TO MEP \u00d76",
+    "+ 9 EA",
+    false,
+    [
+     [
+      "2-way \u00b7 2-WAY CLEANOUT",
+      false
+     ],
+     [
+      "2-way \u00b7 2-WAY CLEANOUT INV:7712.50'",
+      false
+     ],
+     [
+      "> INSTALL CLEANOUT & RE. TO MEP  [RE. TO MEP]",
+      false
+     ],
+     [
+      "INSTALL CLEANOUT & RE. TO MEP  [RE. TO MEP]",
+      false
+     ],
+     [
+      "2-way \u00b7 2-WAY CLEANOUT",
+      false
+     ],
+     [
+      "INTERIOR ROOF DRAIN CONNECTION INSTALL CLEANOUT & RE. TO MEP PLANS FOR ADDITIONAL INFORMATION INV: 7730.0'  [RE. TO MEP]",
+      false
+     ],
+     [
+      "INSTALL CLEANOUT & RE. TO MEP  [RE. TO MEP]",
+      false
+     ],
+     [
+      "INTERIOR ROOF DRAIN CONNECTION INSTALL CLEANOUT & RE. TO MEP PLANS FOR ADDITIONAL INFORMATION INV: 7726.6'  [RE. TO MEP]",
+      false
+     ],
+     [
+      "INSTALL CLEANOUT & RE. TO MEP  [RE. TO MEP]",
+      false
+     ]
+    ]
+   ]
+  ],
+  "title": "Watch-list",
+  "leaders": "run Detect first",
+  "data": {
+   "groups": [
+    {
+     "kind": "septic_tank",
+     "label": "Septic Tank",
+     "count": 1,
+     "in_scope": 1,
+     "sizes": {
+      "1,500 gal": 1
+     },
+     "tags": {
+      "RE. TO OWTS": 1
+     }
+    },
+    {
+     "kind": "propane_tank",
+     "label": "Propane Tank",
+     "count": 1,
+     "in_scope": 1,
+     "sizes": {
+      "18,000 gal": 1
+     },
+     "tags": {
+      "RE. TO MEP": 1
+     }
+    },
+    {
+     "kind": "area_inlet",
+     "label": "Area Inlet",
+     "count": 4,
+     "in_scope": 4,
+     "sizes": {},
+     "tags": {}
+    },
+    {
+     "kind": "cleanout",
+     "label": "Cleanout",
+     "count": 9,
+     "in_scope": 9,
+     "sizes": {
+      "2-way": 3
+     },
+     "tags": {
+      "RE. TO MEP": 6
+     }
+    }
+   ],
+   "n_items": 15
+  },
+  "detected": false
+ },
+ "rect_w1": {
+  "panel": [
+   136,
+   52,
+   363,
+   754
+  ],
+  "wl": [
+   137,
+   209,
+   361,
+   559
+  ]
+ },
+ "marks": {
+  "symMarks": [
+   [
+    2140,
+    249.5
+   ]
+  ],
+  "view": {
+   "x": -2516.4964285714286,
+   "y": 76.94258928571429,
+   "k": 0.777065934065934,
+   "f": 1.8055555555555556
+  },
+  "cv": [
+   528,
+   52,
+   972,
+   854
+  ]
+ },
+ "after_add": {
+  "extra": [
+   [
+    "Septic Tank 1,500 gal",
+    1,
+    "EA"
+   ]
+  ],
+  "status": "Septic Tank 1,500 gal: 1 EA added from the sheet's callouts",
+  "rows": [
+   [
+    "Septic Tank \u00d71",
+    "1,500 gal \u00b7 RE. TO OWTS",
+    "in the takeoff",
+    true,
+    [
+     [
+      "1,500 gal \u00b7 PROPOSED 1,500 GALLON SEPTIC TANK; RE. TO OWTS PLANS SUBMITTED SEPARATELY  [RE. TO OWTS]",
+      false
+     ]
+    ]
+   ],
+   [
+    "Propane Tank \u00d71",
+    "18,000 gal \u00b7 RE. TO MEP",
+    "+ 1 EA",
+    false,
+    [
+     [
+      "18,000 gal \u00b7 PROPOSED 18,000 GAL BURIED PROPANE TANK; RE. TO MEP FOR DETAILS  [RE. TO MEP]",
+      false
+     ]
+    ]
+   ]
+  ]
+ },
+ "rect_w3": {
+  "row": [
+   137,
+   231,
+   361,
+   70
+  ],
+  "status": [
+   89.609375,
+   914.5,
+   966.625,
+   18
+  ]
+ },
+ "bid_line_24": null,
+ "c35": {
+  "rows": [
+   [
+    "Area Inlet \u00d719",
+    "no size printed beside it",
+    "+ 19 EA",
+    false,
+    [
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "AREA INLET INV:7727.34'",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "AREA INLET CONNECT TO",
+      false
+     ],
+     [
+      "AREA INLET INV:7725.23'",
+      false
+     ],
+     [
+      "AREA INLET INV:7728.00' 45\u00b0 HORZ. BEND",
+      false
+     ],
+     [
+      "AREA INLET STA:1+02.05 INV:7725.93'",
+      false
+     ],
+     [
+      "AREA INLET INV:7725.91'",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "AREA INLET INV:7725.75'",
+      false
+     ],
+     [
+      "AREA INLET INV:7730.47'",
+      false
+     ],
+     [
+      "AREA INLET INV:7728.98'",
+      false
+     ],
+     [
+      "AREA INLET INV:7730.97'",
+      false
+     ],
+     [
+      "AREA INLET INV:7731.22'",
+      false
+     ],
+     [
+      "AREA INLET INV:7729.72'",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ],
+     [
+      "AREA INLET",
+      false
+     ]
+    ]
+   ],
+   [
+    "Cleanout \u00d73",
+    "RE. TO MEP \u00d73",
+    "+ 3 EA",
+    false,
+    [
+     [
+      "INSTALL CLEANOUT & RE. TO MEP  [RE. TO MEP]",
+      false
+     ],
+     [
+      "INTERIOR ROOF DRAIN CONNECTION. INSTALL CLEANOUT & RE. TO MEP PLANS FOR ADDITIONAL INFORMATION INV:7729.36'  [RE. TO MEP]",
+      false
+     ],
+     [
+      "INSTALL CLEANOUT & RE. TO MEP  [RE. TO MEP]",
+      false
+     ]
+    ]
+   ],
+   [
+    "Wye \u00d712",
+    "no size printed beside it",
+    "+ 12 EA",
+    false,
+    [
+     [
+      "INSTALL WYE INV:7715.25'",
+      false
+     ],
+     [
+      "INSTALL WYE INV:7715.64'",
+      false
+     ],
+     [
+      "INSTALL WYE STA:0+61.64 INV:7727.01'",
+      false
+     ],
+     [
+      "INSTALL WYE INV:7727.37'",
+      false
+     ],
+     [
+      "INSTALL WYE gas RIM: 31.95",
+      false
+     ],
+     [
+      "INSTALL WYE STA:0+83.93 INV:7726.41'",
+      false
+     ],
+     [
+      "INSTALL WYE STA:1+32.44 INV:7725.16'",
+      false
+     ],
+     [
+      "INSTALL WYE INV:7725.16'",
+      false
+     ],
+     [
+      "gas INSTALL WYE INV:7726.47'",
+      false
+     ],
+     [
+      "INSTALL WYE STA:1+19.93 INV:7725.45'",
+      false
+     ],
+     [
+      "INSTALL WYE INV:7728.21'",
+      false
+     ],
+     [
+      "INSTALL WYE INV:7728.24'",
+      false
+     ]
+    ]
+   ]
+  ],
+  "title": "Watch-list",
+  "leaders": "run Detect first",
+  "data": {
+   "groups": [
+    {
+     "kind": "area_inlet",
+     "label": "Area Inlet",
+     "count": 19,
+     "in_scope": 19,
+     "sizes": {},
+     "tags": {}
+    },
+    {
+     "kind": "cleanout",
+     "label": "Cleanout",
+     "count": 3,
+     "in_scope": 3,
+     "sizes": {},
+     "tags": {
+      "RE. TO MEP": 3
+     }
+    },
+    {
+     "kind": "wye",
+     "label": "Wye",
+     "count": 12,
+     "in_scope": 12,
+     "sizes": {},
+     "tags": {}
+    }
+   ],
+   "n_items": 34
+  },
+  "detected": false
+ },
+ "rect_w4": {
+  "panel": [
+   136,
+   52,
+   363,
+   1006
+  ],
+  "wl": [
+   137,
+   209,
+   361,
+   811
+  ]
+ }
+}

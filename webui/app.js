@@ -1207,7 +1207,7 @@ function pageReset() {
   $("rollPanel").hidden = true; $("rollBtn").hidden = false;
   // CROSS SECTIONS and CALLOUTS
   state.xs = null; $("xsPanel").hidden = true; $("xsBtn").hidden = false;
-  state.co = null; $("coPanel").hidden = true; $("coBtn").hidden = false;
+  state.co = null; state.watch = null; $("coPanel").hidden = true; $("coBtn").hidden = false;
 }
 
 async function loadResult(gen = state.gen) {
@@ -16113,9 +16113,18 @@ function revealChain(cid, atPt) {
 }
 $("coBtn").onclick = async () => {
   const panel = $("coPanel");
-  if (!panel.hidden) { panel.hidden = true; return; }
+  if (!panel.hidden) { panel.hidden = true; state.symMarks = null; draw(); return; }
   panel.hidden = false;
   panel.scrollIntoView({ block: "start", behavior: "smooth" });
+  // the watch-list needs words only: it comes first and never waits on Detect
+  if (!state.watch) {
+    $("wlRows").innerHTML = '<div class="ew-hint">reading the sheet\u2019s watch-list callouts\u2026</div>';
+    try {
+      const r = await fetch(`/api/job/${state.job}/page/${state.page}/watchlist`);
+      state.watch = r.ok ? await r.json() : { err: "failed (" + r.status + ")" };
+    } catch (e) { state.watch = { err: String((e && e.message) || e) }; }
+  }
+  renderWatch();
   if (!state.co) {
     $("coRows").innerHTML = '<div class="ew-hint">reading callouts… (first run OCRs the sheet, ~10-30s)</div>';
     const r = await fetch(`/api/job/${state.job}/page/${state.page}/callouts`);
@@ -16125,6 +16134,82 @@ $("coBtn").onclick = async () => {
   renderCo();
 };
 $("coClose").onclick = () => { $("coPanel").hidden = true; };
+// ---- the watch-list (Wave 2 item 7; takeoff_engine/watchlist.py) -------------------
+// The few callouts an estimator pulls out by keyword - septic tank, propane
+// tank, culvert, area inlet, cleanout, wye - with the size printed beside
+// each and its BY OTHERS / N.I.C. / RE. TO tag. Words only, so it shows
+// before Detect; nothing here counts until "+ n EA" is pressed, and that
+// row is an ordinary EA row (it files onto the bid sheet by its name).
+function wlMk(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+function wlLabel(g) {
+  const sizes = Object.keys(g.sizes || {});
+  return g.label + (sizes.length === 1 ? " " + sizes[0] : "");
+}
+function wlHas(g) {
+  const lab = wlLabel(g);
+  return (state.extraItems || []).some((x) => x.label === lab && x.unit === "EA");
+}
+function wlAdd(g) {
+  if (wlHas(g) || !(g.in_scope > 0)) return;
+  state.extraItems.push({ label: wlLabel(g), qty: g.in_scope, unit: "EA" });
+  calcStateDirty(); renderItemized(); renderWatch();
+  setStatus(`${wlLabel(g)}: ${g.in_scope} EA added from the sheet's callouts`
+    + (g.in_scope < g.count ? ` (${g.count - g.in_scope} marked BY OTHERS / N.I.C. left out)` : ""));
+}
+function renderWatch() {
+  const box = $("wlRows");
+  if (!box) return;
+  box.innerHTML = "";
+  const w = state.watch;
+  if (!w) return;
+  if (w.err) { box.appendChild(wlMk("div", "ew-hint", "watch-list: " + w.err)); return; }
+  const head = wlMk("div", "wl-title", "Watch-list");
+  head.title = "The few callouts an estimator pulls out by keyword: " + (w.watch || []).join(", ")
+    + ". Words only - no Detect needed. Sizes are read off the callout; BY OTHERS, N.I.C. and RE. TO \u2026 are flagged. Nothing here counts until you add it.";
+  box.appendChild(head);
+  if (!w.groups || !w.groups.length) {
+    box.appendChild(wlMk("div", "ew-meta", "none of " + (w.watch || []).join(", ") + " is called out on this sheet"));
+    return;
+  }
+  for (const g of w.groups) {
+    const row = wlMk("div", "wl-row");
+    const line = wlMk("div", "wl-line");
+    const nm = wlMk("div", "wl-name", `${g.label} \u00d7${g.count}`);
+    const meta = [];
+    for (const [s, n] of Object.entries(g.sizes || {})) meta.push(s + (n > 1 ? " \u00d7" + n : ""));
+    for (const [t, n] of Object.entries(g.tags || {})) meta.push(t + (n > 1 ? " \u00d7" + n : ""));
+    const m = wlMk("div", "ew-meta", meta.join(" \u00b7 ") || "no size printed beside it");
+    const add = wlMk("button", "mini wl-add", wlHas(g) ? "in the takeoff" : `+ ${g.in_scope} EA`);
+    add.title = !(g.in_scope > 0) ? "every one is marked BY OTHERS / N.I.C. - nothing to add"
+      : g.in_scope < g.count ? `adds ${g.in_scope} as an EA row; the ${g.count - g.in_scope} marked BY OTHERS / N.I.C. are left out`
+      : `adds ${g.count} ${g.label} as an EA row named "${wlLabel(g)}"`;
+    add.disabled = !(g.in_scope > 0) || wlHas(g);
+    add.onclick = (e) => { e.stopPropagation(); wlAdd(g); };
+    line.append(nm, m, add);
+    row.appendChild(line);
+    const items = (w.items || []).filter((x) => x.kind === g.kind);
+    const list = wlMk("div", "wl-items");
+    for (const it of items) {
+      const oos = (it.tags || []).some((t) => t === "by others" || t === "N.I.C.");
+      const li = wlMk("div", "wl-item" + (oos ? " oos" : ""),
+        (it.size_text ? it.size_text + " \u00b7 " : "") + it.text + ((it.tags || []).length ? "  [" + it.tags.join(", ") + "]" : ""));
+      li.title = "click to jump there";
+      li.onmouseenter = () => { state.symMarks = [[it.x, it.y]]; draw(); };
+      li.onmouseleave = () => { state.symMarks = null; draw(); };
+      li.onclick = () => centerOn(it.x, it.y);
+      list.appendChild(li);
+    }
+    row.onmouseenter = () => { state.symMarks = items.map((it) => [it.x, it.y]); draw(); };
+    row.onmouseleave = () => { state.symMarks = null; draw(); };
+    row.appendChild(list);
+    box.appendChild(row);
+  }
+}
 function renderCo() {
   const box = $("coRows");
   box.innerHTML = "";
