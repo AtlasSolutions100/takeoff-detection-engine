@@ -3115,6 +3115,124 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     return found
 
 
+# --- COUNTING ALONG A LINE THE ESTIMATOR DRAWS ---------------------------
+#
+# See the patch note in scratchpad/patch_transect.py. The short version: a
+# solver cannot recover contour ORDER from our sheets (FINDINGS 42), and it
+# does not have to - the operator draws one stroke across the fan and the
+# crossings along it are the order. He supplies the start, the step and the
+# direction; the software counts.
+#
+# Two lines the same distance along the stroke cannot be ordered by it, so
+# they are refused rather than guessed - that is the whole ordering problem
+# in miniature, and guessing it is what stage 1 was stopped for.
+TRANSECT_TIE_PT = 1.5          # crossings closer than this cannot be ordered
+TRANSECT_CHECK_TOL = 0.05      # a printed elevation agrees within this, in ft
+
+
+def _seg_hits(poly: np.ndarray, a: np.ndarray, b: np.ndarray) -> list:
+    """Where segment a->b crosses the polyline, as fractions along a->b."""
+    p0, p1 = poly[:-1], poly[1:]
+    d = b - a
+    e = p1 - p0
+    den = d[0] * e[:, 1] - d[1] * e[:, 0]
+    ok = np.abs(den) > 1e-12
+    if not ok.any():
+        return []
+    w = p0[ok] - a
+    t = (w[:, 0] * e[ok][:, 1] - w[:, 1] * e[ok][:, 0]) / den[ok]
+    u = (w[:, 0] * d[1] - w[:, 1] * d[0]) / den[ok]
+    hit = (t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)
+    return sorted(float(v) for v in t[hit])
+
+
+def transect_fill(lines: list, transect: list, start_z: float,
+                  step_ft: float, printed: "dict | None" = None) -> dict:
+    """Count contour crossings along a drawn stroke and hand back elevations.
+
+    `lines` is [(chain_id, pts Nx2 in page pt)] - every candidate line,
+    elevated or not. `transect` is the stroke the operator drew, in the
+    order he drew it. The first crossing gets `start_z` and each one after
+    it steps by `step_ft` (negative when the stroke runs downhill).
+
+    `printed` maps chain_id -> the elevation the sheet already gives, for
+    the lines that have one. Those are never overwritten: they are the
+    CHECK. Returns
+
+        {"rows": [{chain_id, z, order, at: [x, y], dist_pt}],
+         "checks": [{chain_id, counted, printed, diff_ft, agrees}],
+         "refused": [{chain_id, why}],
+         "n_crossed", "agrees", "disagrees", "step_ft", "start_z"}
+
+    Every row is the operator's count, not a reading: the caller marks them
+    so (how="operator-counted") and the panel shows the count.
+    """
+    out: dict = {"rows": [], "checks": [], "refused": [], "step_ft": float(step_ft),
+                 "start_z": float(start_z), "n_crossed": 0, "agrees": 0, "disagrees": 0}
+    tr = np.asarray(transect, float)
+    if len(tr) < 2 or not len(lines):
+        out["refused"].append({"chain_id": None,
+                               "why": "the stroke needs at least two points"})
+        return out
+    seg_len = np.hypot(*np.diff(tr, axis=0).T)
+    at0 = np.r_[0.0, np.cumsum(seg_len)]
+    hits = []
+    for cid, pts in lines:
+        pts = np.asarray(pts, float)
+        if len(pts) < 2:
+            continue
+        found = []
+        for i in range(len(tr) - 1):
+            for t in _seg_hits(pts, tr[i], tr[i + 1]):
+                found.append((float(at0[i] + t * seg_len[i]),
+                              tr[i] + t * (tr[i + 1] - tr[i])))
+        if not found:
+            continue
+        found.sort(key=lambda h: h[0])
+        hits.append({"chain_id": int(cid), "dist": found[0][0],
+                     "at": [round(float(found[0][1][0]), 2),
+                            round(float(found[0][1][1]), 2)],
+                     "times": len(found)})
+    hits.sort(key=lambda h: h["dist"])
+    out["n_crossed"] = len(hits)
+    # TWO LINES AT THE SAME PLACE ALONG THE STROKE cannot be put in order by
+    # it. Refuse both rather than pick: this is the ordering problem the
+    # solver was stopped over, and a guess here compounds down the whole run.
+    tied = set()
+    for i in range(1, len(hits)):
+        if hits[i]["dist"] - hits[i - 1]["dist"] < TRANSECT_TIE_PT:
+            tied.add(i)
+            tied.add(i - 1)
+    printed = printed or {}
+    order = 0
+    for i, h in enumerate(hits):
+        if i in tied:
+            out["refused"].append({
+                "chain_id": h["chain_id"],
+                "why": "two lines cross the stroke at the same place, so it does "
+                       "not say which comes first - draw it across them squarely"})
+            order += 1
+            continue
+        z = float(start_z) + order * float(step_ft)
+        order += 1
+        have = printed.get(h["chain_id"])
+        if have is not None:
+            diff = round(float(have) - z, 3)
+            agrees = abs(diff) <= TRANSECT_CHECK_TOL
+            out["checks"].append({"chain_id": h["chain_id"], "counted": round(z, 3),
+                                  "printed": float(have), "diff_ft": diff,
+                                  "agrees": bool(agrees), "at": h["at"]})
+            out["agrees" if agrees else "disagrees"] += 1
+            continue
+        row = {"chain_id": h["chain_id"], "z": round(z, 3), "order": order,
+               "at": h["at"], "dist_pt": round(h["dist"], 1)}
+        if h["times"] > 1:
+            row["note"] = (f"the stroke crosses this line {h['times']} times - "
+                           f"counted at the first crossing")
+        out["rows"].append(row)
+    return out
+
+
 # --- THE REQUIRED-INPUT CONTRACT: is this number ready to bid? -----------
 #
 # See the patch note in scratchpad/patch_readiness.py for the measurements
