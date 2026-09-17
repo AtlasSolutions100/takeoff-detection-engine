@@ -443,9 +443,20 @@ def _steps_xy(steps):
     return [(float(w["x"]), float(w["y"])) for w in (steps or [])]
 
 
+def _overlap(s0: float, s1: float, ranges) -> float:
+    """Length of [s0, s1] covered by the sorted, merged `ranges`."""
+    tot = 0.0
+    for a, b in ranges or ():
+        lo, hi = max(s0, float(a)), min(s1, float(b))
+        if hi > lo:
+            tot += hi - lo
+    return tot
+
+
 def group_walls_by_bof(callouts: list, chains: list, ft_per_pt: float,
                        schedule: dict | None = None, reach_ft: float = 10.0,
-                       steps: list | None = None) -> dict:
+                       steps: list | None = None,
+                       skip_by_style: dict | None = None) -> dict:
     """Sheet-wide groups: {"groups": [{bof_ft, callouts, marks, width_ft,
     width_from, lf_ft, chain_ids, chain_major, families, colour}],
     "footing_style": {style_id, label, share}, "reach_ft", "unassigned_ft",
@@ -455,10 +466,14 @@ def group_walls_by_bof(callouts: list, chains: list, ft_per_pt: float,
     under 12 pt are ignored. `schedule` is the document's schedule (rows by
     mark) for the width. `steps` are the WALL STEP words' centres.
     `chain_ids` lists every chain with a piece in the group (for hover);
-    `chain_major` the chains whose largest piece is in it (for paint)."""
+    `chain_major` the chains whose largest piece is in it (for paint).
+    `skip_by_style`: {style_id: {chain_id: [[s0, s1], ...]}} - the arc
+    ranges twin_lines found NOT to count (a footing's inner edge, a wall's
+    inside face). When the footing family has them, each group's `lf_ft`
+    is ONE RUN per footing and `lf_drawn_ft` keeps the as-drawn footage."""
     calls = [c for c in callouts if c.get("bof_ft") is not None]
     out = {"groups": [], "footing_style": None, "reach_ft": reach_ft,
-           "unassigned_ft": 0.0, "families": {},
+           "unassigned_ft": 0.0, "families": {}, "once": False,
            "outline_note": "outline length as drawn - a footing drawn as a closed rectangle counts both long sides"}
     if not calls or not chains or not ft_per_pt:
         return out
@@ -479,20 +494,27 @@ def group_walls_by_bof(callouts: list, chains: list, ft_per_pt: float,
     foot_sid, foot_n = (nearest_style.most_common(1)[0] if nearest_style else (None, 0))
     groups: dict = {}
     fam_label: dict = {}
+    sk = (skip_by_style or {})
+    skip = sk.get(foot_sid) or sk.get(str(foot_sid)) or {}
+    out["once"] = bool(skip)
 
     def grp(key):
         return groups.setdefault(key, {"bof_ft": key, "callouts": 0, "marks": Counter(), "chain_ids": [],
-                                       "chain_major": [], "families": defaultdict(float), "lf_ft": 0.0})
+                                       "chain_major": [], "families": defaultdict(float), "lf_ft": 0.0,
+                                       "lf_drawn_ft": 0.0})
 
     for ch in plan:
         sid = ch.get("style_id")
         fam_label.setdefault(sid, ch.get("label") or ch.get("layer") or f"family {sid}")
         per: dict = {}
-        for z, ln, _s0, _s1 in _pieces_along(ch["points"], calls, stp, reach_pt):
+        once: dict = {}
+        rng = (skip.get(ch["chain_id"]) or skip.get(str(ch["chain_id"])) or []) if sid == foot_sid else []
+        for z, ln, s0, s1 in _pieces_along(ch["points"], calls, stp, reach_pt):
             if z is None:
                 out["unassigned_ft"] += ln * ft_per_pt
                 continue
             per[z] = per.get(z, 0.0) + ln * ft_per_pt
+            once[z] = once.get(z, 0.0) + (ln - _overlap(s0, s1, rng)) * ft_per_pt
         if not per:
             continue
         major = max(per.items(), key=lambda kv: kv[1])[0]
@@ -500,7 +522,8 @@ def group_walls_by_bof(callouts: list, chains: list, ft_per_pt: float,
             g = grp(z)
             g["families"][sid] += ft
             if sid == foot_sid:
-                g["lf_ft"] += ft
+                g["lf_ft"] += once[z]
+                g["lf_drawn_ft"] += ft
                 g["chain_ids"].append(int(ch["chain_id"]))
                 if z == major:
                     g["chain_major"].append(int(ch["chain_id"]))
@@ -517,7 +540,8 @@ def group_walls_by_bof(callouts: list, chains: list, ft_per_pt: float,
         out["groups"].append({
             "bof_ft": key, "callouts": g["callouts"], "marks": dict(g["marks"]),
             "width_ft": width, "width_from": ("schedule" if srow else ("mark digits" if width is not None else None)),
-            "lf_ft": round(g["lf_ft"], 1), "chain_ids": g["chain_ids"], "chain_major": g["chain_major"],
+            "lf_ft": round(g["lf_ft"], 1), "lf_drawn_ft": round(g["lf_drawn_ft"], 1),
+            "chain_ids": g["chain_ids"], "chain_major": g["chain_major"],
             "families": {str(k2): round(v, 1) for k2, v in sorted(g["families"].items(), key=lambda kv: -kv[1])[:4]},
             "colour": GROUP_COLOURS[i % len(GROUP_COLOURS)],
         })

@@ -120,6 +120,10 @@ const state = window.state = {
   // second one whose loser overwrote the winner's rows with "run Detect
   // first". Cleared in a finally, and nulled with `ew` on every page change.
   ewLoading: null,
+  // COUNT EACH WALL ONCE (Wave 2 item 11): the page's twin families from
+  // GET .../twins (null until they arrive) and the families the operator
+  // counts once. Per page - pageReset clears both.
+  twins: null, once: new Set(), onceRev: 0,
   // the suggest was tried for this page and did not come back. NOT a
   // boolean: {status, detail} from the server, because "this page was never
   // detected" (404) can never be fixed by a retry while a dropped
@@ -1165,6 +1169,9 @@ function pageReset() {
   // would otherwise have silently masked the wrong sheet). This page's own
   // boxes come back from the calcstate sidecar via wzApplySaved.
   state.workZones = []; state.wzDrag = null; state.wzRev++;
+  // walls counted once: a style_id means nothing on another sheet; this
+  // page's own choice comes back from the calcstate sidecar (onceApplySaved)
+  state.twins = null; state.once = new Set(); state.onceRev++;
   // the confidence banner
   state.conf = null; state.confKey = null; state.confErr = false;
   // review queue: check-offs belong to a page and a detection; reseeded from
@@ -5892,7 +5899,10 @@ function renderStyles() {
     const meta = document.createElement("div");
     meta.className = "style-meta";
     meta.appendChild(document.createTextNode(
-      `${fmtQty(styleLenPt(s))} · ${styleLiveCount(s.style_id)} lines · `));
+      (state.once && state.once.has(s.style_id) && onceFamily(s.style_id)
+        ? `${fmtQty(styleLenPt(s))} once (${fmtQty(styleDrawnPt(s.style_id))} drawn) · `
+        : `${fmtQty(styleLenPt(s))} · `)
+      + `${styleLiveCount(s.style_id)} lines · `));
     // Same string as before, in a mono chip: `dash1 d18.0 g9.0` is what the
     // engine measured off the sheet, not what the thing is called.
     const eid = document.createElement("span");
@@ -6093,7 +6103,15 @@ function renderStyles() {
       famRenderList(s);
     };
 
-    row.append(marks, sw, main, mm, badge);
+    // the count-once switch shares the LF/EA cell: the row is a fixed grid
+    const onceBtn = onceButton(s);
+    let mmCell = mm;
+    if (onceBtn) {
+      mmCell = document.createElement("span");
+      mmCell.className = "mm-cell";
+      mmCell.append(mm, onceBtn);
+    }
+    row.append(marks, sw, main, mmCell, badge);
     if (mineEl) row.appendChild(mineEl);
     row.appendChild(famBtn);
     if (layerEl) row.appendChild(layerEl);
@@ -7325,6 +7343,10 @@ function calcStatePayload() {
   // boxes there is no "never opened" carry case: gzApplySaved runs on
   // every load before the first snapshot, so state.gzones IS the truth
   // and an empty list correctly writes no key (= zones cleared).
+  // COUNTED ONCE (additive key "once"): style ids, restored before the
+  // snapshot like the zones, so state.once IS the truth after a load
+  if (state.once && state.once.size)
+    out.once = [...state.once].sort((a, b) => a - b);
   if (state.gzones && state.gzones.length)
     out.gzones = state.gzones.map(z => ({
       id: z.id, name: z.name,
@@ -7390,6 +7412,10 @@ async function calcStatePush() {
 
 // One GET per page load, awaited by loadResult before the panels can paint.
 async function calcStateLoad(gen) {
+  // which families on this page are drawn as twin lines - its own fetch,
+  // not gated on the sidecar below (a sidecar that cannot be read must not
+  // hide the switch)
+  twinsLoad(gen);
   state.calcSaved = null; state.calcSavedLoaded = false; state.calcStApplied = false;
   state.calcSaveBroken = false; state.calcSaveWarned = false;
   calcStateSent = null;
@@ -7417,6 +7443,7 @@ async function calcStateLoad(gen) {
   // design are page facts, tied to no chain); their RESULTS recompute
   // asynchronously through the endpoint after the snapshot below
   gzApplySaved();
+  onceApplySaved();
   // what the server holds right now, so a no-op save is never sent
   calcStateSent = JSON.stringify(calcStatePayload());
   stApplySaved();
@@ -8980,6 +9007,91 @@ function chainCountedPt(ch) {
   const f = wzChainFrac(ch);
   return f === 1 ? chainLenPt(ch) : chainLenPt(ch) * f;
 }
+
+// ================= COUNT EACH WALL ONCE (Wave 2 item 11) =================
+// A foundation plan draws each wall as its two faces and each footing as its
+// two edges; both clients bill ONE run per wall (takeoff_engine/twin_lines.py
+// has the rule and the measurements). The server pairs the lines; this side
+// only applies each line's one-run share, the same way the work-area mask
+// applies its inside fraction - and the export applies the same share, so
+// the panel and the file cannot disagree.
+function onceFrac(ch) {
+  if (!state.once || !state.once.has(ch.style_id) || !state.twins) return 1;
+  const fam = state.twins.families && state.twins.families[String(ch.style_id)];
+  const row = fam && fam.chains && fam.chains[String(ch.chain_id)];
+  if (!row || !(row.d > 0)) return 1;      // a line the pass never saw counts in full
+  return Math.max(0, Math.min(1, row.c / row.d));
+}
+// what a line puts in the takeoff: its counted length, one run only
+function chainBilledPt(ch) {
+  const c = chainCountedPt(ch);
+  const f = onceFrac(ch);
+  return f === 1 ? c : c * f;
+}
+function onceFamily(sid) {
+  return (state.twins && state.twins.families && state.twins.families[String(sid)]) || null;
+}
+async function twinsLoad(gen) {
+  let j = null;
+  try {
+    const r = await fetch(`/api/job/${state.job}/page/${state.page}/twins`);
+    if (r.ok) j = await r.json();
+  } catch (e) { /* no switch is offered; nothing else depends on it */ }
+  if (gen !== state.gen) return;
+  state.twins = j && j.families ? j : { families: {}, reason: "could not be read" };
+  state.onceRev++;
+  renderStyles(); renderItemized(); renderMiniLegend(); draw();
+}
+function onceToggle(sid) {
+  if (!onceFamily(sid)) return;
+  if (state.once.has(sid)) state.once.delete(sid); else state.once.add(sid);
+  state.onceRev++;
+  calcStateDirty();
+  renderStyles(); renderItemized(); renderMiniLegend(); draw();
+}
+function onceApplySaved() {
+  const s = state.calcSaved && state.calcSaved.once;
+  state.once = new Set(Array.isArray(s) ? s.filter(v => Number.isInteger(v)) : []);
+  state.onceRev++;
+}
+function onceButton(s) {
+  const fam = onceFamily(s.style_id);
+  if (!fam) return null;
+  const on = state.once.has(s.style_id);
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "once-toggle" + (on ? " on" : "");
+  b.textContent = "once";
+  const ft = (v) => `${Math.round(v).toLocaleString()} ft`;
+  b.title = (fam.kind === "footing"
+      ? "Each footing here is drawn as two edges. "
+      : "Each wall here is drawn as its two faces. ")
+    + `As drawn: ${ft(fam.drawn_ft)}. One run per wall: ${ft(fam.counted_ft)}. `
+    + (on ? "Counting one run now, on the outside face. Click to count every line."
+          : "Click to count one run per wall, on the outside face.");
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+  b.onclick = (e) => { e.stopPropagation(); onceToggle(s.style_id); };
+  return b;
+}
+// the stretch of a polyline between two arc lengths (pt)
+function polySlice(pts, a, b) {
+  const out = [];
+  let s = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1], q = pts[i];
+    const L = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (L <= 1e-9) continue;
+    const s0 = s, s1 = s + L;
+    s = s1;
+    if (s1 < a || s0 > b) continue;
+    const t0 = Math.max(0, (a - s0) / L), t1 = Math.min(1, (b - s0) / L);
+    const P0 = [p[0] + (q[0] - p[0]) * t0, p[1] + (q[1] - p[1]) * t0];
+    const P1 = [p[0] + (q[0] - p[0]) * t1, p[1] + (q[1] - p[1]) * t1];
+    if (!out.length) out.push(P0);
+    out.push(P1);
+  }
+  return out;
+}
 // ================== end WORK AREA quantity mask ==========================
 
 // A STYLE's total, axis-aware. state.result.styles carries a length the engine
@@ -9010,19 +9122,27 @@ let _styleLen = null, _styleLenKey = null;
 // fmtQty. The new figure is the more accurate one; the stored total is the
 // engine's rounded copy.
 let _liveLen = null, _liveN = null, _liveOut = null, _liveKey = "";
+let _liveDrawn = null;
 
 function _liveStyleTotals() {
   const key = state.gen + ":" + state.excluded.size + ":" + axisRatio()
-    + ":" + state.wzRev;
+    + ":" + state.wzRev + ":" + state.onceRev;
   if (_liveKey !== key) {
     _liveLen = new Map(); _liveN = new Map(); _liveOut = new Map();
+    _liveDrawn = new Map();
     for (const ch of (state.result ? state.result.chains : [])) {
       if (state.excluded.has(ch.chain_id)) continue;
       // work-area mask: the row shows what COUNTS; what fell outside is
       // tracked per style so the row can disclose its own loss
       const full = chainLenPt(ch);
       const counted = chainCountedPt(ch);
-      _liveLen.set(ch.style_id, (_liveLen.get(ch.style_id) || 0) + counted);
+      // a family counted once bills one run; the drawn footage rides beside
+      // it so the row can say both (and the work-area loss below stays about
+      // the MASK, never about the faces left out)
+      const once = onceFrac(ch);
+      _liveLen.set(ch.style_id, (_liveLen.get(ch.style_id) || 0)
+        + (once === 1 ? counted : counted * once));
+      _liveDrawn.set(ch.style_id, (_liveDrawn.get(ch.style_id) || 0) + counted);
       if (counted > 0 || !wzActive())
         _liveN.set(ch.style_id, (_liveN.get(ch.style_id) || 0) + 1);
       if (full - counted > 0)
@@ -9051,6 +9171,12 @@ function styleLiveCount(sid) {
 // Footage this style LOST to the work-area mask (0 when no zones, or when
 // every chain of the style is inside). The style row prints it compactly so
 // a row that shrank says why on its own line.
+function styleDrawnPt(sid) {
+  if (!state.result) return 0;
+  _liveStyleTotals();
+  return _liveDrawn.get(sid) || 0;
+}
+
 function styleLiveOut(sid) {
   if (!state.result || !wzActive()) return 0;
   _liveStyleTotals();
@@ -9467,7 +9593,7 @@ function computeTakeoffRows() {
       state.labels.get(ch.style_id) || "unlabeled";
     const t = totals.get(label) ||
       { count: 0, pt: 0, objects: 0, objSids: new Set(), chains: [] };
-    t.count += 1; t.pt += counted; t.chains.push(ch);
+    t.count += 1; t.pt += chainBilledPt(ch); t.chains.push(ch);
     sheetChains.push(ch);
     if (state.measureMode.get(ch.style_id) === "object")
       t.objSids.add(ch.style_id);
@@ -12481,12 +12607,9 @@ function renderEwBound() {
     ? "<b>Where it applies.</b> Inside the limit of work you set "
       + "(" + b.pts.length + " points" + (b.src ? ", " + b.src : "") + "). "
       + "Ground outside it is not counted at all."
-    : "<b>Where it applies.</b> Each surface exists only inside a "
-      + "straight-sided envelope drawn around the contours you gave it (its "
-      + "convex hull), and the volume is integrated where the two envelopes "
-      + "overlap. That envelope cuts straight across every bay and notch in "
-      + "the real limit of disturbance and reaches out to the furthest "
-      + "contour, so <b>the region is not the graded area</b>. Set a limit of "
+    : "<b>Where it applies.</b> Each surface reaches only as far as its own "
+      + "lines, and the volume is counted where the two overlap. That shape is "
+      + "a box round the lines, <b>not the real graded area</b>. Set a limit of "
       + "work below and it will be.";
 }
 // shoelace, page pt^2
@@ -14959,10 +15082,9 @@ function renderEwBasis(j, body) {
   const u = line(bnd
     ? "That region is bounded by <b>" + (state.ewBound ? "your limit of work" : "the work-area box")
       + "</b> (" + bnd.length + " points): only ground inside it is counted."
-    : "That region is <b>not the graded area</b>: it is where the "
-      + "two convex hulls overlap — a straight-sided envelope round each set of "
-      + "contours — so it cuts across every notch in the real limit of "
-      + "disturbance. Set a limit of work, or draw a work area, to bound it.");
+    : "That region is <b>not the graded area</b>: it is where the two "
+      + "surfaces overlap, a box round the lines. "
+      + "Set a limit of work, or draw a work area, to bound it.");
   u.className = bnd ? "bounded" : "unbounded";
   // WHICH SURFACE PRODUCED THIS NUMBER. The two models differ by tens of
   // percent on a sparse sheet, so the model rides beside the volume and
@@ -15135,16 +15257,24 @@ function ewApproveNotes() {
     // what backs the accepted rows; this says how many of the sheet's
     // contour lines are not among them. Same sentences as the panel.
     ...ewCoverageNote(ewCovNow(), acc, APPROVE_NOTE_MAX),
+    // WHICH BOUND APPLIED. This said "no input on the panel can bound it"
+    // for a week after the limit of work landed (2026-09-10) - the panel's
+    // own block was corrected then and this copy of the sentence was not.
     `Interpolated from ${j.existing_contours} existing and `
     + `${j.proposed_contours} proposed contours over `
-    + `${Number(j.area_sf).toLocaleString()} SF. That region is NOT the graded `
-    + "area: it is where the two convex hulls of the assigned contours "
-    + "overlap, and no input on the panel can bound it.",
+    + `${Number(j.area_sf).toLocaleString()} SF. `
+    + (j.boundary_applied
+      ? "That region is bounded by the limit of work: only ground inside it is counted."
+      : "That region is NOT the graded area: it is where the two convex hulls "
+        + "of the assigned contours overlap. Set a limit of work to bound it."),
     // keep each line under the 400-char cap `approve` applies, or the tail
     // of the disclosure is what gets cut
+    // Re-scored 2026-09-17 on the one job with a real bid (FINDINGS 37):
+    // like for like, cut +43% and fill -36%. A multiple in one direction
+    // was the old build's number and no longer describes this one.
     "No typical cross-section, no subgrade depth, no shrink/swell factor. "
-    + "Scored once against a real bid it read about 2.4x high, over a "
-    + "clear-and-grub area 1.42x too big.",
+    + "On the one job scored against a real bid, cut and fill were each off "
+    + "by up to about 40%, in opposite directions.",
   ];
 }
 
@@ -17097,6 +17227,8 @@ $("approveBtn").onclick = async () => {
       // export.scale carries `setBy: "reviewer"` beside the sentence in
       // `name`. Same source of truth as the note: famMineExportStyles().
       operator_created_style_ids: famMineExportStyles().map(s => s.style_id),
+      // families counted one run per wall - the server applies the same share
+      count_once_style_ids: [...(state.once || [])].filter(sid => onceFamily(sid)),
       // The work-area quantity mask, so the export's per-label footage is
       // computed the same zone-clipped way the panel shows it. The server
       // clips with the same segment/rect math (mirrored in _wz_frac) and
@@ -17475,6 +17607,7 @@ const CV_FAM_NEARWHITE = "#a7adb6";          // ...or gave one that is invisible
 // sheet. Paired with .ghost-info in webui/style.css, which wears the same
 // slate - change the two together.
 const CV_GHOST        = "#6b7683";
+const CV_ONCE_SKIP    = "#8a8f98";           // a face counted once leaves out
 
 function draw() {
   // buffer may lag the element across browser zoom - resync before painting
@@ -17746,6 +17879,43 @@ function draw() {
     }
     ctx.globalAlpha = 1.0;
     ctx.setLineDash([]);
+  }
+  // COUNTED ONCE: the stretches a count-once family leaves out - a wall's
+  // inside face, a footing's inner edge - are knocked back and redrawn thin
+  // and dashed. Still on the sheet, visibly not in the number.
+  if (state.result && state.once && state.once.size && state.twins) {
+    const fo = IMG_DPI / 72;
+    ctx.save();
+    for (const ch of state.result.chains) {
+      if (!state.once.has(ch.style_id) || state.excluded.has(ch.chain_id)) continue;
+      if (!state.include.get(ch.style_id)) continue;
+      const fam = onceFamily(ch.style_id);
+      const row = fam && fam.chains[String(ch.chain_id)];
+      if (!row || !row.skip || !row.skip.length) continue;
+      // wide enough to cover the widest stroke the chain loop can have given
+      // this line - the elevation-group paint is 3x the plotted weight, and
+      // a thinner knock-back left the group colour showing on an edge the
+      // number leaves out (seen live on Barn S1-1.3 with the groups painted)
+      const wKnock = Math.max(Math.max(ch.width || 0.35, 0.35) * fo * 3.4, 3.6 / k) + 1.5 / k;
+      for (const [a, b] of row.skip) {
+        const seg = polySlice(ch.points, a, b);
+        if (seg.length < 2) continue;
+        ctx.beginPath();
+        ctx.moveTo(seg[0][0] * fo, seg[0][1] * fo);
+        for (let i = 1; i < seg.length; i++) ctx.lineTo(seg[i][0] * fo, seg[i][1] * fo);
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = CV_SHEET;
+        ctx.lineWidth = wKnock;
+        ctx.stroke();
+        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = CV_ONCE_SKIP;
+        ctx.lineWidth = 1 / k;
+        ctx.setLineDash([4 / k, 3 / k]);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
   // vertex handles on the selected line
   if (state.selected !== null && state.result) {
@@ -22855,8 +23025,9 @@ function stGroupsTable(st, d) {
     + "; " + g.outline_note + ". Hover a row to light its lines."));
   const t = stMk("table");
   const hd = stMk("tr");
-  for (const h of ["BOF", "callouts", "width", "footing line", "outline"])
-    hd.appendChild(stMk("th", ["width", "footing line", "outline"].includes(h) ? "num" : "", h));
+  const lfHead = g.once ? "one run" : "footing line";
+  for (const h of ["BOF", "callouts", "width", lfHead, "outline"])
+    hd.appendChild(stMk("th", ["width", lfHead, "outline"].includes(h) ? "num" : "", h));
   t.appendChild(hd);
   const spBy = {};
   if (sp) for (const r of sp.groups || []) spBy[r.bof_ft] = r;
@@ -22869,7 +23040,10 @@ function stGroupsTable(st, d) {
     tr.appendChild(stMk("td", "st-wrap", `${r.callouts}: ` + Object.entries(r.marks || {}).map(([m, n]) => n > 1 ? `${m} \u00d7${n}` : m).join(", ")));
     tr.appendChild(stMk("td", "num", r.width_ft != null ? stFt(r.width_ft) + (r.width_from === "schedule" ? "" : " ?") : "\u2014"));
     const lf = stMk("td", "num", r.lf_ft ? `${Math.round(r.lf_ft).toLocaleString()} ft` : "none");
-    lf.title = Object.entries(r.families || {}).map(([sid, ft]) => `${(g.families || {})[sid] || ("family " + sid)}: ${Math.round(ft)} ft`).join("\n") || "no line within reach";
+    lf.title = (g.once && r.lf_drawn_ft != null
+        ? `one run per footing: ${Math.round(r.lf_ft)} ft (as drawn, both edges: ${Math.round(r.lf_drawn_ft)} ft)\n`
+        : "")
+      + (Object.entries(r.families || {}).map(([sid, ft]) => `${(g.families || {})[sid] || ("family " + sid)}: ${Math.round(ft)} ft`).join("\n") || "no line within reach");
     tr.appendChild(lf);
     const s = spBy[r.bof_ft];
     // a group the outline never touches reads "-" once the split is in; "..." only while it loads

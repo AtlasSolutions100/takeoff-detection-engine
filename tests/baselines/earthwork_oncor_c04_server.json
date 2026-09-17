@@ -1,7 +1,7 @@
 {
  "_about": "EXACT cut_fill outputs for manifest case 'oncor_c04_server'. Written by tests/test_earthwork_regress.py --accept oncor_c04_server; a test run never writes here. Change it only in a commit that says which code change moved which number and why.",
  "compare": "recipe",
- "earthwork_sig": "458ff2cafe6b3049",
+ "earthwork_sig": "94e4e4b8cb08e6c8",
  "earthwork_sig_files": [
   "../provision_demo.py",
   "../server.py",
@@ -33,13 +33,14 @@
   "scale_detect.py",
   "sweep.py",
   "text_detect.py",
+  "twin_lines.py",
   "users.py",
   "visibility.py",
   "watchlist.py"
  ],
  "earthwork_file_hashes": {
   "../provision_demo.py": "1a96cc2c0b21f70f",
-  "../server.py": "96be3ae3a4e04db3",
+  "../server.py": "6e3cd373d4e7560a",
   "__init__.py": "1c1bd33bace42bb3",
   "areas.py": "0e2584993c6ba702",
   "batch.py": "39bc6cb7960674c3",
@@ -55,7 +56,7 @@
   "earthwork.py": "f0bd9f5dda5879f7",
   "eval_layers.py": "c96529c839e82cc0",
   "extract.py": "21451b366a8fa8f3",
-  "footing_callouts.py": "ae89f4eb68572007",
+  "footing_callouts.py": "25c37d3e234ccbc1",
   "ledger.py": "c18f05889d263a67",
   "legend_detect.py": "8993fdf8edb0e029",
   "marks.py": "bad6829ce6c82dab",
@@ -68,6 +69,7 @@
   "scale_detect.py": "d426a14420133a6c",
   "sweep.py": "7f995d17c54ba7be",
   "text_detect.py": "c8b112dada6b18da",
+  "twin_lines.py": "af15da138cdb13f5",
   "users.py": "636e4236fc300419",
   "visibility.py": "c1ce18f1be7d64f4",
   "watchlist.py": "05b10fcf4569ab4f"
@@ -80,7 +82,7 @@
  ],
  "accepted": {
   "tree": "C:\\Users\\kobys\\OneDrive\\Desktop\\past\\P\\Takeoff Automation\\detection-engine",
-  "date": "2026-09-16",
+  "date": "2026-09-17",
   "contours": [
    69,
    34

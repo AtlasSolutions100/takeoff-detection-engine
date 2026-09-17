@@ -3280,6 +3280,21 @@ class ApproveBody(BaseModel):
     # twin, exactly as export["scale"]["setBy"] is the typed twin of the
     # sentence in its `name`.
     operator_created_style_ids: list[int] = []
+    # families the operator counts ONCE: a wall drawn as its two faces is
+    # measured on its outside face, a footing's two edges as one run
+    # (GET .../twins; takeoff_engine/twin_lines.py). Geometry and lengthPt
+    # stay as drawn; each element carries onceFrac and the itemization
+    # multiplies by it, exactly as it does workAreaFrac.
+    count_once_style_ids: list[int] = []
+
+
+def _once_frac(once: dict, ch: dict) -> float:
+    """The counted share of one line in a family counted once."""
+    fam = once.get(ch.get("style_id")) or {}
+    row = (fam.get("chains") or {}).get(str(ch.get("chain_id")))
+    if not row or not row.get("d"):
+        return 1.0                       # a line the pass never saw counts in full
+    return round(max(0.0, min(1.0, float(row["c"]) / float(row["d"]))), 6)
 
 
 def _hex_color(v) -> "str | None":
@@ -3332,6 +3347,12 @@ def approve(job_id: str, page: int, body: ApproveBody):
     _chain_col_used: dict = {}          # chain_id -> its own colour override
     elements = []
     excluded = set(body.excluded_chain_ids)
+    _once_sids = {int(v) for v in body.count_once_style_ids
+                  if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    _once = {}
+    if _once_sids:
+        _tw = _page_twins(job_id, page, res)
+        _once = {int(k): v for k, v in (_tw.get("families") or {}).items() if int(k) in _once_sids}
     for ch in list(res["chains"]) + list(body.added_chains):
         label = body.chain_labels.get(ch["chain_id"]) \
             or body.labels.get(ch["style_id"])
@@ -3385,6 +3406,10 @@ def approve(job_id: str, page: int, body: ApproveBody):
             # written beside it so a reader can reconcile clipped items to
             # elements without re-deriving the clip
             **({"workAreaFrac": round(wf, 6)} if _wz else {}),
+            # counted once: the share of THIS line that is the run the
+            # estimator bills (1.0 = all of it, 0.0 = an inside face)
+            **({"onceFrac": _once_frac(_once, ch)}
+               if ch.get("style_id") in _once else {}),
         })
         # what actually reached the export, for the summaries written below
         _sid_exported.add(ch["style_id"])
@@ -3393,6 +3418,11 @@ def approve(job_id: str, page: int, body: ApproveBody):
                 _chain_col_used[ch["chain_id"]] = _col_ovr
             else:
                 _style_col_used[ch["style_id"]] = _col_ovr
+    if _once:
+        # which families were counted once, by which rule, and what that did
+        _once_summary = {str(k): {"rule": v.get("rule"), "kind": v.get("kind"),
+                                  "drawnFt": v.get("drawn_ft"), "countedFt": v.get("counted_ft")}
+                         for k, v in _once.items()}
     export = {
         "source": Path(JOBS[job_id]["path"]).name if job_id in JOBS else "",
         "pageIndex": page,
@@ -3400,6 +3430,7 @@ def approve(job_id: str, page: int, body: ApproveBody):
         "pageWidthPt": res["page"]["width_pt"],
         "pageHeightPt": res["page"]["height_pt"],
         "elements": elements,
+        **({"countOnce": _once_summary} if _once else {}),
     }
     det = _page_scale(job_id, page, res, body.scale)
     if det:
@@ -3440,7 +3471,7 @@ def approve(job_id: str, page: int, body: ApproveBody):
             continue
         t = totals.setdefault(el["label"], {"count": 0, "length_pt": 0.0})
         t["count"] += 1
-        t["length_pt"] += el.get("lengthPtAxis", el["lengthPt"]) * _f
+        t["length_pt"] += el.get("lengthPtAxis", el["lengthPt"]) * _f * el.get("onceFrac", 1.0)
     # `qty <= 0` is "no override" here because it is "no override" in the box:
     # computeTakeoffRows applies one only `if (!isNaN(ov) && ov > 0)`.
     ov_ft: dict = {}
@@ -6175,6 +6206,103 @@ def datum_notes(job_id: str):
     return JSONResponse(out)
 
 
+# ---------------------------------------------------------------------------
+# TWIN LINES COUNTED ONCE (Wave 2 item 11). A foundation plan draws each wall
+# as its two faces and each continuous footing as its two edges; both clients
+# take ONE run per wall (takeoff_engine/twin_lines.py has the measurements
+# and the rule). Offered only on a set that prints a footing schedule: on a
+# civil sheet the families that run parallel are contours and property
+# lines, and a switch on each of 280 rows would be noise.
+_TWIN_MIN_SHARE = 0.15      # a family offers the switch when this much of it pairs
+_TWIN_MAX_FAMILY_SAMPLES = 60000
+
+
+def _page_twins(job_id: str, page: int, res: dict | None = None) -> dict:
+    """{"families": {style_id: {kind, rule, drawn_ft, counted_ft, paired_ft,
+    interior_ft, middle_ft, refused, chains: {chain_id: {d, c, skip}}}},
+    "reason"} for one page; cached."""
+    import hashlib
+    from takeoff_engine import twin_lines as _tw
+    job = JOBS.get(job_id) or _404()
+    d = _job_dir(job_id)
+    rf = d / f"p{page}_result.json"
+    if not rf.exists():
+        return {"families": {}, "reason": "run Detect first - there are no lines to pair yet"}
+    if res is None:
+        res = json.loads(rf.read_text())
+    det = _page_scale(job_id, page, res)
+    if not det:
+        return {"families": {}, "reason": "no scale on this page - wall thickness needs real-world units"}
+    sched = _doc_footing_schedule(job_id, job["path"])
+    widths = sorted({round(float(r["width_ft"]), 3) for r in (sched.get("rows") or {}).values()
+                     if isinstance(r, dict) and r.get("width_ft")})
+    if not (sched.get("rows") or {}):
+        return {"families": {}, "reason": "this set prints no footing schedule - "
+                                          "counting walls once is offered on foundation plans"}
+    fpp = det["ft_per_paper_inch"] / 72.0
+    key = "|".join([str(res.get("engine_sig")), str(rf.stat().st_mtime_ns),
+                    hashlib.sha1(pathlib_bytes(_tw.__file__)).hexdigest()[:12],
+                    f"{fpp:.8f}", ",".join(f"{w:g}" for w in widths)])
+    cf = d / f"p{page}_twins.json"
+    if cf.exists():
+        try:
+            cached = json.loads(cf.read_text())
+            if cached.get("key") == key:
+                return cached
+        except (OSError, ValueError):
+            pass
+    by_sid: dict = {}
+    for ch in res.get("chains") or []:
+        if ch.get("class") == "annotation" or not ch.get("points") or len(ch["points"]) < 2:
+            continue
+        by_sid.setdefault(ch["style_id"], []).append(ch)
+    fams = {}
+    for sid, chs in by_sid.items():
+        if len(chs) < 2:
+            continue
+        drawn_ft = sum(float(c.get("length_pt") or 0.0) for c in chs) * fpp
+        if drawn_ft < 10.0 or drawn_ft / 0.5 > _TWIN_MAX_FAMILY_SAMPLES:
+            continue
+        r = _tw.family_twins(chs, fpp, schedule_widths=widths)
+        if r.get("refused") or not r.get("drawn_ft"):
+            continue
+        if r["paired_ft"] < _TWIN_MIN_SHARE * r["drawn_ft"] or r["counted_ft"] > r["drawn_ft"] - 1.0:
+            continue
+        fams[str(sid)] = {
+            "kind": r.get("kind"), "rule": r.get("rule"),
+            "drawn_ft": r["drawn_ft"], "counted_ft": r["counted_ft"],
+            "paired_ft": r["paired_ft"], "interior_ft": r.get("interior_ft", 0.0),
+            "middle_ft": r.get("middle_ft", 0.0),
+            "chains": {str(cid): {"d": v["drawn_pt"], "c": v["counted_pt"], "skip": v["skip"]}
+                       for cid, v in r["chains"].items()},
+        }
+    out = {"key": key, "families": fams, "reason": None,
+           "schedule_widths_ft": widths, "ft_per_pt": round(fpp, 6)}
+    try:
+        cf.write_text(json.dumps(out))
+    except OSError:
+        pass
+    return out
+
+
+def pathlib_bytes(path) -> bytes:
+    try:
+        return Path(path).read_bytes()
+    except OSError:
+        return b""
+
+
+@app.get("/api/job/{job_id}/page/{page}/twins")
+def page_twins(job_id: str, page: int):
+    """The families on this page drawn as twin lines (a wall's two faces, a
+    footing's two edges), each with its as-drawn and one-run footage and the
+    stretches the one-run count leaves out. Detect first; offered on a set
+    that prints a footing schedule."""
+    out = dict(_page_twins(job_id, page))
+    out.pop("key", None)
+    return JSONResponse(out)
+
+
 @app.get("/api/job/{job_id}/page/{page}/footings")
 def footings(job_id: str, page: int):
     """The footing marks on this sheet, each with the elevations printed
@@ -6213,9 +6341,15 @@ def footings(job_id: str, page: int):
                       for st in res.get("styles") or []}
             chains = [dict(ch, label=labels.get(ch.get("style_id")))
                       for ch in res.get("chains") or []]
+            # ONE RUN PER FOOTING: the footing family's inner edges are left
+            # out when the twins are known (Barn S1-1.3: 1,055 ft as drawn,
+            # 760 ft counted once, against the client's own 704 ft)
+            tw = _page_twins(job_id, page, res)
+            skip_by_style = {sid: {cid: v["skip"] for cid, v in f["chains"].items()}
+                             for sid, f in (tw.get("families") or {}).items()}
             groups = group_walls_by_bof(c["callouts"], chains,
                                         det["ft_per_paper_inch"] / 72.0, sched,
-                                        steps=steps)
+                                        steps=steps, skip_by_style=skip_by_style)
             groups["ft_per_pt"] = round(det["ft_per_paper_inch"] / 72.0, 5)
     return JSONResponse({"callouts": c["callouts"], "slabs": c["slabs"],
                          "by_mark": c["by_mark"], "steps": steps,

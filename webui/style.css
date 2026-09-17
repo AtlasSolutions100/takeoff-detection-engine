@@ -679,6 +679,12 @@ canvas.ml-swatch { width: 40px; height: 9px; }
   background: transparent; border: 1px solid var(--line); color: var(--dim); }
 .mm-toggle.ea { background: var(--accent-deep); border-color: var(--accent);
   color: #fff; }
+/* count each wall once: shares the LF/EA grid cell */
+.mm-cell { display: inline-flex; flex-direction: column; gap: 3px; align-items: stretch; }
+.once-toggle { font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .04em; padding: 0 4px; border-radius: 4px;
+  background: transparent; border: 1px dashed var(--line); color: var(--dim); }
+.once-toggle.on { background: var(--accent-deep); border: 1px solid var(--accent); color: #fff; }
 
 .ai-mode { font-size: var(--t-fs-xs); letter-spacing: .05em;
   background: transparent; border: 1px solid var(--accent);
