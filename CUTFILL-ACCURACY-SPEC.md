@@ -165,6 +165,21 @@ stated assumption.
 and the median |residual| to ≤0.25 ft; the dome-at-10 ft synthetic case
 improves; no scored sheet regresses.
 
+> **Peak/pit closure: DONE 2026-09-17** (FINDINGS 43). The dome at a 10 ft
+> interval improves −3.22% → −2.28% and nothing regresses — but it moves no
+> scored sheet, because no sheet we score has a legitimate closed innermost
+> contour ring. Barn has none; C2.1's two rings are nested with the
+> innermost drawn open; C-04's single ring is a five-point pad outline at
+> 569.9 on a 1 ft sheet, now refused in writing on the panel. So the stage's
+> residual-bias criterion is untouched by this half and rests on breaklines.
+>
+> **Breaklines: still open, and the direction has changed.** C-04's seven
+> residual spots all sit in ordinary contour brackets, so bridging is not
+> what causes that sheet's +0.61 ft bias. The strongest remaining lead is
+> the one FINDINGS 39 created: the TW/BW/wall spots we now REFUSE as contour
+> heights are exactly the two elevations a wall breakline needs. Measure
+> that before building anything.
+
 **Stage 3 — the proof panel (do this alongside stage 1, it is cheap).**
 Per job: coverage, spot residual (median / bias / worst, with the worst
 clickable), two independent methods and their spread, the region

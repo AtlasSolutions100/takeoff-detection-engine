@@ -64,7 +64,13 @@ check(/renderEwBasis\(j, body\);\s*\n\s*renderEwProof\(j\);/.test(SRC),
 
 function render(proof) {
   const el = mkEl();
-  new Function("$", "esc", (src || "function renderEwProof() {}") + "\nreturn renderEwProof;")(
+  // renderEwProof also prints what was assumed about peaks and pits
+  // (FINDINGS 43), so its helper comes along for the ride; the closure
+  // disclosure itself is pinned in tests/test_peak_closure_ui.js
+  new Function("$", "esc",
+    (src || "function renderEwProof() {}") + "\n"
+    + (fnSrc("closureLine") || "function closureLine() { return ''; }")
+    + "\nreturn renderEwProof;")(
     () => el, (s) => String(s))({ proof });
   return el;
 }

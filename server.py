@@ -5019,6 +5019,17 @@ class EarthworkBody(BaseModel):
     # measurement behind the choice. The answer always names the model it
     # used, whichever way this arrives.
     surface_model: str = "auto"
+    # A surface built from contours cannot rise above its highest one,
+    # so every summit comes out flat and every pond bottom a floor
+    # (measured -3.21% of the fill on the analytic dome at a 10 ft
+    # interval). Closing the innermost ring reads -2.28%; where the
+    # rings already reach the top it changes nothing. The height is an
+    # ASSUMPTION - half a contour interval, the hand-takeoff
+    # convention - and every one is listed on the answer under
+    # `closures`. Set false to build the flat-topped surface instead;
+    # type a spot inside the ring to override one summit rather than
+    # all of them. See earthwork.closure_points.
+    close_peaks: bool = True
     # Layer stacks (Beaumont workflow, F52). Each {name, thickness_in}.
     # existing_layers come OFF first (topsoil strip from the soils report,
     # old asphalt, road base): their total lowers the existing surface
@@ -5728,7 +5739,8 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
     import numpy as _np
 
     from takeoff_engine.earthwork import (Surface, boundary_metrics,
-                                          clamp_pct, cut_fill,
+                                          clamp_pct, closure_points,
+                                          contour_interval, cut_fill,
                                           material_balance)
 
     rf = _job_dir(job_id) / f"p{page}_result.json"
@@ -5754,6 +5766,7 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
     pts_by_id = {c["chain_id"]: _np.asarray(c["points"], float)
                  for c in res["chains"]}
 
+    closures: list = []
     def build(name, rows, points=()):
         surf = Surface(name)
         for r in rows:
@@ -5765,6 +5778,22 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
                 surf.points.append((float(q["x"]), float(q["y"]), float(q["z"])))
             except (KeyError, TypeError, ValueError):
                 continue
+        if body.close_peaks and surf.contours:
+            # the interval is READ off this surface's own labels, never
+            # invented; with no readable interval there is no closure
+            iv = contour_interval([z for _, z in surf.contours])
+            spots = [{"x": x, "y": y, "z": z} for x, y, z in surf.points]
+            for c in closure_points(surf.contours, iv.get("interval_ft"),
+                                    ft_per_pt, spots=spots):
+                c["surface"] = name
+                c["interval_ft"] = iv.get("interval_ft")
+                # a spot the operator already put in the surface IS the
+                # closure; adding a second point on top of it would say
+                # the software found something it did not
+                c["applied"] = c["source"] == "convention"
+                if c["applied"]:
+                    surf.points.append((c["x"], c["y"], c["z"]))
+                closures.append(c)
         return surf
     # the ring's own numbers, whatever the boundary is used for below
     bmet = (boundary_metrics(body.boundary, ft_per_pt)
@@ -5778,6 +5807,8 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
                       existing_offset_ft=ex_off, proposed_offset_ft=pr_off,
                       return_grid=return_grid, boundary=body.boundary,
                       surface_model=body.surface_model)
+    if closures:
+        result["closures"] = closures
     if "error" in result:
         # A MAP IS A PICTURE OF THE GRID, so there is no layers-only answer
         # for it. Until this fix /earthwork/map went on through the unweld

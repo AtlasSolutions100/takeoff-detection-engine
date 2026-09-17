@@ -15078,8 +15078,9 @@ function renderEwProof(j) {
   const checks = (p && p.checks) || [];
   box.classList.remove("v-pass", "v-warn");
   if (!p || !checks.length) {
-    box.classList.add("off");
-    box.innerHTML = "";
+    const only = closureLine(j);
+    box.classList.toggle("off", !only);
+    box.innerHTML = only;
     return;
   }
   box.classList.remove("off");
@@ -15111,7 +15112,44 @@ function renderEwProof(j) {
     : "";
   box.innerHTML = `<span class="ep-head">What backs this number</span> `
     + `<span class="ep-verdict">\u2014 ${nPass} of ${checks.length} checks pass, `
-    + `${verdict}</span><ul>${li}</ul>${worstLine}`;
+    + `${verdict}</span><ul>${li}</ul>${worstLine}${closureLine(j)}`;
+}
+
+// WHAT WAS CARRIED TO THE TOP OF A HILL, AND WHAT WAS NOT.
+//
+// A surface built from contours stops at its highest one, so a summit comes
+// out flat. The engine puts one point inside the innermost ring - half a
+// contour interval above it, the hand-takeoff convention - and that is an
+// ASSUMPTION, so it is on screen with the ring's area next to it. Refusals
+// are here too: Oncor C-04's only closed ring is a five-point pad outline
+// at 569.9 on a 1 ft sheet, and closing it would have added half a foot of
+// fill over 28,600 SF. A skip nobody can see reads as "no peaks here".
+function closureLine(j) {
+  const all = (j && j.closures) || [];
+  if (!all.length) return "";
+  const did = all.filter(c => c.applied);
+  const not = all.filter(c => !c.applied);
+  const bits = [];
+  if (did.length) {
+    const hi = did.filter(c => c.kind === "summit").length;
+    const lo = did.length - hi;
+    const what = [hi ? `${hi} high point${hi === 1 ? "" : "s"}` : "",
+                  lo ? `${lo} low point${lo === 1 ? "" : "s"}` : ""]
+      .filter(Boolean).join(" and ");
+    bits.push(`carried the surface to the top of ${what}`);
+  }
+  if (not.length) bits.push(`left ${not.length} ring${not.length === 1 ? "" : "s"} open`);
+  const rows = all.map(c => {
+    const area = Number(c.area_sf || 0).toLocaleString();
+    const head = c.applied
+      ? `${esc(c.surface)} ${esc(c.kind)} \u2014 ${c.ring_z} ring carried to `
+        + `<b>${c.z}</b> over ${area} SF`
+      : `${esc(c.surface)} ${c.ring_z} ring, ${area} SF \u2014 not closed`;
+    return `<li>${head}<br><span class="ep-why">${esc(c.why || "")}</span></li>`;
+  }).join("");
+  return `<details class="ep-closure"><summary>Peaks and low points: `
+    + `${esc(bits.join(", "))}${did.length ? " (assumed \u2014 type a spot to "
+    + "override)" : ""}</summary><ul>${rows}</ul></details>`;
 }
 
 function renderEwBasis(j, body) {

@@ -455,6 +455,12 @@ canvas#view.panning { cursor: grabbing; }
 .ew-proof li.s-none { color: var(--dim); }
 .ew-proof .ep-worst { display: block; margin-top: 4px;
   font-variant-numeric: tabular-nums; }
+/* what the software carried to the top of a hill, and what it refused to.
+   Folded: the summary is the whole claim, the list is the evidence. */
+.ew-proof .ep-closure { display: block; margin-top: 5px; }
+.ew-proof .ep-closure > summary { cursor: pointer; color: var(--t-warn); }
+.ew-proof .ep-closure .ep-why { color: var(--dim); }
+.ew-proof .ep-closure ul { margin: 3px 0 0; }
 .ew-basis { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.5;
   padding: 0 12px 8px; }
 .ew-basis b { color: var(--text); font-variant-numeric: tabular-nums; }

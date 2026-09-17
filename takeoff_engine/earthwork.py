@@ -3115,6 +3115,279 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     return found
 
 
+# --- a hilltop is not a plateau: closing the innermost contour -----------
+#
+# A surface built from contours cannot rise above its highest contour or
+# fall below its lowest, so every summit comes out flat and every pond
+# bottom comes out as a floor. Measured against closed-form truth
+# (scratchpad proto_peak_closure.py, on the analytic dome): the fill runs
+# -3.21% at a 10 ft contour interval and the worst point is 10.0 ft low.
+# Putting ONE point inside the innermost ring at half the interval above it
+# reads -2.28% and 5.63 ft; at the true summit (what an estimator typing the
+# spot gives) -1.34% and 2.51 ft. On surfaces whose rings already reach the
+# top - the analytic cone and bowl at a 1 ft interval - it changes nothing
+# (-0.03% -> -0.02%), so it cannot spoil a sheet it does not apply to.
+#
+# HALF THE INTERVAL IS A CONVENTION, not a reading: hand takeoff carries a
+# summit at half an interval above the last contour when nothing else says
+# otherwise (general estimating practice - stated as a convention, per
+# CLAUDE.md s4, and this is the only place it is used). It is an ASSUMPTION
+# and it travels as one: every closure says so, and a ground spot inside
+# the ring beats it outright, because that is the sheet's own number.
+CLOSURE_FRACTION = 0.5
+# a ring smaller than this is a manhole rim or a tree, not a landform
+CLOSURE_MIN_AREA_SF = 400.0
+# A CONTOUR RING IS NOT A BUILDING PAD. Measured on Oncor C-04: the sheet's
+# one closed ring is chain 685 - five points, 28,600 SF, elevation 569.9
+# assigned by `radius` on a sheet whose interval is 1.0 ft. A pad outline
+# that caught a nearby spot label. Two tells separate it from a contour: a
+# CAD contour is a polyline of many vertices, and it is drawn ON the
+# family's interval (general drafting practice - every sheet in this
+# corpus), so a fractional elevation at a 1 ft interval is not one.
+CLOSURE_MIN_POINTS = 8
+CLOSURE_GRID_TOL = 0.10          # share of one interval
+# how much of another contour must lie inside a ring for it to count as
+# "something is drawn in here". One midpoint is not a measurement: on C-04
+# three lower contours had their midpoint inside the ring and none of them
+# had half their length inside.
+CLOSURE_INSIDE_SHARE = 0.5
+
+
+def _ring_is_closed(pts: np.ndarray) -> bool:
+    per = float(np.hypot(*np.diff(pts, axis=0).T).sum())
+    return len(pts) >= 4 and per > 0 and float(np.hypot(*(pts[0] - pts[-1]))) < max(6.0, 0.02 * per)
+
+
+def _poly_area_pt(pts: np.ndarray) -> float:
+    x, y = pts[:, 0], pts[:, 1]
+    return abs(float(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))) / 2.0)
+
+
+def _inside(poly: np.ndarray, q) -> bool:
+    x, y = poly[:, 0], poly[:, 1]
+    j, c = len(poly) - 1, False
+    for i in range(len(poly)):
+        if ((y[i] > q[1]) != (y[j] > q[1])) and \
+                (q[0] < (x[j] - x[i]) * (q[1] - y[i]) / (y[j] - y[i] + 1e-12) + x[i]):
+            c = not c
+        j = i
+    return c
+
+
+def _open_ring(pts: np.ndarray) -> np.ndarray:
+    """The ring without its repeated closing point - which otherwise drags
+    the centroid toward that corner (measured: 490 for a ring centred 500)."""
+    return pts[:-1] if len(pts) > 3 and float(np.hypot(*(pts[0] - pts[-1]))) < 1e-6 else pts
+
+
+def _interior_point(poly: np.ndarray) -> "tuple | None":
+    """A point comfortably inside the ring: the centroid when it lies
+    inside (it does not for a crescent), else the best of a few candidates
+    sampled across the ring's box."""
+    poly = _open_ring(poly)
+    c = (float(poly[:, 0].mean()), float(poly[:, 1].mean()))
+    if _inside(poly, c):
+        return c
+    x0, y0 = poly[:, 0].min(), poly[:, 1].min()
+    x1, y1 = poly[:, 0].max(), poly[:, 1].max()
+    best, best_d = None, 0.0
+    for gx in np.linspace(x0, x1, 11)[1:-1]:
+        for gy in np.linspace(y0, y1, 11)[1:-1]:
+            if not _inside(poly, (gx, gy)):
+                continue
+            d = float(np.min(np.hypot(poly[:, 0] - gx, poly[:, 1] - gy)))
+            if d > best_d:
+                best, best_d = (float(gx), float(gy)), d
+    return best
+
+
+def _share_inside(poly: np.ndarray, other: np.ndarray, n: int = 40) -> float:
+    """How much of `other` lies inside `poly`, sampled along its length."""
+    step = max(1, len(other) // n)
+    sam = other[::step]
+    if not len(sam):
+        return 0.0
+    return sum(1 for q in sam if _inside(poly, q)) / float(len(sam))
+
+
+def _on_interval(z: float, interval: float, zs: list) -> bool:
+    """Is this elevation drawn on the family's own contour grid? The grid's
+    origin is the family's own most common elevation, not zero - a sheet at
+    569 to 586 on a 1 ft interval and one at 5803.5 on a 0.5 ft interval
+    both have to work."""
+    if interval <= 0:
+        return True
+    base = min(zs) if zs else 0.0
+    k = (z - base) / interval
+    return abs(k - round(k)) <= CLOSURE_GRID_TOL
+
+
+def _enclosing(contours: list, ring: np.ndarray, z: float) -> "float | None":
+    """The elevation of the smallest contour that contains this ring - the
+    one that says which way the ground goes from here."""
+    c = _interior_point(ring)
+    if c is None:
+        return None
+    best, best_a = None, float("inf")
+    for item in contours:
+        q = np.asarray(item[0], float)
+        z2 = float(item[1])
+        if abs(z2 - z) < 1e-9 or len(q) < 4 or not _ring_is_closed(q):
+            continue
+        if not _inside(q, c):
+            continue
+        a = _poly_area_pt(q)
+        if a < best_a:
+            best, best_a = z2, a
+    return best
+
+
+def _refused(pts: np.ndarray, z: float, area_sf: float, ft_per_pt: float,
+             why: str) -> dict:
+    """A ring we did NOT close, and why. Reported, never swallowed: a
+    silent skip reads on screen as "this sheet has no peaks"."""
+    c = _interior_point(pts) or (float(pts[:, 0].mean()), float(pts[:, 1].mean()))
+    return {"x": round(c[0], 2), "y": round(c[1], 2), "z": None, "ring_z": z,
+            "area_sf": round(area_sf), "kind": "not closed", "source": "refused",
+            "closed": False, "why": why}
+
+
+def _nearest_z(contours: list, ring: np.ndarray, z: float, k: int = 8) -> "float | None":
+    """Which way the ground goes around this ring, when no contour encloses
+    it - read off the k contours nearest it, the way an estimator reads a
+    knoll whose neighbours are open fragments.
+
+    THEY HAVE TO AGREE. A median alone called two unrelated rings on
+    opposite sides of a page "low points" because the far one happened to
+    sit higher; with no enclosing ring the nesting is not proven, so
+    unanimity among the nearest is the evidence that replaces it. Mixed
+    neighbours return None and the ring is refused rather than guessed.
+    """
+    c = _interior_point(ring)
+    if c is None:
+        return None
+    d = []
+    for item in contours:
+        q = np.asarray(item[0], float)
+        z2 = float(item[1])
+        if abs(z2 - z) < 1e-9 or len(q) < 2:
+            continue
+        d.append((float(np.min(np.hypot(q[:, 0] - c[0], q[:, 1] - c[1]))), z2))
+    if not d:
+        return None
+    d.sort()
+    near = [z2 for _, z2 in d[:k]]
+    if not (all(z2 < z for z2 in near) or all(z2 > z for z2 in near)):
+        return None
+    return float(np.median(near))
+
+
+def closure_points(contours: list, interval_ft: "float | None",
+                   ft_per_pt: float, spots: "list | None" = None,
+                   min_area_sf: float = CLOSURE_MIN_AREA_SF) -> list:
+    """Points that close the innermost closed contours of one surface.
+
+    `contours` is [(pts Nx2 page pt, z)] - the rows that seeded this
+    surface. A ring is innermost when no contour of a MORE EXTREME
+    elevation lies inside it: the top of a hill, or the bottom of a pond.
+    Each one returns
+
+        {x, y, z, ring_z, ring_chain, area_sf, kind, source, why}
+
+    with `source` "spot" when a ground spot inside the ring gave the height
+    (the sheet's own number) and "convention" when half the contour
+    interval did (an assumption - see CLOSURE_FRACTION). Returns [] when
+    the surface has no closed ring, which is the common case: measured on
+    the corpus, Oncor C-04 has one (28,600 SF), C2.1 two, Barn C3.0 none.
+    """
+    out: list = []
+    if not contours or not interval_ft or interval_ft <= 0:
+        return out
+    rings = []
+    for item in contours:
+        pts, z = item[0], float(item[1])
+        pts = np.asarray(pts, float)
+        if not _ring_is_closed(pts):
+            continue
+        ring_area = _poly_area_pt(pts) * ft_per_pt * ft_per_pt
+        if ring_area < min_area_sf:
+            continue
+        rings.append((pts, z, ring_area))
+    all_zs = [float(item[1]) for item in contours]
+    if not rings:
+        return out
+    for pts, z, area in rings:
+        # INNERMOST means nothing at all is drawn inside it. The outer ring
+        # of a hill also has nothing LOWER inside it, which is why the test
+        # cannot be "nothing lower" - that called a hillside a pond.
+        if len(_open_ring(pts)) < CLOSURE_MIN_POINTS:
+            out.append(_refused(pts, z, area, ft_per_pt,
+                                f"drawn with {len(_open_ring(pts))} vertices - a contour "
+                                f"is a polyline of many; this is a pad or structure "
+                                f"outline that caught a nearby elevation"))
+            continue
+        if not _on_interval(z, float(interval_ft), all_zs):
+            out.append(_refused(pts, z, area, ft_per_pt,
+                                f"{z:g} is not on this family's {interval_ft:g} ft contour "
+                                f"grid, so the line is not a contour of that surface"))
+            continue
+        occupied = False
+        for item in contours:
+            q = np.asarray(item[0], float)
+            if len(q) < 2 or (abs(float(item[1]) - z) < 1e-9 and
+                              np.array_equal(np.asarray(item[0], float), pts)):
+                continue
+            if _share_inside(pts, q) >= CLOSURE_INSIDE_SHARE:
+                occupied = True
+                break
+        if occupied:
+            continue
+        # summit or pit is decided by the ring that ENCLOSES this one; with
+        # no enclosing ring, by where this elevation sits on the page
+        encl = _enclosing(contours, pts, z)
+        if encl is not None:
+            summit, pit = encl < z, encl > z
+        else:
+            # no ring around it: ask the contours NEAREST it which way the
+            # ground goes, since that is what an estimator reads off the sheet
+            near = _nearest_z(contours, pts, z)
+            if near is None:
+                out.append(_refused(pts, z, area, ft_per_pt,
+                                    "nothing around it says whether the ground rises "
+                                    "or falls inside it"))
+                continue
+            summit, pit = near < z, near > z
+        if summit == pit:
+            out.append(_refused(pts, z, area, ft_per_pt,
+                                "the contours around it sit at its own elevation, so "
+                                "it reads as neither a high point nor a low one"))
+            continue
+        c = _interior_point(pts)
+        if c is None:
+            continue
+        inside_spots = [g for g in (spots or [])
+                        if g.get("z") is not None and _inside(pts, (float(g["x"]), float(g["y"])))]
+        if inside_spots:
+            g = max(inside_spots, key=lambda g: float(g["z"])) if summit \
+                else min(inside_spots, key=lambda g: float(g["z"]))
+            zz, src = float(g["z"]), "spot"
+            why = (f"the sheet prints {g.get('tag') or 'a spot'} {zz:g} inside this "
+                   f"{'summit' if summit else 'low point'}, so the surface is carried to it")
+        else:
+            step = float(interval_ft) * CLOSURE_FRACTION
+            zz = z + (step if summit else -step)
+            src = "convention"
+            why = (f"nothing is printed inside this {'summit' if summit else 'low point'}: "
+                   f"carried half a contour interval ({step:g} ft) "
+                   f"{'above' if summit else 'below'} the {z:g} ring, the hand-takeoff "
+                   f"convention - type the height if the sheet or the survey says otherwise")
+        out.append({"x": round(c[0], 2), "y": round(c[1], 2), "z": round(zz, 3),
+                    "ring_z": z, "area_sf": round(area),
+                    "kind": "summit" if summit else "low point",
+                    "source": src, "closed": True, "why": why})
+    return out
+
+
 # --- WHAT BACKS THE VOLUME: the checks an estimator can audit ------------
 #
 # Measured on four analytic surfaces with exact closed-form volumes
