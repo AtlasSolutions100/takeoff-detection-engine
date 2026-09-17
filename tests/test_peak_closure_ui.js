@@ -56,8 +56,13 @@ const proofSrc = fnSrc("renderEwProof");
 const closeSrc = fnSrc("closureLine");
 check(!!closeSrc, "app.js has closureLine()");
 check(/\.ep-closure/.test(CSS), "style.css styles the closure disclosure");
-check(/app\.js\?v=205/.test(HTML) && /style\.css\?v=101/.test(HTML),
-  "index.html busts the cache for both changed files");
+// AT LEAST the version this change shipped in. Pinning the exact number
+// makes every later bump fail a test that has nothing to do with it - this
+// one broke on v=206 the same afternoon it was written.
+const ver = (re) => Number((HTML.match(re) || [])[1] || 0);
+check(ver(/app\.js\?v=(\d+)/) >= 205 && ver(/style\.css\?v=(\d+)/) >= 101,
+  "index.html busts the cache for both changed files  (app v"
+  + ver(/app\.js\?v=(\d+)/) + ", css v" + ver(/style\.css\?v=(\d+)/) + ")");
 
 function render(j) {
   const el = mkEl();

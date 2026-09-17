@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=101">
+<link rel="stylesheet" href="style.css?v=102">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -686,6 +686,15 @@
            checks on the INPUTS - the only place a wrong number can come
            from. Rendered by renderEwProof() from the reply's `proof`. -->
       <div class="ew-proof off" id="ewProof"></div>
+      <!-- THE REQUIRED-INPUT CONTRACT. A cut/fill is only as good as
+           what it was told, and every item on this list was measured to
+           move a real sheet: elevations (Barn swings 89-144% across
+           which lines carry one), the limit of work (23% of Barn's
+           area), the strip (30% of C-04's cut), the dig depth (88%).
+           Supplied / assumed / missing, and READY only when nothing
+           required is either of the last two. Rendered by
+           renderEwReady() from the reply's `readiness`. -->
+      <div class="ew-ready off" id="ewReady"></div>
       <!-- Consent. Calculating is looking; adding is a decision. Nothing
            reaches the itemized takeoff (and therefore the priced report)
            until this is pressed. -->
@@ -1301,6 +1310,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=205"></script>
+<script src="app.js?v=206"></script>
 </body>
 </html>

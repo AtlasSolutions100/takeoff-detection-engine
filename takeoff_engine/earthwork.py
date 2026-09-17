@@ -3115,6 +3115,201 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     return found
 
 
+# --- THE REQUIRED-INPUT CONTRACT: is this number ready to bid? -----------
+#
+# See the patch note in scratchpad/patch_readiness.py for the measurements
+# behind each item. Three states carry the whole idea:
+#
+#   supplied   the estimator gave it, or the sheet did and he confirmed it
+#   assumed    the software chose a default - reported, never counted as
+#              supplied, because a default is not an answer
+#   missing    nothing has been said, and the number is answering a
+#              different question than the bid
+#
+# READY means every required item is supplied. Nothing here blocks a
+# calculation - an estimator checking a hunch does not want a wall - but
+# the volume carries its state everywhere it goes, including the export.
+READINESS_ITEMS = ("scale", "limit_of_work", "surfaces", "elevations",
+                   "strip", "dig_depth", "swell", "reuse")
+# named so the list does not pretend these are handled (spec stage 4)
+READINESS_NOT_YET = (
+    ("over_excavation", "over-excavation and subsidence"),
+    ("rock_water", "rock and groundwater"),
+)
+
+
+def _ready(state: str, label: str, value=None, why: str = "",
+           required: bool = True, item_id: str = "") -> dict:
+    return {"id": item_id, "label": label, "state": state, "value": value,
+            "why": why, "required": required}
+
+
+def bid_readiness(body, result: dict, coverage: "dict | None" = None,
+                  scale: "dict | None" = None) -> dict:
+    """What this volume still needs before it can carry a bid.
+
+    `body` is the EarthworkBody (anything with the same attributes), so the
+    contract reads the SAME inputs the volume was computed from and cannot
+    drift from it. `coverage` is the suggest route's contour_coverage block
+    for this page when it is known - without it the elevation item says so
+    rather than claiming coverage nobody measured.
+    """
+    g = (lambda n, d=None: getattr(body, n, d))
+    ok = set(g("confirmed", None) or [])
+    items: list = []
+
+    # 1. scale - the route refuses without one, so it is always supplied;
+    #    volume moves with the SQUARE of scale, so it is still stated
+    if scale and scale.get("ft_per_paper_inch"):
+        items.append(_ready("supplied", "Scale",
+                            f"1 in = {scale['ft_per_paper_inch']:g} ft",
+                            str(scale.get("source") or ""), item_id="scale"))
+    else:
+        items.append(_ready("missing", "Scale", None,
+                            "volumes need real-world units", item_id="scale"))
+
+    # 2. the region. Area multiplies the volume directly.
+    ring = g("boundary")
+    is_limit = bool(g("boundary_is_limit"))
+    area = result.get("area_sf")
+    if ring and is_limit:
+        items.append(_ready("supplied", "Limit of work",
+                            f"{area:,.0f} SF" if area else "set",
+                            "only ground inside the limits line is counted",
+                            item_id="limit_of_work"))
+    elif ring:
+        items.append(_ready("assumed", "Limit of work",
+                            f"{area:,.0f} SF" if area else "a work area",
+                            "a work area is a crop, not the limits line - "
+                            "pick the limit of work so the area is the "
+                            "graded area", item_id="limit_of_work"))
+    else:
+        items.append(_ready("missing", "Limit of work",
+                            f"{area:,.0f} SF" if area else None,
+                            "with no limits line the region is wherever the "
+                            "two surfaces overlap, which bulges outside the "
+                            "graded area", item_id="limit_of_work"))
+
+    # 3. both surfaces, from the rows actually sent
+    nex, npr = len(g("existing", []) or []), len(g("proposed", []) or [])
+    zex = len({round(float(r["z"]), 4) for r in (g("existing", []) or [])
+               if r.get("z") is not None})
+    zpr = len({round(float(r["z"]), 4) for r in (g("proposed", []) or [])
+               if r.get("z") is not None})
+    if zex >= 2 and zpr >= 2:
+        items.append(_ready("supplied", "Both surfaces",
+                            f"{nex} existing / {npr} proposed lines",
+                            f"{zex} and {zpr} distinct elevations",
+                            item_id="surfaces"))
+    else:
+        short = "existing" if zex < 2 else "proposed"
+        items.append(_ready("missing", "Both surfaces",
+                            f"{nex} existing / {npr} proposed lines",
+                            f"the {short} surface carries fewer than two "
+                            f"elevations, so it has no slope to difference",
+                            item_id="surfaces"))
+
+    # 4. an elevation on every contour line inside the region
+    if coverage and coverage.get("contour_chains"):
+        tot, wz = int(coverage["contour_chains"]), int(coverage.get("with_elev") or 0)
+        lt = float(coverage.get("contour_len_pt") or 0)
+        lw = float(coverage.get("with_elev_len_pt") or 0)
+        pct = 100.0 * lw / lt if lt else 0.0
+        if wz >= tot:
+            items.append(_ready("supplied", "Elevations",
+                                f"all {tot} contour lines",
+                                "every line the sheet draws carries a height",
+                                item_id="elevations"))
+        else:
+            items.append(_ready("missing", "Elevations",
+                                f"{wz} of {tot} lines ({pct:.0f}% by length)",
+                                f"{tot - wz} contour lines carry no height, so "
+                                f"the surface is interpolated across them - "
+                                f"measured on this corpus, that is the single "
+                                f"biggest thing moving a volume",
+                                item_id="elevations"))
+    else:
+        items.append(_ready("assumed", "Elevations", None,
+                            "coverage was not measured on this run",
+                            item_id="elevations"))
+
+    # 5. strip, and 6. the dig-depth stack. An EMPTY list is silence, not a
+    #    zero: a job with no topsoil to strip is a statement the estimator
+    #    makes, and "Topsoil 0 in" or a confirm is how he makes it.
+    def _stack(name, layers, label, why_missing, item_id):
+        layers = layers or []
+        if layers:
+            txt = ", ".join(f"{str(l.get('name') or 'layer')} "
+                            f"{float(l.get('thickness_in') or 0):g} in" for l in layers[:3])
+            return _ready("supplied", label, txt, "", item_id=item_id)
+        if item_id in ok:
+            return _ready("supplied", label, "none on this job",
+                          "confirmed by the estimator", item_id=item_id)
+        return _ready("missing", label, None, why_missing, item_id=item_id)
+
+    items.append(_stack("strip", g("existing_layers", []), "Topsoil strip",
+                        "nothing is stripped, so the cut starts at the ground "
+                        "the sheet draws - 6 in of topsoil moved a measured "
+                        "sheet's cut by 30%", "strip"))
+    items.append(_stack("dig", g("proposed_layers", []), "Dig depth below finish grade",
+                        "the dig stops at finish grade, so any pavement or "
+                        "subgrade section is uncounted - 12 in moved a "
+                        "measured sheet's cut by 88%", "dig_depth"))
+
+    # 7. swell / shrink. 1.0 is the software's silence, not the job's answer.
+    ef, imf = float(g("export_factor", 1.0) or 1.0), float(g("import_factor", 1.0) or 1.0)
+    if ef != 1.0 or imf != 1.0:
+        items.append(_ready("supplied", "Shrink and swell",
+                            f"export x{ef:g}, import x{imf:g}", "", item_id="swell"))
+    elif "swell" in ok:
+        items.append(_ready("supplied", "Shrink and swell", "in-place yards",
+                            "confirmed by the estimator: no factor on this job",
+                            item_id="swell"))
+    else:
+        items.append(_ready("assumed", "Shrink and swell", "in-place yards",
+                            "no factor is applied, so these are neat in-place "
+                            "yards - hauled and compacted quantities differ",
+                            item_id="swell"))
+
+    # 8. what is reused on site rather than hauled
+    reuse = float(g("cut_reuse_pct", 100.0) or 0.0)
+    lay = [l for l in (g("existing_layers", []) or [])
+           if l.get("reuse_pct") is not None or l.get("respread_pct") is not None]
+    if lay or "reuse" in ok:
+        items.append(_ready("supplied", "Redistribute and reuse",
+                            f"site cut reused {reuse:g}%"
+                            + (f", {len(lay)} removal(s) placed" if lay else ""),
+                            "", item_id="reuse"))
+    else:
+        items.append(_ready("assumed", "Redistribute and reuse",
+                            f"site cut reused {reuse:g}%, removals exported",
+                            "the default: site cut balances against site fill "
+                            "and everything stripped leaves the job",
+                            item_id="reuse"))
+
+    for iid, label in READINESS_NOT_YET:
+        items.append(_ready("not built", label, None,
+                            "not an input this software takes yet - allow for "
+                            "it outside the takeoff", required=False, item_id=iid))
+
+    need = [i for i in items if i["required"] and i["state"] != "supplied"]
+    missing = [i for i in need if i["state"] == "missing"]
+    ready = not need
+    if ready:
+        sentence = ("every input this number depends on has been supplied")
+    elif missing:
+        sentence = (f"{len(missing)} required input"
+                    f"{'' if len(missing) == 1 else 's'} missing"
+                    + (f" and {len(need) - len(missing)} still assumed"
+                       if len(need) > len(missing) else ""))
+    else:
+        sentence = (f"{len(need)} input{'' if len(need) == 1 else 's'} left on "
+                    f"the software's own default - confirm or change "
+                    f"{'it' if len(need) == 1 else 'them'}")
+    return {"ready": ready, "sentence": sentence, "items": items,
+            "n_missing": len(missing), "n_assumed": len(need) - len(missing)}
+
+
 # --- a hilltop is not a plateau: closing the innermost contour -----------
 #
 # A surface built from contours cannot rise above its highest contour or

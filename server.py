@@ -5077,6 +5077,13 @@ class EarthworkBody(BaseModel):
     # carries the ring's SF and LF for the Clear & Grub and fence rows.
     # False keeps every recorded body's numbers exactly where they were.
     boundary_is_limit: bool = False
+    # THE REQUIRED-INPUT CONTRACT (earthwork.bid_readiness). The ids an
+    # estimator has explicitly confirmed, so a software DEFAULT can
+    # become an answer without a new field per item: "strip" means
+    # there is no topsoil to strip on this job, "swell" means in-place
+    # yards are what he wants, "reuse" means the default balance is
+    # right. Empty is the honest starting state: nothing has been said.
+    confirmed: list[str] = []
 
 
 # ONE ELEVATION READ PER PAGE AT A TIME.
@@ -5641,6 +5648,9 @@ def earthwork_suggest(job_id: str, page: int, more: int = 0):
     # elevations at this sheet's own step, and 10 of them carry a
     # legend-keyed spot tag saying as much. Shipped as evidence, never as a
     # correction: nothing here changes a z or a surface.
+    if len(_COV_CACHE) > 32:
+        _COV_CACHE.clear()
+    _COV_CACHE[(job_id, int(page))] = coverage
     coverage["interval"] = contour_interval(
         [float(r["z"]) for r in sug
          if is_printed_how(r.get("how")) and r.get("z") is not None])
@@ -5738,7 +5748,8 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
     difference them. Adds the per-layer volumes and the offsets used."""
     import numpy as _np
 
-    from takeoff_engine.earthwork import (Surface, boundary_metrics,
+    from takeoff_engine.earthwork import (Surface, bid_readiness,
+                                          boundary_metrics,
                                           clamp_pct, closure_points,
                                           contour_interval, cut_fill,
                                           material_balance)
@@ -5809,6 +5820,16 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
                       surface_model=body.surface_model)
     if closures:
         result["closures"] = closures
+    # WHAT THIS NUMBER STILL NEEDS. Answered from the body the volume was
+    # computed from, so the contract cannot describe different inputs
+    # than the ones that produced the answer. It never blocks: an
+    # estimator checking a hunch does not want a wall, he wants to know
+    # what is still open.
+    try:
+        result["readiness"] = bid_readiness(
+            body, result, coverage=_COV_CACHE.get((job_id, int(page))), scale=det)
+    except Exception as exc:               # noqa: BLE001 - see volume_proof above
+        result["readiness"] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
     if "error" in result:
         # A MAP IS A PICTURE OF THE GRID, so there is no layers-only answer
         # for it. Until this fix /earthwork/map went on through the unweld
@@ -6049,6 +6070,14 @@ TOWNHOME TOWNHOMES SCHOOL CHURCH CLINIC HOTEL MOTEL RESTAURANT RETAIL BANK
 STATION GYM PLANT TOWER SILO SHELTER KENNEL GREENHOUSE WORKSHOP CARPORT
 ADDITION DORM DORMITORY LIBRARY GATEHOUSE BOATHOUSE BUNKHOUSE
 """.split())
+# The contour-coverage block is measured on the SUGGEST route (it needs
+# the classified rows), and the required-input contract is answered on
+# the VOLUME route. Rather than recompute it - or, worse, let the panel
+# carry the number and drift from the rows the volume used - the suggest
+# route leaves it here and the volume route reads it. A miss is stated
+# as a miss: the contract then says coverage was not measured.
+_COV_CACHE: dict = {}
+
 _SPOT_CACHE: dict = {}
 
 

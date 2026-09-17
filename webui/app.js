@@ -13265,6 +13265,12 @@ function ewBody() {
     // fill - cut 11,572, a 0.08% residual), so this is on by default - the
     // only defaulted assumption in the balance.
     cut_reuse_pct: ($("ewCutReuse") && $("ewCutReuse").checked) ? 100 : 0,
+    // WHAT THE ESTIMATOR HAS CONFIRMED (earthwork.bid_readiness). Not a
+    // preference: it is how "there is no topsoil to strip on this job"
+    // gets said, so a software default stops being an assumption and
+    // starts being his answer. Sent every time, so the ledger records the
+    // state the number was signed off in.
+    confirmed: (state.ewConfirmed || []).slice(),
     export_factor: ewFactor("ewFacExp"),
     import_factor: ewFactor("ewFacImp"),
     ...(function () {
@@ -14810,6 +14816,7 @@ $("ewCalc").onclick = async () => {
   }
   renderEwBasis(j, body);
   renderEwProof(j);
+  renderEwReady(j);
   // Calculating is LOOKING. The rows only reach the itemised takeoff once
   // the estimator presses "Add to takeoff" - see ewAdd below. If they
   // already did, refresh in place: consent was given for THIS calculation,
@@ -15150,6 +15157,71 @@ function closureLine(j) {
   return `<details class="ep-closure"><summary>Peaks and low points: `
     + `${esc(bits.join(", "))}${did.length ? " (assumed \u2014 type a spot to "
     + "override)" : ""}</summary><ul>${rows}</ul></details>`;
+}
+
+// WHAT THIS NUMBER STILL NEEDS BEFORE IT CAN CARRY A BID.
+//
+// The kernel is exact on analytic truth (0.00% on a plane) and moves +-0.4%
+// across grid sizes, so a wrong cut/fill is a wrong INPUT - and an input
+// nobody was asked for is the one an estimator cannot see. Each item is
+// supplied, assumed or missing, and the verdict is READY only when nothing
+// required is assumed or missing. Measured costs of leaving them open, on
+// this corpus: elevations swing Barn C3.0 by 89-144% depending on WHICH
+// lines carry one; the limit of work is 23% of its area; 6 in of strip is
+// 30% of C-04's cut; 12 in of section is 88% of it.
+//
+// It never blocks the button. An estimator checking a hunch does not want
+// a wall - he wants to know what is still open.
+function renderEwReady(j) {
+  const box = $("ewReady");
+  if (!box) return;
+  const rd = (j && j.readiness) || null;
+  box.classList.remove("r-ready", "r-open");
+  if (!rd || !rd.items || !rd.items.length) {
+    box.classList.add("off");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("off");
+  box.classList.add(rd.ready ? "r-ready" : "r-open");
+  const MARK = { supplied: "\u2713", assumed: "~", missing: "!", "not built": "\u2013" };
+  const li = rd.items.map(it => {
+    const cls = "ri-" + String(it.state).replace(/\s+/g, "-");
+    const val = it.value ? ` <b>${esc(String(it.value))}</b>` : "";
+    const why = it.why ? `<span class="ri-why">${esc(it.why)}</span>` : "";
+    // an assumed item can be answered right here: the estimator says the
+    // default IS his answer, and it stops being an assumption
+    const can = it.state === "assumed" && CONFIRMABLE[it.id];
+    const btn = can
+      ? ` <button class="ri-ok" data-confirm="${esc(it.id)}">${esc(CONFIRMABLE[it.id])}</button>`
+      : "";
+    return `<li class="${cls}"><span class="ri-mark">${MARK[it.state] || "?"}</span>`
+      + `${esc(it.label)}${val}${btn}${why ? "<br>" + why : ""}</li>`;
+  }).join("");
+  box.innerHTML = `<span class="ri-head">Ready to bid?</span> `
+    + `<span class="ri-verdict">\u2014 ${esc(rd.sentence)}</span><ul>${li}</ul>`;
+  box.querySelectorAll("[data-confirm]").forEach(b =>
+    b.addEventListener("click", () => ewConfirmInput(b.dataset.confirm)));
+}
+
+// the defaults an estimator can adopt as his own answer, and the words for
+// doing it. Anything not here has to be typed - a strip depth is a number
+// off a soils report, and no button can know it.
+const CONFIRMABLE = {
+  strip: "no topsoil to strip",
+  dig_depth: "dig stops at finish grade",
+  swell: "in-place yards are right",
+  reuse: "this balance is right",
+};
+
+function ewConfirmInput(id) {
+  if (!id) return;
+  state.ewConfirmed = state.ewConfirmed || [];
+  if (!state.ewConfirmed.includes(id)) state.ewConfirmed.push(id);
+  // recompute so the contract, the volume and the ledger agree - the
+  // confirmation is part of the body the number was computed from
+  const btn = $("ewCalc");
+  if (btn && !btn.disabled) btn.click();
 }
 
 function renderEwBasis(j, body) {

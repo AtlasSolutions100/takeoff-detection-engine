@@ -455,6 +455,32 @@ canvas#view.panning { cursor: grabbing; }
 .ew-proof li.s-none { color: var(--dim); }
 .ew-proof .ep-worst { display: block; margin-top: 4px;
   font-variant-numeric: tabular-nums; }
+/* THE REQUIRED-INPUT CONTRACT. Green only when nothing required is open;
+   otherwise the warn colour every other "check this before you price it"
+   state uses on this panel. */
+.ew-ready { font-size: var(--t-fs-xs); line-height: 1.5; margin: 6px 12px 8px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.ew-ready.off { display: none; }
+.ew-ready .ri-head { font-weight: 600; }
+.ew-ready .ri-verdict { font-variant-numeric: tabular-nums; }
+.ew-ready.r-ready { border-color: var(--t-ok, #2ea043); }
+.ew-ready.r-ready .ri-verdict { color: var(--t-ok, #2ea043); }
+.ew-ready.r-open { border-color: var(--t-warn); }
+.ew-ready.r-open .ri-verdict { color: var(--t-warn); }
+.ew-ready ul { margin: 5px 0 0; padding-left: 4px; list-style: none; }
+.ew-ready li { margin: 3px 0; padding-left: 16px; text-indent: -16px; }
+.ew-ready .ri-mark { display: inline-block; width: 12px; text-indent: 0; }
+.ew-ready li.ri-supplied .ri-mark { color: var(--t-ok, #2ea043); }
+.ew-ready li.ri-missing .ri-mark { color: var(--t-warn); }
+.ew-ready li.ri-assumed .ri-mark { color: var(--t-warn); }
+.ew-ready li.ri-not-built { color: var(--dim); }
+.ew-ready .ri-why { display: block; color: var(--dim); text-indent: 0;
+  padding-left: 12px; }
+.ew-ready .ri-ok { font: inherit; margin-left: 6px; padding: 0 6px;
+  border: 1px solid var(--line); border-radius: 6px; background: transparent;
+  color: var(--text); cursor: pointer; }
+.ew-ready .ri-ok:hover { border-color: var(--t-ok, #2ea043); }
+
 /* what the software carried to the top of a hill, and what it refused to.
    Folded: the summary is the whole claim, the list is the evidence. */
 .ew-proof .ep-closure { display: block; margin-top: 5px; }
