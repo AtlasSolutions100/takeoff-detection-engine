@@ -1,0 +1,65 @@
+{
+ "errors": [],
+ "appJs": "v=203",
+ "facts": {
+  "rows": 170,
+  "withZ": 170,
+  "builtTagRows": 0,
+  "tagRows": [
+   [
+    502,
+    583.5,
+    "ME"
+   ],
+   [
+    156,
+    586,
+    "ME"
+   ]
+  ],
+  "spotRefused": {
+   "n": 17,
+   "tags": {
+    "BW": 6,
+    "EW": 5,
+    "TW": 6
+   }
+  },
+  "dropped": "17 numbers beside these lines are spot grades the sheet tags BW, EW, TW \u2014 a point on what is being built, not a contour height. No line took its height from them.",
+  "cov": {
+   "lines": 339,
+   "withElev": 170
+  },
+  "chain168": [
+   {
+    "chain_id": 168,
+    "z": 550,
+    "width": 0.2,
+    "dist": 0.5,
+    "how": "gap-ocr",
+    "tag": null,
+    "surface": "existing",
+    "splitBy": "color"
+   }
+  ],
+  "spots": 21
+ },
+ "view": {
+  "k": 4.729846153846154,
+  "pct": 473,
+  "window": [
+   388.09133489461357,
+   699.9999999999999,
+   501.9086651053864,
+   799.9999999999999
+  ]
+ },
+ "calc": {
+  "ok": true,
+  "cut": 2055.7,
+  "fill": 9727,
+  "area": 100540,
+  "nex": 83,
+  "npr": 25
+ }
+}
