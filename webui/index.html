@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=99">
+<link rel="stylesheet" href="style.css?v=100">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -678,6 +678,14 @@
            proposed_contours / area_sf / cell_ft) plus the spot grades this
            client sent. Rendered by renderEwBasis(). -->
       <div class="ew-basis off" id="ewBasis"></div>
+      <!-- WHAT BACKS THE NUMBER (CUTFILL-ACCURACY-SPEC.md stage 3): the
+           surface checked against the elevations this sheet prints as
+           points, the same rows through the other surface model and a
+           finer grid, and whether the region is the estimator's own line.
+           The volume kernel is exact on analytic truth, so these are
+           checks on the INPUTS - the only place a wrong number can come
+           from. Rendered by renderEwProof() from the reply's `proof`. -->
+      <div class="ew-proof off" id="ewProof"></div>
       <!-- Consent. Calculating is looking; adding is a decision. Nothing
            reaches the itemized takeoff (and therefore the priced report)
            until this is pressed. -->
@@ -1293,6 +1301,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=203"></script>
+<script src="app.js?v=204"></script>
 </body>
 </html>

@@ -5771,8 +5771,9 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
             if body.boundary and len(body.boundary) >= 3 else None)
     ex_layers, ex_off = _layer_stack(body.existing_layers)
     pr_layers, pr_off = _layer_stack(body.proposed_layers)
-    result = cut_fill(build("existing", body.existing, body.existing_points),
-                      build("proposed", body.proposed, body.proposed_points),
+    ex_surf = build("existing", body.existing, body.existing_points)
+    pr_surf = build("proposed", body.proposed, body.proposed_points)
+    result = cut_fill(ex_surf, pr_surf,
                       ft_per_pt, cell_ft=body.cell_ft,
                       existing_offset_ft=ex_off, proposed_offset_ft=pr_off,
                       return_grid=return_grid, boundary=body.boundary,
@@ -5877,6 +5878,26 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
     # the confident wrong number this project ranks worst. Reporting it is
     # what lets the panel notice.
     result["ft_per_paper_inch"] = det["ft_per_paper_inch"]
+    # WHAT BACKS THIS NUMBER (CUTFILL-ACCURACY-SPEC.md stage 3). The volume
+    # kernel is exact on analytic truth and grid-insensitive, so a wrong
+    # answer is a wrong INPUT - and the estimator cannot see inputs. These
+    # are checks on them: the surface against the elevations the sheet
+    # prints as points, the same rows through the other surface model and a
+    # finer grid, and whether the region is the estimator's own line or
+    # just where the two surfaces happen to overlap. Additive: nothing
+    # here changes the volume, and a failure to compute it costs the
+    # checks, never the answer.
+    if result.get("cut_yd3") is not None and not return_grid:
+        try:
+            from takeoff_engine.earthwork import volume_proof
+            result["proof"] = volume_proof(
+                ex_surf, pr_surf, result,
+                _page_spot_grades(job_id, page), ft_per_pt,
+                cell_ft=float(result.get("cell_ft") or body.cell_ft),
+                boundary=body.boundary,
+                existing_offset_ft=ex_off, proposed_offset_ft=pr_off)
+        except Exception as e:                                  # noqa: BLE001
+            result["proof"] = {"error": f"{type(e).__name__}: {e}"[:200]}
     return result
 
 
@@ -5997,6 +6018,46 @@ TOWNHOME TOWNHOMES SCHOOL CHURCH CLINIC HOTEL MOTEL RESTAURANT RETAIL BANK
 STATION GYM PLANT TOWER SILO SHELTER KENNEL GREENHOUSE WORKSHOP CARPORT
 ADDITION DORM DORMITORY LIBRARY GATEHOUSE BOATHOUSE BUNKHOUSE
 """.split())
+_SPOT_CACHE: dict = {}
+
+
+def _page_spot_grades(job_id: str, page: int) -> list:
+    """The spot elevations this page PRINTS, cached per (file, mtime, page).
+
+    The suggest route reads these for the panel's spot list; the calc route
+    needs them for a different reason - to check the surface it just built
+    against the sheet's own numbers (earthwork.volume_proof). Cached
+    because Calculate is pressed repeatedly and the page text costs ~1 s.
+    """
+    job = JOBS.get(job_id)
+    if not job:
+        return []
+    path = job.get("path")
+    try:
+        key = (path, os.path.getmtime(path), int(page))
+    except (OSError, TypeError, ValueError):
+        return []
+    hit = _SPOT_CACHE.get(key)
+    if hit is not None:
+        return hit
+    from takeoff_engine.earthwork import read_spot_grades
+    from takeoff_engine.extract import page_lines as _pl
+    from takeoff_engine.extract import page_words as _pw
+    try:
+        doc = pymupdf.open(path)
+        try:
+            words, lines = _pw(doc[page]), _pl(doc[page])
+        finally:
+            doc.close()
+        spots = read_spot_grades(words, lines=lines, datum_info={})
+    except Exception:
+        return []
+    if len(_SPOT_CACHE) > 32:
+        _SPOT_CACHE.clear()
+    _SPOT_CACHE[key] = spots
+    return spots
+
+
 _ZONE_TEXT_CACHE: dict = {}
 
 

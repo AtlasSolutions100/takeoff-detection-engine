@@ -14809,6 +14809,7 @@ $("ewCalc").onclick = async () => {
     out.appendChild(d);
   }
   renderEwBasis(j, body);
+  renderEwProof(j);
   // Calculating is LOOKING. The rows only reach the itemised takeoff once
   // the estimator presses "Add to takeoff" - see ewAdd below. If they
   // already did, refresh in place: consent was given for THIS calculation,
@@ -15060,6 +15061,59 @@ function ewCautionText(j) {
 
 // What the number rests on, printed beside the number. Every field here is
 // one the response or the request already carried: nothing is inferred.
+// WHAT BACKS THIS NUMBER - the checks, in the estimator's words.
+//
+// The volume kernel is exact where the evidence is complete (measured on
+// analytic surfaces: 0.00% on a plane, -0.03% on a cone) and the grid moves
+// it +-0.4%, so a wrong cut/fill is a wrong INPUT. The estimator cannot see
+// inputs, and "I won't invent volumes" is what a client said about exactly
+// that. So the reply carries `proof` and this prints it: the surface against
+// the elevations the sheet itself prints as points, the same rows through
+// the other surface model and a finer grid, and what region was counted.
+// A check that CANNOT run says so - it is never counted as a pass.
+function renderEwProof(j) {
+  const box = $("ewProof");
+  if (!box) return;
+  const p = (j && j.proof) || null;
+  const checks = (p && p.checks) || [];
+  box.classList.remove("v-pass", "v-warn");
+  if (!p || !checks.length) {
+    box.classList.add("off");
+    box.innerHTML = "";
+    return;
+  }
+  box.classList.remove("off");
+  const nPass = checks.filter(c => c.state === "pass").length;
+  const verdict = p.verdict === "pass" ? "every check passes"
+    : p.verdict === "cannot check" ? "not everything could be checked"
+    : "check these before you bid it";
+  box.classList.add(p.verdict === "pass" ? "v-pass" : "v-warn");
+  const li = checks.map(c => {
+    const cls = c.state === "pass" ? "s-pass" : c.state === "warn" ? "s-warn" : "s-none";
+    const mark = c.state === "pass" ? "\u2713" : c.state === "warn" ? "!" : "?";
+    return `<li class="${cls}">${mark} ${esc(c.text)}</li>`;
+  }).join("");
+  // the worst spot, named: an estimator can walk to it on the sheet
+  const res = (p.spot_residual || {});
+  let worst = null;
+  for (const side of ["existing", "proposed"]) {
+    const w = ((res[side] || {}).worst || [])[0];
+    if (w && (!worst || Math.abs(w.diff_ft) > Math.abs(worst.diff_ft))) {
+      worst = Object.assign({}, w, { side });
+    }
+  }
+  const worstLine = worst
+    ? `<span class="ep-worst">worst point: the sheet prints `
+      + `<b>${worst.printed_ft}</b> (${esc(String(worst.tag || ""))}) where our `
+      + `${esc(worst.side)} surface reads <b>${worst.surface_ft}</b> - `
+      + `${worst.diff_ft > 0 ? "we are low by" : "we are high by"} `
+      + `<b>${Math.abs(worst.diff_ft)} ft</b></span>`
+    : "";
+  box.innerHTML = `<span class="ep-head">What backs this number</span> `
+    + `<span class="ep-verdict">\u2014 ${nPass} of ${checks.length} checks pass, `
+    + `${verdict}</span><ul>${li}</ul>${worstLine}`;
+}
+
 function renderEwBasis(j, body) {
   const box = $("ewBasis");
   if (!box) return;

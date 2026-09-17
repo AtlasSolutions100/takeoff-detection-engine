@@ -439,6 +439,22 @@ canvas#view.panning { cursor: grabbing; }
 .ew-limit b { color: var(--text); font-weight: 600; }
 .ew-limit .ew-limit-more { display: block; margin: 6px 0 0; font-size: var(--t-fs-xs); }
 /* what the number rests on, beside the number */
+.ew-proof { font-size: var(--t-fs-xs); line-height: 1.5; margin-top: 6px;
+  border: 1px solid var(--line); border-radius: var(--t-radius);
+  padding: 7px 9px; color: var(--dim); }
+.ew-proof.off { display: none; }
+.ew-proof .ep-head { color: var(--text); font-weight: 600; }
+.ew-proof .ep-verdict { font-variant-numeric: tabular-nums; }
+.ew-proof.v-pass { border-color: var(--t-ok, #2ea043); }
+.ew-proof.v-pass .ep-verdict { color: var(--t-ok, #2ea043); }
+.ew-proof.v-warn { border-color: var(--t-warn); }
+.ew-proof.v-warn .ep-verdict { color: var(--t-warn); }
+.ew-proof ul { margin: 4px 0 0; padding-left: 16px; }
+.ew-proof li { margin: 2px 0; }
+.ew-proof li.s-warn { color: var(--t-warn); }
+.ew-proof li.s-none { color: var(--dim); }
+.ew-proof .ep-worst { display: block; margin-top: 4px;
+  font-variant-numeric: tabular-nums; }
 .ew-basis { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.5;
   padding: 0 12px 8px; }
 .ew-basis b { color: var(--text); font-variant-numeric: tabular-nums; }

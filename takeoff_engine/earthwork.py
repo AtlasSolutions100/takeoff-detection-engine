@@ -3115,6 +3115,289 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     return found
 
 
+# --- WHAT BACKS THE VOLUME: the checks an estimator can audit ------------
+#
+# Measured on four analytic surfaces with exact closed-form volumes
+# (out/verify/2026-08-31/cutfill-contour-method/synth_out.json): the
+# interpolation kernel is within 0.5% and the grid within +-0.4% across
+# cell sizes 1-8 ft. So a wrong number is a wrong INPUT, and what the
+# estimator needs is not a better kernel but evidence about the inputs.
+# Three checks, all of them numbers off this sheet:
+#
+#   1. the surface against the elevations the sheet PRINTS as points. The
+#      one check that tests the whole chain at once - which lines got
+#      heights, which side they landed on, which model ran. Measured on
+#      Oncor C-04 the day it was written: the existing surface sat 0.91 ft
+#      BELOW all seven of the sheet's match-existing spots, a systematic
+#      bias worth ~3,400 CY over that region, invisible until then.
+#   2. the same rows and the same region through the OTHER surface model.
+#      The two models differ by 30% on Stice's rows (2.13M CY linear
+#      against 2.77M smooth), so the spread is a real uncertainty and
+#      belongs beside the number.
+#   3. the same rows on a finer grid: the integration's own error.
+#
+# GROUND spots only, for check 1. A spot grade names what it is: ME/EG are
+# the ground as it is now, FG/FIN/FFE/PE/HP/LP/FL the ground as designed.
+# TW/BW/EW (wall), RIM/INV (structure), TC/TS/BS (curb, step) are NOT
+# ground and the surface is not meant to pass through them (FINDINGS 36).
+GROUND_SPOT_TAGS = {"existing": {"EG", "ME"},
+                    "proposed": {"FG", "FIN", "FFE", "PE", "HP", "LP", "FL"}}
+# What "proved" means. Set in CUTFILL-ACCURACY-SPEC.md stage 3 as targets,
+# not as measurements - they are the bar we are building to, and they are
+# reported beside the figure they judge so a reader can disagree with them.
+PROOF_LIMITS = {"residual_median_ft": 0.25, "residual_bias_ft": 0.15,
+                "method_spread_pct": 5.0}
+# a finer grid costs a second integration; skip it rather than stall a
+# route on a 600-acre sheet
+PROOF_MAX_CELLS = 2_000_000
+
+
+def _is_surface_input(g, surf, tol: float = 0.6) -> bool:
+    """Was this spot fed into the surface as a point? (The panel sends the
+    sheet's spot grades as `existing_points` / `proposed_points`.)"""
+    try:
+        x, y = float(g["x"]), float(g["y"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    for px, py, _pz in getattr(surf, "points", []) or []:
+        if abs(float(px) - x) <= tol and abs(float(py) - y) <= tol:
+            return True
+    return False
+
+
+def _without_points(surf, drop: list):
+    """A copy of the surface with those input points left out - the surface
+    the held-out spots get to argue with."""
+    out = Surface(getattr(surf, "name", "s"))
+    out.contours = list(getattr(surf, "contours", []))
+    keep = []
+    for q in getattr(surf, "points", []) or []:
+        if not any(abs(float(q[0]) - float(d[0])) <= 0.6
+                   and abs(float(q[1]) - float(d[1])) <= 0.6 for d in drop):
+            keep.append(q)
+    out.points = keep
+    return out
+
+
+def spot_residuals(surf, spots: list, side: str, worst_n: int = 5,
+                   folds: int = 5) -> dict:
+    """How far the surface sits from the sheet's own printed GROUND spots.
+
+    Returns {side, n_printed, n_checked, how, median_abs_ft, bias_ft,
+    p90_abs_ft, max_abs_ft, worst[]} - or n_checked 0 with `why`, which is
+    an ABSTENTION and never a pass: a sheet that prints no ground spot on a
+    side cannot be checked on that side, and saying so is the honest
+    result.
+
+    INDEPENDENCE, and it is the whole point. The panel feeds these same
+    spots into the surface as points, so asking the surface about them is
+    asking it to repeat itself - live on Oncor C-04 that read 0.00 ft
+    where the same sheet read 0.91 ft offline, with the spots left out.
+    So: a spot the surface was NOT built from is compared directly
+    ("independent"); a spot it WAS built from is held out - the surface is
+    rebuilt without a fifth of them and asked about that fifth, five times
+    over ("cross-validated", the standard k-fold). `how` says which ran.
+    """
+    tags = GROUND_SPOT_TAGS.get(side, set())
+    use = [g for g in (spots or [])
+           if g.get("resolved") and g.get("z") is not None
+           and str(g.get("tag") or "").strip().upper().rstrip(":") in tags]
+    out = {"side": side, "n_printed": len(use), "n_checked": 0,
+           "tags": sorted(tags)}
+    if not use:
+        out["why"] = (f"this sheet prints no ground spot elevation on the "
+                      f"{side} side ({', '.join(sorted(tags))}), so the "
+                      f"surface cannot be checked against its own numbers")
+        return out
+    f, _ = surf.interpolator()
+    if f is None:
+        out["why"] = "no surface to check"
+        return out
+
+    def at(fn, g):
+        """The surface's own elevation under a spot, or None."""
+        try:
+            x, y = float(g["x"]), float(g["y"])
+            z = float(fn(np.array([[x]]), np.array([[y]]))[0][0])
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+        return None if np.isnan(z) else z
+
+    inputs = [g for g in use if _is_surface_input(g, surf)]
+    free = [g for g in use if g not in inputs]
+    d, worst, hows = [], [], set()
+    for g in free:                                   # nothing to hold out
+        zs = at(f, g)
+        if zs is None:
+            continue
+        hows.add("independent")
+        d.append(float(g["z"]) - zs)
+        worst.append({"x": round(float(g["x"]), 1), "y": round(float(g["y"]), 1),
+                      "tag": g.get("tag"), "printed_ft": float(g["z"]),
+                      "surface_ft": round(zs, 2),
+                      "diff_ft": round(float(g["z"]) - zs, 2),
+                      "how": "independent"})
+    if inputs:
+        k = max(2, min(int(folds), len(inputs)))
+        for i in range(k):
+            fold = inputs[i::k]
+            if not fold:
+                continue
+            f2, _ = _without_points(surf, [(g["x"], g["y"]) for g in fold]).interpolator()
+            if f2 is None:
+                continue
+            for g in fold:
+                zs = at(f2, g)
+                if zs is None:
+                    continue
+                hows.add("cross-validated")
+                d.append(float(g["z"]) - zs)
+                worst.append({"x": round(float(g["x"]), 1), "y": round(float(g["y"]), 1),
+                              "tag": g.get("tag"), "printed_ft": float(g["z"]),
+                              "surface_ft": round(zs, 2),
+                              "diff_ft": round(float(g["z"]) - zs, 2),
+                              "how": "cross-validated"})
+    out["how"] = " + ".join(sorted(hows)) if hows else None
+    out["n_from_surface"] = len(inputs)
+    if not d:
+        out["why"] = ("none of this sheet's ground spots can be checked "
+                      "against the surface - they fall outside it, or the "
+                      "surface cannot be rebuilt without them")
+        return out
+    a = np.abs(d)
+    worst.sort(key=lambda w: -abs(w["diff_ft"]))
+    out.update(n_checked=len(d),
+               median_abs_ft=round(float(np.median(a)), 2),
+               mean_abs_ft=round(float(a.mean()), 2),
+               p90_abs_ft=round(float(np.percentile(a, 90)), 2),
+               max_abs_ft=round(float(a.max()), 2),
+               bias_ft=round(float(np.mean(d)), 2),
+               worst=worst[:worst_n])
+    return out
+
+
+def _spread_pct(a, b) -> float | None:
+    """How far apart two readings of the same quantity are, as a share of
+    the larger - so a spread is never flattered by dividing by the bigger
+    number."""
+    try:
+        a, b = float(a), float(b)
+    except (TypeError, ValueError):
+        return None
+    m = max(abs(a), abs(b))
+    return None if m <= 0 else round(abs(a - b) / m * 100.0, 1)
+
+
+def volume_proof(existing, proposed, result: dict, spots: list,
+                 ft_per_pt: float, *, cell_ft: float = 2.0,
+                 boundary=None, existing_offset_ft: float = 0.0,
+                 proposed_offset_ft: float = 0.0,
+                 max_cells: int = PROOF_MAX_CELLS) -> dict:
+    """The three checks above plus a verdict, for one published volume.
+
+    Nothing here changes the volume; it re-runs the same rows over the same
+    region to say how much the METHOD could move them, and compares the
+    surface with the sheet's own points. Every check reports its own
+    numbers and its own state (pass / warn / cannot check); the verdict is
+    the worst of them, and "cannot check" is never a pass.
+    """
+    out: dict = {"limits": dict(PROOF_LIMITS), "checks": []}
+    if result.get("cut_yd3") is None:
+        out["why"] = "no volume was published, so there is nothing to back"
+        return out
+    cut, fill = float(result["cut_yd3"]), float(result["fill_yd3"])
+    model = result.get("surface_model") or "linear"
+
+    # 1. the sheet's own printed points
+    res = {s: spot_residuals(surf, spots, s)
+           for s, surf in (("existing", existing), ("proposed", proposed))}
+    out["spot_residual"] = res
+    checked = [r for r in res.values() if r.get("n_checked")]
+    if not checked:
+        out["checks"].append({
+            "id": "spots", "state": "cannot check",
+            "text": ("this sheet prints no ground spot elevation to check the "
+                     "surface against - the volume rests on the contour lines "
+                     "alone")})
+    else:
+        worst = max(checked, key=lambda r: r["median_abs_ft"])
+        ok = all(r["median_abs_ft"] <= PROOF_LIMITS["residual_median_ft"]
+                 and abs(r["bias_ft"]) <= PROOF_LIMITS["residual_bias_ft"]
+                 for r in checked)
+        out["checks"].append({
+            "id": "spots", "state": "pass" if ok else "warn",
+            "text": (f"the {worst['side']} surface sits "
+                     f"{worst['median_abs_ft']} ft from this sheet's own "
+                     f"{worst['n_checked']} printed ground spot"
+                     f"{'' if worst['n_checked'] == 1 else 's'} (median, "
+                     f"{worst.get('how') or 'measured'}), "
+                     f"bias {worst['bias_ft']:+} ft, worst "
+                     f"{worst['max_abs_ft']} ft")})
+
+    # 2. the other surface model, same rows and region
+    other = "clamped_ct" if model == "linear" else "linear"
+    alt = cut_fill(existing, proposed, ft_per_pt, cell_ft=cell_ft,
+                   existing_offset_ft=existing_offset_ft,
+                   proposed_offset_ft=proposed_offset_ft,
+                   boundary=boundary, surface_model=other)
+    if alt.get("cut_yd3") is not None:
+        cs, fs = _spread_pct(cut, alt["cut_yd3"]), _spread_pct(fill, alt["fill_yd3"])
+        out["model_spread"] = {"model": model, "other_model": other,
+                               "other_cut_yd3": alt["cut_yd3"],
+                               "other_fill_yd3": alt["fill_yd3"],
+                               "cut_spread_pct": cs, "fill_spread_pct": fs}
+        worst_s = max([v for v in (cs, fs) if v is not None], default=None)
+        if worst_s is not None:
+            out["checks"].append({
+                "id": "model", "state": ("pass" if worst_s <= PROOF_LIMITS["method_spread_pct"]
+                                         else "warn"),
+                "text": (f"read with the other surface model ({other}) the same "
+                         f"rows give {alt['cut_yd3']:,.0f} cut and "
+                         f"{alt['fill_yd3']:,.0f} fill - {worst_s}% from this "
+                         f"answer")})
+
+    # 3. a finer grid: the integration's own error
+    fine = cell_ft / 2.0
+    lo_hi = result.get("area_sf")
+    cells = (lo_hi / (fine * fine)) if lo_hi else None
+    if cells and cells <= max_cells:
+        alt2 = cut_fill(existing, proposed, ft_per_pt, cell_ft=fine,
+                        existing_offset_ft=existing_offset_ft,
+                        proposed_offset_ft=proposed_offset_ft,
+                        boundary=boundary, surface_model=model)
+        if alt2.get("cut_yd3") is not None:
+            cs2 = _spread_pct(cut, alt2["cut_yd3"])
+            fs2 = _spread_pct(fill, alt2["fill_yd3"])
+            out["grid_spread"] = {"cell_ft": cell_ft, "finer_cell_ft": fine,
+                                  "finer_cut_yd3": alt2["cut_yd3"],
+                                  "finer_fill_yd3": alt2["fill_yd3"],
+                                  "cut_spread_pct": cs2, "fill_spread_pct": fs2}
+            worst2 = max([v for v in (cs2, fs2) if v is not None], default=None)
+            if worst2 is not None:
+                out["checks"].append({
+                    "id": "grid", "state": ("pass" if worst2 <= PROOF_LIMITS["method_spread_pct"]
+                                            else "warn"),
+                    "text": (f"on a {fine:g} ft grid instead of {cell_ft:g} ft the "
+                             f"same surfaces give {alt2['cut_yd3']:,.0f} cut - "
+                             f"{worst2}% from this answer")})
+
+    # 4. the region: bounded by the estimator's own line, or the overlap
+    bounded = bool(boundary is not None and len(boundary or []) >= 3)
+    out["checks"].append({
+        "id": "region", "state": "pass" if bounded else "warn",
+        "text": (("the volume is bounded by the limit of work, so only ground "
+                  "inside it counts")
+                 if bounded else
+                 ("no limit of work is set, so the region is wherever the two "
+                  "surfaces overlap - that is not the graded area"))})
+
+    states = [c["state"] for c in out["checks"]]
+    out["verdict"] = ("warn" if "warn" in states
+                      else "cannot check" if "cannot check" in states
+                      else "pass")
+    return out
+
+
 # --- existing vs proposed: the surface split ------------------------------
 # The suggest reply must say WHICH rule decided each row (split_by), and the
 # rules apply in an explicit precedence - never first-writer-wins:
