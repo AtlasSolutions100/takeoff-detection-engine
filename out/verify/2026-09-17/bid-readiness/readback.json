@@ -1,0 +1,207 @@
+{
+ "errors": [],
+ "appJs": "v=206",
+ "before": {
+  "rd": {
+   "ready": false,
+   "sentence": "4 required inputs missing and 2 still assumed",
+   "items": [
+    {
+     "id": "scale",
+     "label": "Scale",
+     "state": "supplied",
+     "value": "1 in = 30 ft",
+     "why": "graphic-bar",
+     "required": true
+    },
+    {
+     "id": "limit_of_work",
+     "label": "Limit of work",
+     "state": "missing",
+     "value": "100,540 SF",
+     "why": "with no limits line the region is wherever the two surfaces overlap, which bulges outside the graded area",
+     "required": true
+    },
+    {
+     "id": "surfaces",
+     "label": "Both surfaces",
+     "state": "supplied",
+     "value": "83 existing / 25 proposed lines",
+     "why": "42 and 22 distinct elevations",
+     "required": true
+    },
+    {
+     "id": "elevations",
+     "label": "Elevations",
+     "state": "missing",
+     "value": "170 of 339 lines (67% by length)",
+     "why": "169 contour lines carry no height, so the surface is interpolated across them - measured on this corpus, that is the single biggest thing moving a volume",
+     "required": true
+    },
+    {
+     "id": "strip",
+     "label": "Topsoil strip",
+     "state": "missing",
+     "value": null,
+     "why": "nothing is stripped, so the cut starts at the ground the sheet draws - 6 in of topsoil moved a measured sheet's cut by 30%",
+     "required": true
+    },
+    {
+     "id": "dig_depth",
+     "label": "Dig depth below finish grade",
+     "state": "missing",
+     "value": null,
+     "why": "the dig stops at finish grade, so any pavement or subgrade section is uncounted - 12 in moved a measured sheet's cut by 88%",
+     "required": true
+    },
+    {
+     "id": "swell",
+     "label": "Shrink and swell",
+     "state": "assumed",
+     "value": "in-place yards",
+     "why": "no factor is applied, so these are neat in-place yards - hauled and compacted quantities differ",
+     "required": true
+    },
+    {
+     "id": "reuse",
+     "label": "Redistribute and reuse",
+     "state": "assumed",
+     "value": "site cut reused 100%, removals exported",
+     "why": "the default: site cut balances against site fill and everything stripped leaves the job",
+     "required": true
+    },
+    {
+     "id": "over_excavation",
+     "label": "over-excavation and subsidence",
+     "state": "not built",
+     "value": null,
+     "why": "not an input this software takes yet - allow for it outside the takeoff",
+     "required": false
+    },
+    {
+     "id": "rock_water",
+     "label": "rock and groundwater",
+     "state": "not built",
+     "value": null,
+     "why": "not an input this software takes yet - allow for it outside the takeoff",
+     "required": false
+    }
+   ],
+   "n_missing": 4,
+   "n_assumed": 2
+  },
+  "shown": "Ready to bid? \u2014 4 required inputs missing and 2 still assumed\u2713Scale 1 in = 30 ftgraphic-bar!Limit of work 100,540 SFwith no limits line the region is wherever the two surfaces overlap, which bulges outside the graded area\u2713Both surfaces 83 existing / 25 proposed lines42 and 22 distinct elevations!Elevations 170 of 339 lines (67% by length)169 contour lines carry no height, so the surface is interpolated across them - measured on this corpus, that is the single biggest thing moving a volume!Topsoil stripnothing is stripped, so the cut starts at the ground the sheet draws - 6 in of topsoil moved a measured sheet's cut by 30%!Dig depth below finish gradethe dig stops at finish grade, so any pavement or subgrade section is uncounted - 12 in moved a measured sheet's cut by 88%~Shrink and swell in-place yards in-place yards are rightno factor is applied, so these are neat in-place yards - hauled and compacted quantities differ~Redistribute and reuse site cut reused 100%, removals exported this balance is rightthe default: site cut balances against site fill and everything stripped leaves the job\u2013over-excavation and subsidencenot an input this software takes yet - allow for it outside the takeoff\u2013rock and groundwaternot an input this software takes yet - allow for it outside the takeoff",
+  "off": false,
+  "buttons": [
+   "swell",
+   "reuse"
+  ],
+  "confirmed": []
+ },
+ "last_post_has_confirmed": [
+  true,
+  true
+ ],
+ "last_post_confirmed": [
+  "swell"
+ ],
+ "after": {
+  "rd": {
+   "ready": false,
+   "sentence": "4 required inputs missing and 1 still assumed",
+   "items": [
+    {
+     "id": "scale",
+     "label": "Scale",
+     "state": "supplied",
+     "value": "1 in = 30 ft",
+     "why": "graphic-bar",
+     "required": true
+    },
+    {
+     "id": "limit_of_work",
+     "label": "Limit of work",
+     "state": "missing",
+     "value": "100,540 SF",
+     "why": "with no limits line the region is wherever the two surfaces overlap, which bulges outside the graded area",
+     "required": true
+    },
+    {
+     "id": "surfaces",
+     "label": "Both surfaces",
+     "state": "supplied",
+     "value": "83 existing / 25 proposed lines",
+     "why": "42 and 22 distinct elevations",
+     "required": true
+    },
+    {
+     "id": "elevations",
+     "label": "Elevations",
+     "state": "missing",
+     "value": "170 of 339 lines (67% by length)",
+     "why": "169 contour lines carry no height, so the surface is interpolated across them - measured on this corpus, that is the single biggest thing moving a volume",
+     "required": true
+    },
+    {
+     "id": "strip",
+     "label": "Topsoil strip",
+     "state": "missing",
+     "value": null,
+     "why": "nothing is stripped, so the cut starts at the ground the sheet draws - 6 in of topsoil moved a measured sheet's cut by 30%",
+     "required": true
+    },
+    {
+     "id": "dig_depth",
+     "label": "Dig depth below finish grade",
+     "state": "missing",
+     "value": null,
+     "why": "the dig stops at finish grade, so any pavement or subgrade section is uncounted - 12 in moved a measured sheet's cut by 88%",
+     "required": true
+    },
+    {
+     "id": "swell",
+     "label": "Shrink and swell",
+     "state": "supplied",
+     "value": "in-place yards",
+     "why": "confirmed by the estimator: no factor on this job",
+     "required": true
+    },
+    {
+     "id": "reuse",
+     "label": "Redistribute and reuse",
+     "state": "assumed",
+     "value": "site cut reused 100%, removals exported",
+     "why": "the default: site cut balances against site fill and everything stripped leaves the job",
+     "required": true
+    },
+    {
+     "id": "over_excavation",
+     "label": "over-excavation and subsidence",
+     "state": "not built",
+     "value": null,
+     "why": "not an input this software takes yet - allow for it outside the takeoff",
+     "required": false
+    },
+    {
+     "id": "rock_water",
+     "label": "rock and groundwater",
+     "state": "not built",
+     "value": null,
+     "why": "not an input this software takes yet - allow for it outside the takeoff",
+     "required": false
+    }
+   ],
+   "n_missing": 4,
+   "n_assumed": 1
+  },
+  "shown": "Ready to bid? \u2014 4 required inputs missing and 1 still assumed\u2713Scale 1 in = 30 ftgraphic-bar!Limit of work 100,540 SFwith no limits line the region is wherever the two surfaces overlap, which bulges outside the graded area\u2713Both surfaces 83 existing / 25 proposed lines42 and 22 distinct elevations!Elevations 170 of 339 lines (67% by length)169 contour lines carry no height, so the surface is interpolated across them - measured on this corpus, that is the single biggest thing moving a volume!Topsoil stripnothing is stripped, so the cut starts at the ground the sheet draws - 6 in of topsoil moved a measured sheet's cut by 30%!Dig depth below finish gradethe dig stops at finish grade, so any pavement or subgrade section is uncounted - 12 in moved a measured sheet's cut by 88%\u2713Shrink and swell in-place yardsconfirmed by the estimator: no factor on this job~Redistribute and reuse site cut reused 100%, removals exported this balance is rightthe default: site cut balances against site fill and everything stripped leaves the job\u2013over-excavation and subsidencenot an input this software takes yet - allow for it outside the takeoff\u2013rock and groundwaternot an input this software takes yet - allow for it outside the takeoff",
+  "off": false,
+  "buttons": [
+   "reuse"
+  ],
+  "confirmed": [
+   "swell"
+  ]
+ },
+ "confirmed_id": "swell"
+}
