@@ -1,0 +1,673 @@
+{
+ "phase": "full",
+ "page": 3,
+ "errors": [],
+ "rounds": [
+  {
+   "ocr": {
+    "patches_planned": 2620,
+    "ocr_calls": 2011,
+    "regions_seen": 2620,
+    "contour_first": 47,
+    "seconds": 205.8,
+    "stopped_early": false,
+    "stop_reason": null,
+    "idle_budget_s": null,
+    "time_budget_s": 900,
+    "chains_read": 7,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": false,
+    "tesseract_launches": 88,
+    "batch_fallbacks": 0
+   },
+   "rows": 0,
+   "withZ": 0,
+   "busy": "read done in 3m 48s \u2014 no contour heights found on this sheet (see below)",
+   "dropped": "6 candidate rows were read off this sheet and dropped. these 5 elevations do not step like contours: the commonest gap between adjacent values is 7.3 ft and it occurs 1 time in 4 (25%). Contours are drawn at a constant interval, so a population read off them repeats one step at least 2 times and over 50% of the gaps. Nothing on this page is glyph text, so that shape is the only evidence there is. Click + Add contour and type an elevation you have read yourself if you disagree.",
+   "moreBtn": false,
+   "cov": {
+    "lines": 178,
+    "withElev": 0
+   },
+   "wall_s": 228.7,
+   "progress": [
+    {
+     "phase": "ocr",
+     "pos": 2620,
+     "planned": 2620,
+     "calls": 2011,
+     "reads": 16,
+     "seconds": 205.8
+    },
+    {
+     "phase": "ocr",
+     "pos": 2620,
+     "planned": 2620,
+     "calls": 2011,
+     "reads": 16,
+     "seconds": 205.8
+    },
+    {
+     "phase": "ocr",
+     "pos": 2620,
+     "planned": 2620,
+     "calls": 2011,
+     "reads": 16,
+     "seconds": 205.8
+    },
+    {
+     "phase": "ocr",
+     "pos": 2620,
+     "planned": 2620,
+     "calls": 2011,
+     "reads": 16,
+     "seconds": 205.8
+    },
+    {
+     "phase": "ocr",
+     "pos": 2620,
+     "planned": 2620,
+     "calls": 2011,
+     "reads": 16,
+     "seconds": 205.8
+    },
+    {
+     "phase": "ocr",
+     "pos": 2620,
+     "planned": 2620,
+     "calls": 2011,
+     "reads": 16,
+     "seconds": 205.8
+    }
+   ],
+   "diag_file": {
+    "patches_planned": 2620,
+    "ocr_calls": 2011,
+    "regions_seen": 2620,
+    "contour_first": 47,
+    "seconds": 205.8,
+    "stopped_early": false,
+    "stop_reason": null,
+    "idle_budget_s": null,
+    "time_budget_s": 900.0,
+    "chains_read": 7,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": false,
+    "tesseract_launches": 88,
+    "batch_fallbacks": 0
+   }
+  }
+ ],
+ "requests": [
+  {
+   "t": 0.2,
+   "ev": "start",
+   "url": "login"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "samples"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "recent"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "config"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "me"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "demo-plans"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "projects"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "config"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "me"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "recent"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "samples"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "recent"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "config"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "me"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "demo-plans"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "projects"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/open"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "config"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "me"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "job/3bb69406cadc/open"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/1/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/4/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/5/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/6/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/7/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/8/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/9/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/10/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/11/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/12/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/13/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/14/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/triage"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/image?dpi=130"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/1/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/4/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/5/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/6/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/7/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/8/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/9/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/10/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/11/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/12/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/13/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/14/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.5,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/status"
+  },
+  {
+   "t": 0.5,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/image?dpi=130"
+  },
+  {
+   "t": 0.5,
+   "ev": "end",
+   "url": "recent"
+  },
+  {
+   "t": 0.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/1/status"
+  },
+  {
+   "t": 0.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/4/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/5/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/6/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/8/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/7/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/9/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/10/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/11/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/12/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/13/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/14/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/triage"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "projects"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/13/image?dpi=28"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/10/image?dpi=28"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/12/image?dpi=28"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/7/image?dpi=28"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/14/image?dpi=28"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/image?dpi=28"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/11/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/9/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/4/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/6/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/1/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/5/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/result"
+  },
+  {
+   "t": 0.7,
+   "ev": "start",
+   "url": "recent"
+  },
+  {
+   "t": 2.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/8/image?dpi=28"
+  },
+  {
+   "t": 2.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/result"
+  },
+  {
+   "t": 2.6,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/twins"
+  },
+  {
+   "t": 2.6,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/calcstate"
+  },
+  {
+   "t": 2.6,
+   "ev": "end",
+   "url": "recent"
+  },
+  {
+   "t": 2.6,
+   "ev": "end",
+   "url": "demo-plans"
+  },
+  {
+   "t": 2.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/calcstate"
+  },
+  {
+   "t": 2.8,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/scale/dimensions"
+  },
+  {
+   "t": 2.8,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/confidence"
+  },
+  {
+   "t": 2.8,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/scale"
+  },
+  {
+   "t": 3.0,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/earthwork/suggest"
+  },
+  {
+   "t": 3.1,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/image?dpi=130"
+  },
+  {
+   "t": 3.2,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/scale"
+  },
+  {
+   "t": 3.2,
+   "ev": "end",
+   "url": "samples"
+  },
+  {
+   "t": 3.3,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/image?dpi=130"
+  },
+  {
+   "t": 4.0,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/scale/dimensions"
+  },
+  {
+   "t": 10.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/confidence"
+  },
+  {
+   "t": 230.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/earthwork/suggest"
+  }
+ ],
+ "appJs": "v=202"
+}

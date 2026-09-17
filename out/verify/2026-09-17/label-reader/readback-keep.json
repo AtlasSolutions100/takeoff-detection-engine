@@ -1,0 +1,1138 @@
+{
+ "phase": "keep",
+ "page": 2,
+ "errors": [],
+ "rounds": [
+  {
+   "ocr": {
+    "patches_planned": 1644,
+    "ocr_calls": 192,
+    "regions_seen": 341,
+    "contour_first": 486,
+    "seconds": 6.4,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2,
+    "chains_read": 1,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": false,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0,
+    "resumable": true
+   },
+   "rows": 60,
+   "withZ": 60,
+   "busy": "read done in 12s \u2014 60 contours with a height \u2014 go through them below \u2193",
+   "dropped": "Label reading stopped early. It checked 341 of 1644 places in 6 s and hit its time limit, so some elevations may be missing. Keep reading or add any you can read with + Add contour.2 candidate rows were read off this sheet and dropped. They were refused by the legend, white-mask, band or ladder filters. Add any the reader should have kept with + Add contour.",
+   "moreBtn": true,
+   "cov": {
+    "lines": 350,
+    "withElev": 60
+   },
+   "wall_s": 13.7,
+   "progress": [
+    {
+     "phase": "ocr",
+     "pos": 0,
+     "planned": 1644,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 0,
+     "planned": 1644,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 0,
+     "planned": 1644,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 0,
+     "planned": 1644,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    }
+   ],
+   "diag_file": {
+    "patches_planned": 1644,
+    "ocr_calls": 192,
+    "regions_seen": 341,
+    "contour_first": 486,
+    "seconds": 6.4,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2.0,
+    "chains_read": 1,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": false,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0
+   }
+  },
+  {
+   "ocr": {
+    "patches_planned": 1644,
+    "ocr_calls": 384,
+    "regions_seen": 694,
+    "contour_first": 486,
+    "seconds": 12.9,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2,
+    "chains_read": 3,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0,
+    "resumable": true
+   },
+   "rows": 60,
+   "withZ": 60,
+   "busy": "read done in 13s \u2014 60 contours with a height \u2014 go through them below \u2193",
+   "dropped": "Label reading stopped early. It checked 694 of 1644 places in 13 s and hit its time limit, so some elevations may be missing. Keep reading or add any you can read with + Add contour.2 candidate rows were read off this sheet and dropped. They were refused by the legend, white-mask, band or ladder filters. Add any the reader should have kept with + Add contour.",
+   "moreBtn": true,
+   "cov": {
+    "lines": 350,
+    "withElev": 60
+   },
+   "wall_s": 14.6,
+   "progress": [
+    {
+     "phase": "render",
+     "pos": 0,
+     "planned": 0,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 341,
+     "planned": 1644,
+     "calls": 192,
+     "reads": 1,
+     "seconds": 6.4
+    },
+    {
+     "phase": "ocr",
+     "pos": 341,
+     "planned": 1644,
+     "calls": 192,
+     "reads": 1,
+     "seconds": 6.4
+    },
+    {
+     "phase": "ocr",
+     "pos": 341,
+     "planned": 1644,
+     "calls": 192,
+     "reads": 1,
+     "seconds": 6.4
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    }
+   ],
+   "diag_file": {
+    "patches_planned": 1644,
+    "ocr_calls": 384,
+    "regions_seen": 694,
+    "contour_first": 486,
+    "seconds": 12.9,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2.0,
+    "chains_read": 3,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0
+   },
+   "resume_file": true
+  },
+  {
+   "ocr": {
+    "patches_planned": 1644,
+    "ocr_calls": 576,
+    "regions_seen": 1091,
+    "contour_first": 486,
+    "seconds": 19.4,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2,
+    "chains_read": 4,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0,
+    "resumable": true
+   },
+   "rows": 60,
+   "withZ": 60,
+   "busy": "read done in 13s \u2014 60 contours with a height \u2014 go through them below \u2193",
+   "dropped": "Label reading stopped early. It checked 1091 of 1644 places in 19 s and hit its time limit, so some elevations may be missing. Keep reading or add any you can read with + Add contour.2 candidate rows were read off this sheet and dropped. They were refused by the legend, white-mask, band or ladder filters. Add any the reader should have kept with + Add contour.",
+   "moreBtn": true,
+   "cov": {
+    "lines": 350,
+    "withElev": 60
+   },
+   "wall_s": 14.5,
+   "progress": [
+    {
+     "phase": "render",
+     "pos": 0,
+     "planned": 0,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 694,
+     "planned": 1644,
+     "calls": 384,
+     "reads": 3,
+     "seconds": 12.9
+    },
+    {
+     "phase": "ocr",
+     "pos": 694,
+     "planned": 1644,
+     "calls": 384,
+     "reads": 3,
+     "seconds": 12.9
+    },
+    {
+     "phase": "ocr",
+     "pos": 694,
+     "planned": 1644,
+     "calls": 384,
+     "reads": 3,
+     "seconds": 12.9
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    }
+   ],
+   "diag_file": {
+    "patches_planned": 1644,
+    "ocr_calls": 576,
+    "regions_seen": 1091,
+    "contour_first": 486,
+    "seconds": 19.4,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2.0,
+    "chains_read": 4,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0
+   },
+   "resume_file": true
+  },
+  {
+   "ocr": {
+    "patches_planned": 1644,
+    "ocr_calls": 768,
+    "regions_seen": 1461,
+    "contour_first": 486,
+    "seconds": 25.7,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2,
+    "chains_read": 5,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0,
+    "resumable": true
+   },
+   "rows": 60,
+   "withZ": 60,
+   "busy": "read done in 13s \u2014 60 contours with a height \u2014 go through them below \u2193",
+   "dropped": "Label reading stopped early. It checked 1461 of 1644 places in 26 s and hit its time limit, so some elevations may be missing. Keep reading or add any you can read with + Add contour.2 candidate rows were read off this sheet and dropped. They were refused by the legend, white-mask, band or ladder filters. Add any the reader should have kept with + Add contour.",
+   "moreBtn": true,
+   "cov": {
+    "lines": 350,
+    "withElev": 60
+   },
+   "wall_s": 14.5,
+   "progress": [
+    {
+     "phase": "render",
+     "pos": 0,
+     "planned": 0,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 1091,
+     "planned": 1644,
+     "calls": 576,
+     "reads": 4,
+     "seconds": 19.4
+    },
+    {
+     "phase": "ocr",
+     "pos": 1091,
+     "planned": 1644,
+     "calls": 576,
+     "reads": 4,
+     "seconds": 19.4
+    },
+    {
+     "phase": "ocr",
+     "pos": 1091,
+     "planned": 1644,
+     "calls": 576,
+     "reads": 4,
+     "seconds": 19.4
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    }
+   ],
+   "diag_file": {
+    "patches_planned": 1644,
+    "ocr_calls": 768,
+    "regions_seen": 1461,
+    "contour_first": 486,
+    "seconds": 25.7,
+    "stopped_early": true,
+    "stop_reason": "cap",
+    "idle_budget_s": null,
+    "time_budget_s": 2.0,
+    "chains_read": 5,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 8,
+    "batch_fallbacks": 0
+   },
+   "resume_file": true
+  },
+  {
+   "ocr": {
+    "patches_planned": 1644,
+    "ocr_calls": 861,
+    "regions_seen": 1644,
+    "contour_first": 486,
+    "seconds": 29.4,
+    "stopped_early": false,
+    "stop_reason": null,
+    "idle_budget_s": null,
+    "time_budget_s": 2,
+    "chains_read": 6,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 4,
+    "batch_fallbacks": 0
+   },
+   "rows": 60,
+   "withZ": 60,
+   "busy": "read done in 10s \u2014 60 contours with a height \u2014 go through them below \u2193",
+   "dropped": "4 candidate rows were read off this sheet and dropped. They were refused by the legend, white-mask, band or ladder filters. Add any the reader should have kept with + Add contour.",
+   "moreBtn": false,
+   "cov": {
+    "lines": 350,
+    "withElev": 60
+   },
+   "wall_s": 11.6,
+   "progress": [
+    {
+     "phase": "render",
+     "pos": 0,
+     "planned": 0,
+     "calls": 0,
+     "reads": 0,
+     "seconds": 0
+    },
+    {
+     "phase": "ocr",
+     "pos": 1461,
+     "planned": 1644,
+     "calls": 768,
+     "reads": 5,
+     "seconds": 25.7
+    },
+    {
+     "phase": "ocr",
+     "pos": 1461,
+     "planned": 1644,
+     "calls": 768,
+     "reads": 5,
+     "seconds": 25.7
+    },
+    {
+     "phase": "ocr",
+     "pos": 1461,
+     "planned": 1644,
+     "calls": 768,
+     "reads": 5,
+     "seconds": 25.7
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    },
+    {
+     "phase": "done",
+     "pos": null,
+     "planned": null,
+     "calls": null,
+     "reads": null,
+     "seconds": null
+    }
+   ],
+   "diag_file": {
+    "patches_planned": 1644,
+    "ocr_calls": 861,
+    "regions_seen": 1644,
+    "contour_first": 486,
+    "seconds": 29.4,
+    "stopped_early": false,
+    "stop_reason": null,
+    "idle_budget_s": null,
+    "time_budget_s": 2.0,
+    "chains_read": 6,
+    "reader": "batch-1",
+    "batch": 48,
+    "workers": 4,
+    "resumed": true,
+    "tesseract_launches": 4,
+    "batch_fallbacks": 0
+   },
+   "resume_file": false
+  }
+ ],
+ "requests": [
+  {
+   "t": 0.2,
+   "ev": "start",
+   "url": "login"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "samples"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "recent"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "config"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "me"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "demo-plans"
+  },
+  {
+   "t": 0.3,
+   "ev": "start",
+   "url": "projects"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "config"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "me"
+  },
+  {
+   "t": 0.3,
+   "ev": "end",
+   "url": "recent"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "samples"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "recent"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "config"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "me"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "demo-plans"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "projects"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/open"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "config"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "beta-notice"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "me"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "job/3bb69406cadc/open"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/1/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/4/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/5/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/6/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/7/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/8/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/9/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/10/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/11/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/12/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/13/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/14/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/triage"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/image?dpi=130"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/0/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/1/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/3/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/4/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/5/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/6/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/7/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/8/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/9/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/10/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/11/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/12/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/13/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/14/image?dpi=28"
+  },
+  {
+   "t": 0.4,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/1/status"
+  },
+  {
+   "t": 0.5,
+   "ev": "end",
+   "url": "recent"
+  },
+  {
+   "t": 0.5,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/status"
+  },
+  {
+   "t": 0.5,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/image?dpi=130"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/4/status"
+  },
+  {
+   "t": 0.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/5/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/6/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/7/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/8/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/10/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/9/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/11/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/12/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/13/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/14/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/status"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/triage"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/9/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "projects"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/5/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/7/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/8/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/10/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/11/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "start",
+   "url": "recent"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/12/image?dpi=28"
+  },
+  {
+   "t": 0.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/6/image?dpi=28"
+  },
+  {
+   "t": 0.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/14/image?dpi=28"
+  },
+  {
+   "t": 0.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/3/image?dpi=28"
+  },
+  {
+   "t": 0.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/4/image?dpi=28"
+  },
+  {
+   "t": 0.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/13/image?dpi=28"
+  },
+  {
+   "t": 0.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/1/image?dpi=28"
+  },
+  {
+   "t": 0.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/status"
+  },
+  {
+   "t": 0.8,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/result"
+  },
+  {
+   "t": 0.9,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/result"
+  },
+  {
+   "t": 0.9,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/twins"
+  },
+  {
+   "t": 0.9,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/calcstate"
+  },
+  {
+   "t": 0.9,
+   "ev": "end",
+   "url": "recent"
+  },
+  {
+   "t": 0.9,
+   "ev": "end",
+   "url": "demo-plans"
+  },
+  {
+   "t": 0.9,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/calcstate"
+  },
+  {
+   "t": 1.2,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest"
+  },
+  {
+   "t": 1.2,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/scale/dimensions"
+  },
+  {
+   "t": 1.2,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/confidence"
+  },
+  {
+   "t": 1.2,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/scale"
+  },
+  {
+   "t": 1.3,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/twins"
+  },
+  {
+   "t": 3.0,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/confidence"
+  },
+  {
+   "t": 3.0,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/scale/dimensions"
+  },
+  {
+   "t": 7.4,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/scale"
+  },
+  {
+   "t": 7.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/image?dpi=130"
+  },
+  {
+   "t": 7.7,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/0/image?dpi=130"
+  },
+  {
+   "t": 7.8,
+   "ev": "end",
+   "url": "samples"
+  },
+  {
+   "t": 15.3,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest"
+  },
+  {
+   "t": 15.4,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/earthwork/zone"
+  },
+  {
+   "t": 15.9,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/earthwork/zone"
+  },
+  {
+   "t": 17.6,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/calcstate"
+  },
+  {
+   "t": 17.6,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 17.6,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/calcstate"
+  },
+  {
+   "t": 30.8,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 32.8,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 46.0,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 48.0,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 61.1,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 63.1,
+   "ev": "start",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  },
+  {
+   "t": 73.5,
+   "ev": "end",
+   "url": "job/3bb69406cadc/page/2/earthwork/suggest?more=1"
+  }
+ ],
+ "appJs": "v=202"
+}
