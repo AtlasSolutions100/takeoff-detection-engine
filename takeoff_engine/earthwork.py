@@ -2378,9 +2378,15 @@ _OCR_BUDGET = 1400
 # misread (the majority rule in the conflict resolution below). A fourth
 # adds nothing that the ranking can use.
 _OCR_READS_PER_CHAIN = 3
-# regions between progress reports (gap_label_elevations `progress`): ten is
-# ~2 s unloaded at 0.23 s a call, well under the panel's poll
-_PROGRESS_EVERY = 10
+# Patches per tesseract batch (_read_label_patches). One launch reads the
+# whole list: measured 2026-09-17 on this box, 48 patches in 326 ms against
+# 710 ms for ONE patch launched alone - the launch, not the reading, was the
+# cost. 48 also sets the progress cadence (the pass reports after every
+# batch) and bounds the work still in flight when the clock stops a pass.
+_OCR_BATCH = 48
+# Which reader built a cached result (diag["reader"]). The server re-reads a
+# cut-short cache that an older, slower reader left behind.
+GAP_READER = "batch-1"
 # Patch band height: label text on these sheets is 7-10 pt tall; a 12 pt
 # band clears it, while v1's 22 pt band pulled in the neighbouring contour
 # on C-04's tight strip (~10-15 pt between contours) and its labels with it.
@@ -2446,10 +2452,20 @@ def _read_label_patch(cv2, pytesseract, re, patch) -> str | None:
         a substring of it (V1 glimpsed a fragment of the same digits; this
         rejected V2's one plausible-but-wrong read, 575 for a true 577).
     """
+    bw1, tight = _label_variants(cv2, patch)
+    t1, raw1 = _ocr_digit_string(pytesseract, re, bw1)
+    t2 = None
+    if tight is not None:
+        t2, _ = _ocr_digit_string(pytesseract, re, tight)
+    return _label_rule(t1, raw1, t2)
+
+
+def _label_variants(cv2, patch):
+    """(V1, V2 or None) for one patch - the two images _read_label_patch
+    reads."""
     big = cv2.resize(patch, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     _, bw1 = cv2.threshold(big, 0, 255,
                            cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    t1, raw1 = _ocr_digit_string(pytesseract, re, bw1)
     _, inv = cv2.threshold(big, 0, 255,
                            cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(inv, 8)
@@ -2462,14 +2478,17 @@ def _read_label_patch(cv2, pytesseract, re, patch) -> str | None:
             continue
         keep[lab == i] = 255
         boxes.append((x, y, w, h))
-    t2 = None
-    if boxes:
-        x0 = min(b[0] for b in boxes)
-        y0 = min(b[1] for b in boxes)
-        x1 = max(b[0] + b[2] for b in boxes)
-        y1 = max(b[1] + b[3] for b in boxes)
-        tight = 255 - keep[max(y0 - 6, 0):y1 + 6, max(x0 - 6, 0):x1 + 6]
-        t2, _ = _ocr_digit_string(pytesseract, re, tight)
+    if not boxes:
+        return bw1, None
+    x0 = min(b[0] for b in boxes)
+    y0 = min(b[1] for b in boxes)
+    x1 = max(b[0] + b[2] for b in boxes)
+    y1 = max(b[1] + b[3] for b in boxes)
+    return bw1, 255 - keep[max(y0 - 6, 0):y1 + 6, max(x0 - 6, 0):x1 + 6]
+
+
+def _label_rule(t1, raw1, t2):
+    """The V1/V2 decision - the rule in _read_label_patch's docstring."""
     if t1 is not None and t2 is not None:
         if t2 != t1 and len(t2) < len(t1) and t2 in t1:
             return t2
@@ -2481,6 +2500,172 @@ def _read_label_patch(cv2, pytesseract, re, patch) -> str | None:
     return None
 
 
+_TESS_CFG = "-c tessedit_char_whitelist=0123456789."
+
+
+def _tess_batch(pytesseract, images: list, psm: int):
+    """Raw text for every image from ONE tesseract launch, or None when the
+    batch could not be read (the caller then launches once per image,
+    exactly as before).
+
+    Tesseract takes a text file listing images and reads each as a page of
+    one document with the given page segmentation, the pages' text
+    separated by form feeds - measured: one piece per image, a blank patch
+    gives an empty piece wherever it sits in the list. On this Windows box
+    a launch costs 0.3-1.2 s whatever it reads, and a patch read one launch
+    at a time was up to FOUR launches (two images, two modes)."""
+    import os
+    import subprocess
+    import tempfile
+
+    import cv2
+    if not images:
+        return []
+    try:
+        with tempfile.TemporaryDirectory(prefix="ewocr_") as d:
+            paths = []
+            for i, im in enumerate(images):
+                fp = os.path.join(d, f"{i:05d}.png")
+                if not cv2.imwrite(fp, im):
+                    return None
+                paths.append(fp)
+            lst = os.path.join(d, "pages.txt")
+            with open(lst, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(paths) + "\n")
+            # several of these run at once (gap_label_elevations `workers`):
+            # one thread each, the usual advice for parallel tesseract runs
+            # (measured no slower for one batch alone: 320 ms against 326)
+            env = dict(os.environ, OMP_THREAD_LIMIT="1")
+            kw = {}
+            if os.name == "nt":
+                kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            r = subprocess.run(
+                [pytesseract.pytesseract.tesseract_cmd, lst, "stdout",
+                 "--psm", str(psm)] + _TESS_CFG.split(),
+                capture_output=True, env=env,
+                timeout=120 + 5 * len(images), **kw)
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    pages = r.stdout.decode("utf-8", "replace").split("\f")
+    if len(pages) == len(images) + 1 and not pages[-1].strip():
+        pages = pages[:-1]
+    if len(pages) != len(images):
+        return None
+    return pages
+
+
+def _digit_strings_batch(pytesseract, re, images: list, stats=None):
+    """_ocr_digit_string for a list of images: ([valid or None], [[raw]]).
+    psm 7 for all of them in one launch, psm 8 for the ones psm 7 did not
+    read in a second - the per-image order, batched."""
+    n = len(images)
+    valid = [None] * n
+    outs = [[] for _ in range(n)]
+    todo = list(range(n))
+    for psm in (7, 8):
+        if not todo:
+            break
+        texts = _tess_batch(pytesseract, [images[i] for i in todo], psm)
+        if stats is not None:
+            stats["launches"] = stats.get("launches", 0) + 1
+        if texts is None:
+            if stats is not None:
+                stats["fallbacks"] = stats.get("fallbacks", 0) + 1
+            texts = []
+            for i in todo:
+                try:
+                    texts.append(pytesseract.image_to_string(
+                        images[i], config=f"--psm {psm} {_TESS_CFG}"))
+                except Exception:
+                    texts.append(None)
+        nxt = []
+        for i, t in zip(todo, texts):
+            if t is None:
+                continue           # the per-image reader gives up here too
+            t = t.strip().strip(".")
+            outs[i].append(t)
+            if re.fullmatch(r"\d{3,4}(\.\d{1,2})?", t):
+                valid[i] = t
+            else:
+                nxt.append(i)
+        todo = nxt
+    return valid, outs
+
+
+def _read_label_patches(cv2, pytesseract, re, patches: list,
+                        stats=None) -> list:
+    """_read_label_patch for a list of patches in two tesseract launches
+    instead of up to four per patch: the same two images per patch, the
+    same page segmentation for each, the same rule (_label_variants,
+    _label_rule) - so each answer is the per-patch reader's.
+    tests/test_ocr_batch.py holds the two readers to the same answers."""
+    if not patches:
+        return []
+    n = len(patches)
+    variants = [_label_variants(cv2, pt_) for pt_ in patches]
+    imgs = [v[0] for v in variants]
+    idx2 = []
+    for i, v in enumerate(variants):
+        if v[1] is not None:
+            idx2.append(i)
+            imgs.append(v[1])
+    valid, outs = _digit_strings_batch(pytesseract, re, imgs, stats)
+    t2 = [None] * n
+    for k, i in enumerate(idx2):
+        t2[i] = valid[n + k]
+    return [_label_rule(valid[i], outs[i], t2[i]) for i in range(n)]
+
+
+# The CAD layer words for contour lines, for the reading order below:
+# TOPO is the National CAD Standard topography layer (C-TOPO, V-TOPO -
+# general CAD practice; Barn C3.0 and Belle Farms draw their contours on
+# C-TOPO layers), SURFACE / SURF the Civil 3D surface layers (C0.00, C4.0,
+# C4.1 draw theirs on O-SURFACE-... - sheet evidence), CONT a common short
+# form, as a whole word only (so CONTROL and CONTRACT do not count).
+_CONTOUR_NAME = re.compile(
+    r"CONTOUR|TOPO|(?:^|[^A-Z])CONT(?:[^A-Z]|$)"
+    r"|(?:^|[-_|])SURF(?:ACE)?(?:[-_|]|$)", re.I)
+
+
+def contour_priority(chains: list, styles: list, exclude=None) -> set:
+    """Chain ids the gap-label reader visits FIRST: the families this sheet
+    itself calls contours - its legend matched a CONTOUR row, or the
+    family's name or CAD layer is a contour layer (_CONTOUR_NAME).
+
+    Barn C3.0, measured 2026-09-17: 70% of the reader's 1,644 planned
+    places sat on other lines (planting, hatch, title block), and the
+    clock stopped the pass with 264 of its 426 reads spent there. The
+    order is the only thing this changes - every other line is still
+    read, after these - and a sheet that names no contour family (C2.1,
+    C4_ GRADING) keeps its old order exactly. A wrong pick costs only
+    order: the legend matcher calls two Barn retaining-wall and gravel
+    families PROPOSED CONTOUR (16 chains), and they are read early."""
+    verdicts = family_verdicts(styles or [])
+    names = {}
+    for st_ in styles or []:
+        if st_.get("style_id") is None:
+            continue
+        names[st_["style_id"]] = " ".join(
+            str(st_.get(k) or "") for k in ("suggested_label", "label", "layer"))
+    out = set()
+    for c in chains:
+        cid = int(c.chain_id)
+        if exclude and cid in exclude:
+            continue
+        sid = getattr(c, "style_id", None)
+        role = (verdicts.get(sid) or {}).get("role")
+        text = names.get(sid, "") + " " + (getattr(c, "layer", "") or "")
+        if role in ("existing", "proposed", "contour") \
+                or _CONTOUR_NAME.search(text):
+            out.add(cid)
+    return out
+
+
+_READ_LABEL_PATCH_BUILTIN = _read_label_patch
+
+
 def gap_label_elevations(chains: list, page_img: np.ndarray,
                          px_per_pt: float,
                          max_patches: int = _OCR_BUDGET,
@@ -2488,7 +2673,10 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
                          time_budget_s: float | None = None,
                          idle_budget_s: float | None = None,
                          diag: dict | None = None,
-                         progress=None) -> dict:
+                         progress=None,
+                         priority: set | None = None,
+                         workers: int = 1,
+                         resume: dict | None = None) -> dict:
     """Read elevation labels printed INSIDE breaks of their own contour.
 
     Contour elevations sit in a gap of the line, rotated to follow it.
@@ -2505,9 +2693,27 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     budget cut trims the least label-like patches instead of whichever
     chains happened to come last (the v1 failure on C-04).
 
+    `priority`: chain ids whose regions all come before everyone else's
+    (contour_priority - the families the sheet calls contours), each group
+    round-robin as above. No priority, the old order exactly.
+
+    Reading: patches are cut in plan order and read _OCR_BATCH at a time
+    (_read_label_patches - two tesseract launches a batch where one patch
+    used to take up to four), `workers` batches at once, and the answers
+    applied back in plan order under the same per-chain cap and call
+    budget as one-at-a-time, so a pass that runs to the end returns the
+    same elevations at any batch size or worker count.
+
+    `resume`: diag["resume"] from a pass that stopped early (a clock or the
+    call budget). If the plan is the same (same chains, exclusions and
+    order - plan_sig), this pass carries on where that one stopped, with
+    its reads, instead of starting over: "keep reading". The budgets apply
+    to this pass alone.
+
     Returns {chain_id: (z, cx_pt, cy_pt)}. Chains whose gap labels
     disagree are dropped - ambiguity is worse than absence.
     """
+    import hashlib
     import re
 
     try:
@@ -2527,17 +2733,28 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     # cut is by likelihood, not by chain order
     for regs in regions.values():
         regs.sort(key=lambda r: (r[0], abs(r[5] - _LABEL_SPAN_PT)))
-    order = []
-    rnd = 0
-    while True:
-        layer = [(cid, regs[rnd]) for cid, regs in regions.items()
-                 if len(regs) > rnd]
-        if not layer:
-            break
-        layer.sort(key=lambda t: (t[1][0], abs(t[1][5] - _LABEL_SPAN_PT),
-                                  t[0]))
-        order += layer
-        rnd += 1
+
+    def _round_robin(cids):
+        seq = []
+        rnd = 0
+        while True:
+            layer = [(cid, regions[cid][rnd]) for cid in cids
+                     if len(regions[cid]) > rnd]
+            if not layer:
+                break
+            layer.sort(key=lambda t: (t[1][0], abs(t[1][5] - _LABEL_SPAN_PT),
+                                      t[0]))
+            seq += layer
+            rnd += 1
+        return seq
+
+    # CONTOURS FIRST (contour_priority), then everything else
+    pri = {int(c) for c in (priority or ())}
+    first = _round_robin([c for c in regions if int(c) in pri])
+    order = first + _round_robin([c for c in regions if int(c) not in pri])
+    plan_sig = hashlib.sha1(repr([
+        (int(c), int(r[0]), round(float(r[1]), 1), round(float(r[2]), 1))
+        for c, r in order]).encode()).hexdigest()[:16]
 
     reads: dict = {}
     n_ocr = 0  # the budget counts tesseract calls; the numpy gates that
@@ -2563,42 +2780,46 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
     t0 = _time.monotonic()
     stopped_early = False
     stop_reason = None
+    # RESUME (see the docstring): the earlier pass's reads and position
+    start, calls0, secs0, resumed = 0, 0, 0.0, False
+    if resume and resume.get("plan_sig") == plan_sig:
+        try:
+            start = min(max(int(resume.get("pos") or 0), 0), len(order))
+            calls0 = int(resume.get("calls") or 0)
+            secs0 = float(resume.get("seconds") or 0.0)
+            for k, vals in (resume.get("reads") or {}).items():
+                reads[int(k)] = [(float(v[0]), float(v[1]), float(v[2]),
+                                  int(v[3])) for v in vals]
+            resumed = True
+        except (TypeError, ValueError, IndexError, AttributeError):
+            reads.clear()
+            start, calls0, secs0 = 0, 0, 0.0
     # PROGRESS, for the panel. `progress` (server-side: a sidecar the panel
-    # polls) is told every _PROGRESS_EVERY regions where the pass is:
-    # regions visited of planned - the honest fraction, since a region may
-    # be skipped by the ink gates without a tesseract call - plus calls and
-    # raw reads so far. Until 2026-09-09 the panel could show only a clock,
-    # because this loop reported nothing until it was done.
-    n_seen = 0
+    # polls) is told after every batch where the pass is: regions visited
+    # of planned - the honest fraction, since a region may be skipped by the
+    # ink gates without a tesseract call - plus calls and raw reads so far.
+    # Until 2026-09-09 the panel could show only a clock, because this loop
+    # reported nothing until it was done. `pos` counts only regions whose
+    # answers are IN, so it never runs ahead of the reads.
+    n_seen = start
+    told = [start]
 
     def _tell(final=False):
         if progress is None:
             return
+        told[0] = n_seen
         try:
-            progress({"pos": n_seen, "planned": len(order), "calls": n_ocr,
-                      "reads": len(reads),
-                      "seconds": round(_time.monotonic() - t0, 1),
+            progress({"pos": n_seen, "planned": len(order),
+                      "calls": calls0 + n_ocr, "reads": len(reads),
+                      "seconds": round(secs0 + _time.monotonic() - t0, 1),
                       "final": final})
         except Exception:
             pass
 
-    _tell()
-    for cid, (kind, cx, cy, ux, uy, span) in order:
-        n_seen += 1
-        if n_seen % _PROGRESS_EVERY == 0:
-            _tell()
-        if n_ocr >= max_patches:
-            break
-        elapsed = _time.monotonic() - t0
-        if time_budget_s is not None and elapsed > time_budget_s:
-            stopped_early, stop_reason = True, "cap"
-            break
-        if (idle_budget_s is not None and elapsed > idle_budget_s
-                and not reads):
-            stopped_early, stop_reason = True, "idle"
-            break
-        if len(reads.get(cid, ())) >= _OCR_READS_PER_CHAIN:
-            continue
+    def _cut(kind, cx, cy, ux, uy, span, wide):
+        """One region's flattened patch, or None (off the image, or failing
+        the ink gates - the wide mask retry skips the gates, as it always
+        did)."""
         ang = float(np.degrees(np.arctan2(uy, ux)))
         if ang > 90:
             ang -= 180
@@ -2608,15 +2829,20 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
         # A break region needs margin (the digits can outgrow the visible
         # break); a mask region must stay tight - C-04's south strip
         # prints its labels ~40 pt apart, and a wide mask patch caught the
-        # NEIGHBOUR's digits alongside the chain's own.
-        w_pt = span + (16.0 if kind == 0 else 30.0)
+        # NEIGHBOUR's digits alongside the chain's own. The mask retry
+        # (wide) takes the break margin: the tight mask patch clips a
+        # label whose digits outgrow the mask stroke (C-04 chain 806); it
+        # stays second choice because in a dense strip it can catch a
+        # neighbour's digits - a wrong wide read still has to survive the
+        # band + kind ranking.
+        w_pt = span + (16.0 if (kind == 0 and not wide) else 30.0)
         h_pt = _OCR_BAND_PT
         D = int((np.hypot(w_pt, h_pt) + 6) * px_per_pt)
         cxp, cyp = int(cx * px_per_pt), int(cy * px_per_pt)
         x0, y0 = max(cxp - D // 2, 0), max(cyp - D // 2, 0)
         crop = gray[y0:y0 + D, x0:x0 + D]
         if crop.size == 0:
-            continue
+            return None
         M = cv2.getRotationMatrix2D((cxp - x0, cyp - y0), ang, 1.0)
         rot = cv2.warpAffine(crop, M, (crop.shape[1], crop.shape[0]),
                              borderValue=255)
@@ -2625,49 +2851,141 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
         mx, my = cxp - x0, cyp - y0
         patch = rot[max(my - bh, 0):my + bh, max(mx - bw, 0):mx + bw]
         if patch.size == 0:
-            continue
+            return None
+        if wide:
+            return patch
         # ink gates (see the constants): a solid/hatch patch cannot be a
         # label, and a patch with no ink OFF the chord is an empty break
         # or the drawn line itself - skipping both keeps the tesseract
         # time for patches that can pay
         if float(np.mean(patch < _OCR_INK_LEVEL)) > _OCR_INK_MAX:
-            continue
+            return None
         off = int(_OCR_OFFCHORD_HALF_PT * px_per_pt)
         mid = patch.shape[0] // 2
         rows = np.r_[0:max(mid - off, 0),
                      min(mid + off + 1, patch.shape[0]):patch.shape[0]]
         if len(rows) and float(
                 np.mean(patch[rows] < _OCR_INK_LEVEL)) < _OCR_OFFCHORD_MIN:
-            continue
-        n_ocr += 1
-        txt = _read_label_patch(cv2, pytesseract, re, patch)
-        if txt is None and kind == 0 and n_ocr < max_patches:
-            # mask retry with break-sized margin: the tight mask patch
-            # clips a label whose digits outgrow the mask stroke (C-04
-            # chain 806); the wide patch stays second choice because in
-            # a dense strip it can catch a neighbour's digits - a wrong
-            # wide read still has to survive the band + kind ranking
-            wide = span + 30.0
-            D2 = int((np.hypot(wide, h_pt) + 6) * px_per_pt)
-            x2, y2 = max(cxp - D2 // 2, 0), max(cyp - D2 // 2, 0)
-            crop2 = gray[y2:y2 + D2, x2:x2 + D2]
-            if crop2.size:
-                M2 = cv2.getRotationMatrix2D((cxp - x2, cyp - y2), ang, 1.0)
-                rot2 = cv2.warpAffine(crop2, M2,
-                                      (crop2.shape[1], crop2.shape[0]),
-                                      borderValue=255)
-                bw2 = int(wide * px_per_pt / 2)
-                mx2, my2 = cxp - x2, cyp - y2
-                patch2 = rot2[max(my2 - bh, 0):my2 + bh,
-                              max(mx2 - bw2, 0):mx2 + bw2]
-                if patch2.size:
-                    n_ocr += 1
-                    txt = _read_label_patch(cv2, pytesseract, re, patch2)
-        if txt is None:
-            continue
-        v = float(txt)
-        if 10.0 <= v <= 9999.0:
-            reads.setdefault(cid, []).append((v, float(cx), float(cy), kind))
+            return None
+        return patch
+
+    # a stand-in per-patch reader (tests, tools) is honoured as it is, one
+    # patch at a time
+    stub = _read_label_patch is not _READ_LABEL_PATCH_BUILTIN
+
+    def _read_window(items):
+        """[(answer, wide answer)] for one batch of (patch, wide patch):
+        the patches in one go, then the wide retries of the mask patches
+        that did not read."""
+        st = {}
+        if stub:
+            t = [_read_label_patch(cv2, pytesseract, re, it[0])
+                 for it in items]
+        else:
+            t = _read_label_patches(cv2, pytesseract, re,
+                                    [it[0] for it in items], st)
+        need = [i for i, it in enumerate(items)
+                if t[i] is None and it[1] is not None]
+        if stub:
+            tw = {i: _read_label_patch(cv2, pytesseract, re, items[i][1])
+                  for i in need}
+        else:
+            tw = dict(zip(need, _read_label_patches(
+                cv2, pytesseract, re, [items[i][1] for i in need], st)))
+        return [(t[i], tw.get(i)) for i in range(len(items))], st
+
+    def _apply(window, answers):
+        """One batch's answers, in plan order, with the one-at-a-time
+        loop's per-chain cap and call budget. Returns the plan index of
+        the first region the budget left unapplied, else None."""
+        nonlocal n_ocr
+        for (idx, cid, kind, cx, cy, has_wide), (txt, wide_txt) in zip(
+                window, answers):
+            if n_ocr >= max_patches:
+                return idx
+            if len(reads.get(cid, ())) >= _OCR_READS_PER_CHAIN:
+                continue
+            n_ocr += 1
+            if txt is None and has_wide and n_ocr < max_patches:
+                n_ocr += 1
+                txt = wide_txt
+            if txt is None:
+                continue
+            v = float(txt)
+            if 10.0 <= v <= 9999.0:
+                reads.setdefault(cid, []).append(
+                    (v, float(cx), float(cy), kind))
+        return None
+
+    from concurrent.futures import ThreadPoolExecutor
+    workers = max(1, int(workers or 1))
+    batch = 1 if stub else _OCR_BATCH
+    tess = {}
+    pending = []     # [window, future, plan position once it is applied]
+    cut_at = None    # where the call budget ran out
+    pos = start
+
+    def _drain(wait_all):
+        nonlocal n_seen, cut_at
+        while pending and (wait_all or len(pending) >= workers
+                           or pending[0][1].done()):
+            window, fut, end = pending.pop(0)
+            answers, st = fut.result()
+            for k, v in st.items():
+                tess[k] = tess.get(k, 0) + v
+            if cut_at is None:
+                cut_at = _apply(window, answers)
+                n_seen = end if cut_at is None else cut_at
+                _tell()
+
+    _tell()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        while pos < len(order) and cut_at is None:
+            if n_ocr >= max_patches:
+                break
+            elapsed = _time.monotonic() - t0
+            if time_budget_s is not None and elapsed > time_budget_s:
+                stopped_early, stop_reason = True, "cap"
+                break
+            if (idle_budget_s is not None and elapsed > idle_budget_s
+                    and not reads):
+                stopped_early, stop_reason = True, "idle"
+                break
+            window, items = [], []
+            while pos < len(order) and len(items) < batch:
+                idx = pos
+                cid, (kind, cx, cy, ux, uy, span) = order[pos]
+                pos += 1
+                patch = None
+                if len(reads.get(cid, ())) < _OCR_READS_PER_CHAIN:
+                    patch = _cut(kind, cx, cy, ux, uy, span, False)
+                if patch is None:
+                    # nothing to read here. With nothing in flight and
+                    # nothing built, the pass HAS reached this region, so
+                    # the panel can be told - a long run of gated regions
+                    # (hatch, solid fill) builds no batch, and reporting
+                    # only per batch left the count frozen mid-pass where
+                    # the one-at-a-time loop moved it every ten regions.
+                    if not pending and not items:
+                        n_seen = pos
+                        if n_seen - told[0] >= _OCR_BATCH:
+                            _tell()
+                    continue
+                wide = (_cut(kind, cx, cy, ux, uy, span, True)
+                        if kind == 0 else None)
+                window.append((idx, cid, kind, cx, cy, wide is not None))
+                items.append((patch, wide))
+            if items:
+                pending.append([window, pool.submit(_read_window, items), pos])
+            elif pending:
+                pending[-1][2] = pos   # skipped regions close with that batch
+            else:
+                n_seen = pos
+            _drain(False)
+        _drain(True)
+    if not stopped_early and n_seen < len(order):
+        # the CALL budget ran out before the plan did - said, not silent
+        stopped_early, stop_reason = True, "calls"
     # Conflict resolution - an explicit ranking, measured on C-04's
     # misread population (a line stroke read as an extra or swapped
     # digit: 5674/567, 375/575, 978/578, 382/582, 904/584, 675/575):
@@ -2728,13 +3046,28 @@ def gap_label_elevations(chains: list, page_img: np.ndarray,
             found[int(cid)] = (v, cx, cy)
     _tell(final=True)
     if diag is not None:
-        diag.update({"patches_planned": len(order), "ocr_calls": n_ocr,
-                     "seconds": round(_time.monotonic() - t0, 1),
+        secs = round(secs0 + _time.monotonic() - t0, 1)
+        diag.update({"patches_planned": len(order),
+                     "ocr_calls": calls0 + n_ocr,
+                     "regions_seen": n_seen,
+                     "contour_first": len(first),
+                     "seconds": secs,
                      "stopped_early": stopped_early,
                      "stop_reason": stop_reason,
                      "idle_budget_s": idle_budget_s,
                      "time_budget_s": time_budget_s,
-                     "chains_read": len(found)})
+                     "chains_read": len(found),
+                     "reader": GAP_READER, "batch": batch,
+                     "workers": workers, "resumed": resumed,
+                     "tesseract_launches": tess.get("launches", 0),
+                     "batch_fallbacks": tess.get("fallbacks", 0)})
+        diag.pop("resume", None)
+        if stopped_early:
+            diag["resume"] = {
+                "plan_sig": plan_sig, "pos": n_seen,
+                "calls": calls0 + n_ocr, "seconds": secs,
+                "reads": {str(k): [list(t) for t in v]
+                          for k, v in reads.items()}}
     return found
 
 

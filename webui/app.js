@@ -11795,7 +11795,10 @@ function syncCardCounts() {
 // takeoff_engine.earthwork.gap_label_elevations, sized by its OCR budget.
 // If that budget moves, or the read is warmed at Detect time, RE-MEASURE
 // and change this string - nothing else in the UI quotes a wait.
-const EW_SUGGEST_WAIT = "the first read of a page takes a minute or more";
+// (2026-09-17) "can take a minute": the label reader now reads a sheet in
+// batches, contour lines first - Barn C3.0 10 s, Oncor C-04 34 s on this
+// box - where it used to be "a minute or more" (FINDINGS 38)
+const EW_SUGGEST_WAIT = "the first read of a page can take a minute";
 const EW_SUGGEST_HEAD = "reading this sheet's elevation labels";
 const EW_SUGGEST_BUSY = EW_SUGGEST_HEAD + " — " + EW_SUGGEST_WAIT;
 const EW_SUGGEST_FAIL = "could not read this sheet's elevations — press EARTHWORK to try again";
@@ -12190,6 +12193,10 @@ function suggestOnce() {
   const key = gen + "|" + job + "|" + page;
   const cur = state.suggestReq;
   if (cur && cur.key === key) return cur.promise;
+  // KEEP READING (ewKeepReading): this one request asks the server to carry
+  // a stopped label read on instead of serving the short list again
+  const more = !!state.ewMore;
+  state.ewMore = false;
   // THE DEADLINE. Without it the promise can simply never settle, and every
   // failure surface downstream is reached by a rejection - so a socket that
   // goes quiet leaves the panel claiming to be working, forever. See
@@ -12199,7 +12206,8 @@ function suggestOnce() {
   const promise = (async () => {
     let r;
     try {
-      r = await fetch(`/api/job/${job}/page/${page}/earthwork/suggest`,
+      r = await fetch(`/api/job/${job}/page/${page}/earthwork/suggest`
+                      + (more ? "?more=1" : ""),
                       ctl ? { signal: ctl.signal } : undefined);
     } catch (e) {
       if (ctl && ctl.signal.aborted) {
@@ -14094,20 +14102,39 @@ function renderEwDropped() {
   // THE READ WAS CUT SHORT. Said first and on its own line: an operator
   // looking at a short list needs to know the reader stopped before it
   // looked at every label, which is a different fact from "the sheet has
-  // few labels" and calls for a different response (re-run later, or type
+  // few labels" and calls for a different response (keep reading, or type
   // the rest in by hand).
-  const cutLine = cut
-    ? `<div class="ew-ocr-cut"><b>Label reading stopped early.</b> The reader `
-      + `looked at ${ocr.ocr_calls || 0} of ${ocr.patches_planned || 0} places `
-      + `on this sheet in ${Math.round(ocr.seconds || 0)} s and `
+  //
+  // "places checked" is regions_seen (2026-09-17). Before it the line put
+  // the reader's CALL count over its PLACE count - two different units -
+  // so a record without it says "reads" instead. `resumable`: the server
+  // kept the stopped read's place, so Keep reading carries it on.
+  let cutLine = "";
+  if (cut) {
+    const secs = Math.round(ocr.seconds || 0);
+    const took = secs >= 120 ? Math.round(secs / 60) + " min" : secs + " s";
+    const planned = ocr.patches_planned || 0;
+    cutLine = `<div class="ew-ocr-cut"><b>Label reading stopped early.</b> It `
+      + (ocr.regions_seen != null
+         ? `checked ${ocr.regions_seen} of ${planned} places`
+         : `made ${ocr.ocr_calls || 0} reads over ${planned} places`)
+      + ` in ${took} and `
       + (ocr.stop_reason === "idle"
-         ? `had read no elevation by then, so it stopped: this sheet most `
-           + `likely prints no contour labels for it to find. `
-         : `hit its time limit, so some printed elevations may be missing `
-           + `from this list. `)
-      + `Add any you can read with <b>+ Add contour</b>.</div>`
-    : "";
-  if (!(n > 0)) { box.innerHTML = cutLine; return; }
+         ? `had found no elevations by then, so it stopped. This sheet most `
+           + `likely has no contour labels. `
+         : ocr.stop_reason === "calls"
+         ? `hit its reading limit, so some elevations may be missing. `
+         : `hit its time limit, so some elevations may be missing. `)
+      + (ocr.resumable
+         ? `<button class="mini" id="ewMoreBtn" type="button">Keep reading</button> `
+           + `or add any you can read with <b>+ Add contour</b>.</div>`
+         : `Add any you can read with <b>+ Add contour</b>.</div>`);
+  }
+  const wireMore = () => {
+    const b = box.querySelector ? box.querySelector("#ewMoreBtn") : null;
+    if (b && typeof ewKeepReading === "function") b.onclick = () => ewKeepReading();
+  };
+  if (!(n > 0)) { box.innerHTML = cutLine; wireMore(); return; }
   box.innerHTML = cutLine + `<b>${n} candidate row${n === 1 ? "" : "s"} `
     + `${n === 1 ? "was" : "were"} read off this sheet and dropped.</b> `
     + (laddered
@@ -14118,6 +14145,72 @@ function renderEwDropped() {
        : "They were refused by the legend, white-mask, band or ladder "
          + "filters. Add any the reader should have kept with <b>+ Add "
          + "contour</b>.");
+  wireMore();
+}
+
+// KEEP READING (2026-09-17). A label read the clock or the reading limit
+// stopped carries on from where it stopped: the server keeps the stopped
+// pass's place and reads beside its cache, and suggestOnce asks for
+// ?more=1. The rows are rebuilt the way a page visit builds them - the
+// saved record is written FIRST and re-applied by ewApplySaved after, so
+// every choice made on the rows stays - and the volume on screen comes
+// down, because the rows under it are about to change. "Add to takeoff"
+// stays chosen and applies again on the next Calculate.
+async function ewKeepReading() {
+  if (!state.ew || !ewIsThisPage() || state.ewLoading || !state.result) return;
+  if (!state.calcSavedLoaded) {
+    setStatus("Can't keep reading: this page's saved choices could not be "
+      + "loaded, so they would be lost. Reload the page first.", "err");
+    return;
+  }
+  const gen = state.gen;
+  calcStateDirty();
+  await calcStatePush();
+  if (gen !== state.gen || !ewIsThisPage() || state.ewLoading) return;
+  if (state.ew.result || state.ew.map) {
+    state.ew.result = null;
+    state.ew.map = null;
+    ewClearItems();
+    if ($("ewMapLegend")) $("ewMapLegend").hidden = true;
+    if (typeof ewMapNote === "function") ewMapNote(null, null);
+    renderEwBasis(null, null);
+    renderEwBalance(null);
+    $("ewLayerOut").innerHTML = "";
+    $("ewResult").textContent = "The contour rows are being re-read. "
+      + "Press Calculate again when they are in.";
+    renderItemized();
+    draw();
+  }
+  state.ew = null;
+  state.ewMore = true;
+  // the "stopped early" line (and its button) belongs to the read that is
+  // being carried on - seen live 2026-09-17 still on screen, button and
+  // all, while the next round ran; renderEw repaints it from the new read
+  const dropBox = $("ewDropped");
+  if (dropBox) { dropBox.hidden = true; dropBox.innerHTML = ""; }
+  const tRead = Date.now();
+  $("ewRows").innerHTML = '<div class="ew-hint">reading elevation labels…</div>';
+  ewBusyPut(EW_SUGGEST_BUSY + "…");
+  setStatus(EW_SUGGEST_BUSY, "busy");
+  const ok = await ewEnsure();
+  if (gen !== state.gen) return;
+  if (!ok) {
+    const msg = ewFailMsg() || EW_NEED_DETECT;
+    $("ewRows").textContent = msg;
+    ewBusyPut(msg, "err");
+    setStatus(msg, "err");
+    return;
+  }
+  ewBusyPut(ewDoneLine(Date.now() - tRead));
+  setStatus("");
+  renderEw();
+  renderEwLayers();
+  renderEwSpots();
+  renderEwArea();
+  renderEwTake();
+  renderGz();
+  renderCheckQueue();
+  draw();
 }
 
 // ---- the review surface, rendered -----------------------------------------

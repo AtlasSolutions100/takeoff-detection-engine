@@ -132,8 +132,9 @@ function busyScope(t0) {
   check(/1m 12s/.test(line),
     "THE FIX: the elapsed time is IN the sentence  (got "
     + JSON.stringify(line) + ")");
-  check(/takes a minute or more/.test(line),
-    "...and it still says what to expect");
+  check(/can take a minute/.test(line),
+    "...and it still says what to expect (since 2026-09-17 'can take a "
+    + "minute': the batched reader - FINDINGS 38)");
   check(!/%|\bof\b \d|\d+\s*\/\s*\d+/.test(line),
     "and with NO report from the server it invents no percentage or "
     + "fraction - a clock is all it honestly has");

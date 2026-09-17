@@ -5130,6 +5130,25 @@ _ELEVGAP_GUARD = threading.Lock()
 _idle = float(os.environ.get("TAKEOFF_OCR_IDLE_S", "0") or 0)
 OCR_IDLE_S = _idle if _idle > 0 else None
 OCR_BUDGET_S = float(os.environ.get("TAKEOFF_OCR_BUDGET_S", "900") or 900)
+# ...AND HOW IT READS (2026-09-17). Barn C3.0 kept stopping at the 900 s cap
+# with most of its contour labels unread: this box was paying 0.3-1.2 s to
+# START each tesseract process, a patch took up to four, and 70% of the
+# plan sat on lines that are not contours. The pass now reads contour
+# families first and reads patches in batches, several batches at once
+# (earthwork.gap_label_elevations - measured in FINDINGS 38).
+#   TAKEOFF_OCR_WORKERS  batches read at once. Default half the cores, at
+#                        most 4: the box has other tenants.
+#   TAKEOFF_OCR_CALLS    the call budget. The engine's 1,400 was sized when
+#                        a call cost 0.23 s and nothing else bounded the
+#                        pass; it silently cut Barn C3.1 (2,620 places) at
+#                        exactly 1,400. The clock above is the bound now,
+#                        and a pass the budget stops says so.
+_workers = int(os.environ.get("TAKEOFF_OCR_WORKERS", "0") or 0)
+OCR_WORKERS = _workers if _workers > 0 else min(4, max(1, (os.cpu_count() or 2) // 2))
+OCR_CALLS = int(os.environ.get("TAKEOFF_OCR_CALLS", "6000") or 6000)
+# the budget every read before 2026-09-17 ran under (earthwork._OCR_BUDGET),
+# which stopped a pass without saying so
+_OLD_CALL_BUDGET = 1400
 
 
 def _elevgap_lock(job_id: str, page: int) -> threading.Lock:
@@ -5168,9 +5187,14 @@ def earthwork_progress(job_id: str, page: int):
 
 
 @app.get("/api/job/{job_id}/page/{page}/earthwork/suggest")
-def earthwork_suggest(job_id: str, page: int):
+def earthwork_suggest(job_id: str, page: int, more: int = 0):
     """Auto-pair elevation labels with the contours they sit on - a
-    suggestion list for the review UI, not a decision."""
+    suggestion list for the review UI, not a decision.
+
+    `more=1` - KEEP READING: when this page's label read was cut short,
+    carry it on from where it stopped (its place and reads are kept beside
+    the cache, p<N>_elevgaps2.resume.json) instead of serving the short
+    list again."""
     from takeoff_engine.earthwork import suggest_elevations
 
     rf = _job_dir(job_id) / f"p{page}_result.json"
@@ -5284,9 +5308,31 @@ def earthwork_suggest(job_id: str, page: int):
     # or split-break labels; keeping the old filename would read that stale
     # result back forever. Orphaned v1 files are harmless.
     gcache = _job_dir(job_id) / f"p{page}_elevgaps2.json"
+    rcache = gcache.with_suffix(".resume.json")
+    from takeoff_engine.earthwork import GAP_READER as _GAP_READER
+
+    def _read_gdiag():
+        try:
+            d = json.loads(gcache.with_suffix(".diag.json").read_text())
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
 
     def _read_gcache():
         if not gcache.exists():
+            return None
+        # A READ AN OLDER READER CUT SHORT is read again. Before 2026-09-17
+        # the pass paid a process launch per patch variant and visited
+        # contours in no particular order, so a cap-stopped cache (Barn
+        # C3.0: 426 of 1,901 places) says more about that reader than about
+        # the sheet. So is one its 1,400-CALL budget stopped: that reader
+        # recorded those as not stopped early (Barn C3.1: 1,400 calls,
+        # 2,620 places, `stopped_early: false`). A complete one stands: the
+        # new reader returns the same elevations (FINDINGS 38).
+        d = _read_gdiag()
+        if d.get("reader") != _GAP_READER and (
+                d.get("stopped_early")
+                or (d.get("ocr_calls") or 0) >= _OLD_CALL_BUDGET):
             return None
         try:
             return {int(k): tuple(v)
@@ -5295,12 +5341,25 @@ def earthwork_suggest(job_id: str, page: int):
             return None
 
     gap_z = _read_gcache()
-    if gap_z is None:
+    if gap_z is None or more:
         # SINGLE FLIGHT (see _elevgap_lock). The second look is taken INSIDE
         # the lock: whoever waited here was waiting for exactly this file,
         # and re-reading it is the difference between one 217 s pass and N.
         with _elevgap_lock(job_id, page):
             gap_z = _read_gcache()
+            resume = None
+            if more and gap_z is not None and _read_gdiag().get("stopped_early"):
+                # KEEP READING: from the stopped pass's place, with its
+                # reads. Whoever held the lock before us may have carried
+                # it on already - then the diag says so and this is a read.
+                try:
+                    resume = json.loads(rcache.read_text())
+                except (OSError, ValueError):
+                    resume = None
+                if isinstance(resume, dict):
+                    gap_z = None
+                else:
+                    resume = None
             if gap_z is None:
                 import numpy as _np3
 
@@ -5337,17 +5396,34 @@ def earthwork_suggest(job_id: str, page: int):
                 # the reply as `elevation_ocr`, so a truncated read is shown
                 # as truncated, never served as "this sheet has no labels".
                 ocr_diag = {}
+                # CONTOURS FIRST: the families this sheet calls contours
+                # (legend row or CAD layer name) are read before anything
+                # else, so a pass the clock stops has spent its time on them
+                from takeoff_engine.earthwork import contour_priority
+                pri = contour_priority(chains, res.get("styles") or [],
+                                       exclude=excl)
                 gap_z = gap_label_elevations(chains, img, 150.0 / 72.0,
+                                             max_patches=OCR_CALLS,
                                              exclude=excl,
                                              time_budget_s=OCR_BUDGET_S,
                                              idle_budget_s=OCR_IDLE_S,
                                              diag=ocr_diag,
-                                             progress=_progress)
+                                             progress=_progress,
+                                             priority=pri,
+                                             workers=OCR_WORKERS,
+                                             resume=resume)
+                # the place and reads a later "keep reading" carries on
+                # from - kept beside the cache, not sent to the browser
+                resume_state = ocr_diag.pop("resume", None)
                 try:
                     gcache.write_text(json.dumps(
                         {str(k): list(v) for k, v in gap_z.items()}))
                     gcache.with_suffix(".diag.json").write_text(
                         json.dumps(ocr_diag))
+                    if resume_state:
+                        rcache.write_text(json.dumps(resume_state))
+                    elif rcache.exists():
+                        rcache.unlink()
                 except OSError:
                     pass
                 try:
@@ -5360,6 +5436,10 @@ def earthwork_suggest(job_id: str, page: int):
         ocr_diag = json.loads(gcache.with_suffix(".diag.json").read_text())
     except (OSError, ValueError):
         ocr_diag = {"cached": gap_z is not None}
+    if isinstance(ocr_diag, dict) and ocr_diag.get("stopped_early"):
+        # the panel offers "Keep reading" only when there is a place to
+        # carry on from
+        ocr_diag["resumable"] = rcache.exists()
     # ew_diag carries what the LADDER GATE did (earthwork._ladder_gate): on a
     # page with no glyph-backed row it is the only consensus filter that can
     # run, and what it drops has to be as visible as what it keeps.
