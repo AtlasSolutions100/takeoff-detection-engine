@@ -1,0 +1,227 @@
+{
+ "errors": [],
+ "cases": {
+  "Oncor C-04": {
+   "cut": 2074,
+   "fill": 9611.3,
+   "area": 100540,
+   "model": "linear",
+   "bounded": false,
+   "proof": {
+    "limits": {
+     "residual_median_ft": 0.25,
+     "residual_bias_ft": 0.15,
+     "method_spread_pct": 5
+    },
+    "checks": [
+     {
+      "id": "spots",
+      "state": "warn",
+      "text": "the existing surface sits 0.68 ft from this sheet's own 7 printed ground spots (median, cross-validated), bias +0.61 ft, worst 1.37 ft"
+     },
+     {
+      "id": "model",
+      "state": "warn",
+      "text": "read with the other surface model (clamped_ct) the same rows give 1,510 cut and 10,919 fill - 27.2% from this answer"
+     },
+     {
+      "id": "grid",
+      "state": "pass",
+      "text": "on a 1 ft grid instead of 2 ft the same surfaces give 2,074 cut - 0.3% from this answer"
+     },
+     {
+      "id": "region",
+      "state": "warn",
+      "text": "no limit of work is set, so the region is wherever the two surfaces overlap - that is not the graded area"
+     }
+    ],
+    "spot_residual": {
+     "existing": {
+      "side": "existing",
+      "n_printed": 7,
+      "n_checked": 7,
+      "tags": [
+       "EG",
+       "ME"
+      ],
+      "how": "cross-validated",
+      "n_from_surface": 7,
+      "median_abs_ft": 0.68,
+      "mean_abs_ft": 0.75,
+      "p90_abs_ft": 1.18,
+      "max_abs_ft": 1.37,
+      "bias_ft": 0.61,
+      "worst": [
+       {
+        "x": 1920.1,
+        "y": 966.8,
+        "tag": "ME",
+        "printed_ft": 585.7,
+        "surface_ft": 584.33,
+        "diff_ft": 1.37,
+        "how": "cross-validated"
+       },
+       {
+        "x": 2300.2,
+        "y": 1127.4,
+        "tag": "ME",
+        "printed_ft": 583.5,
+        "surface_ft": 582.45,
+        "diff_ft": 1.05,
+        "how": "cross-validated"
+       },
+       {
+        "x": 2333,
+        "y": 890.4,
+        "tag": "ME",
+        "printed_ft": 586,
+        "surface_ft": 585.27,
+        "diff_ft": 0.73,
+        "how": "cross-validated"
+       },
+       {
+        "x": 1921.4,
+        "y": 1026.8,
+        "tag": "ME",
+        "printed_ft": 585.1,
+        "surface_ft": 584.42,
+        "diff_ft": 0.68,
+        "how": "cross-validated"
+       },
+       {
+        "x": 1858.3,
+        "y": 966.8,
+        "tag": "ME",
+        "printed_ft": 585.3,
+        "surface_ft": 584.71,
+        "diff_ft": 0.59,
+        "how": "cross-validated"
+       }
+      ]
+     },
+     "proposed": {
+      "side": "proposed",
+      "n_printed": 0,
+      "n_checked": 0,
+      "tags": [
+       "FFE",
+       "FG",
+       "FIN",
+       "FL",
+       "HP",
+       "LP",
+       "PE"
+      ],
+      "why": "this sheet prints no ground spot elevation on the proposed side (FFE, FG, FIN, FL, HP, LP, PE), so the surface cannot be checked against its own numbers"
+     }
+    },
+    "model_spread": {
+     "model": "linear",
+     "other_model": "clamped_ct",
+     "other_cut_yd3": 1509.8,
+     "other_fill_yd3": 10918.9,
+     "cut_spread_pct": 27.2,
+     "fill_spread_pct": 12
+    },
+    "grid_spread": {
+     "cell_ft": 2,
+     "finer_cell_ft": 1,
+     "finer_cut_yd3": 2073.7,
+     "finer_fill_yd3": 9639.4,
+     "cut_spread_pct": 0,
+     "fill_spread_pct": 0.3
+    },
+    "verdict": "warn"
+   },
+   "shown": "What backs this number \u2014 1 of 4 checks pass, check these before you bid it! the existing surface sits 0.68 ft from this sheet's own 7 printed ground spots (median, cross-validated), bias +0.61 ft, worst 1.37 ft! read with the other surface model (clamped_ct) the same rows give 1,510 cut and 10,919 fill - 27.2% from this answer\u2713 on a 1 ft grid instead of 2 ft the same surfaces give 2,074 cut - 0.3% from this answer! no limit of work is set, so the region is wherever the two surfaces overlap - that is not the graded areaworst point: the sheet prints 585.7 (ME) where our existing surface reads 584.33 - we are low by 1.37 ft",
+   "hidden": false,
+   "rows": 170
+  },
+  "Barn C3.0": {
+   "cut": 6334,
+   "fill": 14400.8,
+   "area": 175444,
+   "model": "linear",
+   "bounded": false,
+   "proof": {
+    "limits": {
+     "residual_median_ft": 0.25,
+     "residual_bias_ft": 0.15,
+     "method_spread_pct": 5
+    },
+    "checks": [
+     {
+      "id": "spots",
+      "state": "cannot check",
+      "text": "this sheet prints no ground spot elevation to check the surface against - the volume rests on the contour lines alone"
+     },
+     {
+      "id": "model",
+      "state": "warn",
+      "text": "read with the other surface model (clamped_ct) the same rows give 7,160 cut and 14,707 fill - 11.5% from this answer"
+     },
+     {
+      "id": "grid",
+      "state": "pass",
+      "text": "on a 1 ft grid instead of 2 ft the same surfaces give 6,332 cut - 0.1% from this answer"
+     },
+     {
+      "id": "region",
+      "state": "warn",
+      "text": "no limit of work is set, so the region is wherever the two surfaces overlap - that is not the graded area"
+     }
+    ],
+    "spot_residual": {
+     "existing": {
+      "side": "existing",
+      "n_printed": 0,
+      "n_checked": 0,
+      "tags": [
+       "EG",
+       "ME"
+      ],
+      "why": "this sheet prints no ground spot elevation on the existing side (EG, ME), so the surface cannot be checked against its own numbers"
+     },
+     "proposed": {
+      "side": "proposed",
+      "n_printed": 1,
+      "n_checked": 0,
+      "tags": [
+       "FFE",
+       "FG",
+       "FIN",
+       "FL",
+       "HP",
+       "LP",
+       "PE"
+      ],
+      "how": null,
+      "n_from_surface": 0,
+      "why": "none of this sheet's ground spots can be checked against the surface - they fall outside it, or the surface cannot be rebuilt without them"
+     }
+    },
+    "model_spread": {
+     "model": "linear",
+     "other_model": "clamped_ct",
+     "other_cut_yd3": 7159.5,
+     "other_fill_yd3": 14707,
+     "cut_spread_pct": 11.5,
+     "fill_spread_pct": 2.1
+    },
+    "grid_spread": {
+     "cell_ft": 2,
+     "finer_cell_ft": 1,
+     "finer_cut_yd3": 6332.4,
+     "finer_fill_yd3": 14408.9,
+     "cut_spread_pct": 0,
+     "fill_spread_pct": 0.1
+    },
+    "verdict": "warn"
+   },
+   "shown": "What backs this number \u2014 1 of 4 checks pass, check these before you bid it? this sheet prints no ground spot elevation to check the surface against - the volume rests on the contour lines alone! read with the other surface model (clamped_ct) the same rows give 7,160 cut and 14,707 fill - 11.5% from this answer\u2713 on a 1 ft grid instead of 2 ft the same surfaces give 6,332 cut - 0.1% from this answer! no limit of work is set, so the region is wherever the two surfaces overlap - that is not the graded area",
+   "hidden": false,
+   "rows": 60
+  }
+ },
+ "appJs": "v=204"
+}
