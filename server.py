@@ -5646,6 +5646,10 @@ def earthwork_suggest(job_id: str, page: int, more: int = 0):
             # the label-reading pass itself: patches planned / read, seconds,
             # and whether the wall clock cut it short (see TAKEOFF_OCR_BUDGET_S)
             "elevation_ocr": ocr_diag,
+            # numbers the sheet tags as points on what is being built
+            # (earthwork.is_built_spot_tag): they never become a line's
+            # height, and the panel says how many and which tags
+            "spot_tag_refused": ew_diag.get("spot_tag_refused"),
             "families_excluded": fam_excluded,
             "split_counts": split_counts,
             # every inferred row is counted here as well as flagged on

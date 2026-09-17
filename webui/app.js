@@ -12429,6 +12429,9 @@ async function ewFetchSuggest(gen) {
       // OCR_BUDGET_S in server.py). A cut-short read is reported on the
       // panel as cut short, never left to read as "no labels here".
       ocr: j.elevation_ocr || null,
+      // numbers the sheet prints as BUILT points (a wall top, a finish
+      // grade) that were refused as line heights - {n, tags} or null
+      spotRefused: j.spot_tag_refused || null,
       // which way round the ink rule ran on this sheet, and on whose word
       // (split_rows_surface): "legend-confirmed", "legend-flipped" or
       // "convention". Read by ewSplitNote for every colour-decided row.
@@ -14097,7 +14100,20 @@ function renderEwDropped() {
   const laddered = lad && lad.applied && lad.verdict && !lad.verdict.laddered;
   const ocr = (state.ew && state.ew.ocr) || null;
   const cut = !!(ocr && ocr.stopped_early);
-  box.hidden = !(n > 0 || cut);
+  // SPOT GRADES ARE NOT CONTOUR LABELS, and the refusal is said out loud:
+  // before 2026-09-17 a number like "551.2 BW" (bottom of wall) became the
+  // nearest contour's height - twelve lines on Oncor C-04, four of them by
+  // inheritance, and the cut read 14% over the offline analyst's figure
+  // against 3% once refused (earthwork.is_built_spot_tag).
+  const sr = (state.ew && state.ew.spotRefused) || null;
+  const srLine = (sr && sr.n > 0)
+    ? `<div class="ew-ocr-cut">${sr.n} number${sr.n === 1 ? " beside these lines is a" : "s beside these lines are"} `
+      + `spot grade${sr.n === 1 ? "" : "s"} the sheet tags `
+      + `<b>${esc(Object.keys(sr.tags || {}).join(", "))}</b> — a point on what is `
+      + `being built, not a contour height. No line took its height from `
+      + `${sr.n === 1 ? "it" : "them"}.</div>`
+    : "";
+  box.hidden = !(n > 0 || cut || srLine);
   if (box.hidden) { box.innerHTML = ""; return; }
   // THE READ WAS CUT SHORT. Said first and on its own line: an operator
   // looking at a short list needs to know the reader stopped before it
@@ -14134,8 +14150,8 @@ function renderEwDropped() {
     const b = box.querySelector ? box.querySelector("#ewMoreBtn") : null;
     if (b && typeof ewKeepReading === "function") b.onclick = () => ewKeepReading();
   };
-  if (!(n > 0)) { box.innerHTML = cutLine; wireMore(); return; }
-  box.innerHTML = cutLine + `<b>${n} candidate row${n === 1 ? "" : "s"} `
+  if (!(n > 0)) { box.innerHTML = cutLine + srLine; wireMore(); return; }
+  box.innerHTML = cutLine + srLine + `<b>${n} candidate row${n === 1 ? "" : "s"} `
     + `${n === 1 ? "was" : "were"} read off this sheet and dropped.</b> `
     + (laddered
        ? esc(lad.verdict.why) + " Nothing on this page is glyph text, so "

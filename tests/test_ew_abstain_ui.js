@@ -300,6 +300,27 @@ check(/ladder: j\.ocr_ladder \|\| null/.test(SRC),
   check(els.ewDropped.hidden === true,
     "nothing dropped: the block stays out of the way");
 }
+{
+  // SPOT GRADES REFUSED AS LINE HEIGHTS (2026-09-17). A number the sheet
+  // tags BW / TW / FG is a point on what is being built, and twelve
+  // contour lines on Oncor C-04 were taking one as their height. The
+  // refusal is disclosed here, in the same block as the other drops -
+  // with nothing else dropped and no read cut short, this line alone has
+  // to open the block.
+  const els = { ewDropped: mkEl("ewDropped") };
+  new Function("$", "state", "esc", drop + "\nreturn renderEwDropped;")(
+    (id) => els[id],
+    { ew: { dropped: 0, ladder: null, ocr: { stopped_early: false },
+            spotRefused: { n: 17, tags: { BW: 6, EW: 5, TW: 6 } } } },
+    (s) => String(s))();
+  const h = els.ewDropped.innerHTML;
+  check(els.ewDropped.hidden === false && /17 numbers beside these lines are spot grades/.test(h),
+    "17 refused spot grades: the block opens and says so  (" + h.slice(0, 120) + ")");
+  check(/BW, EW, TW/.test(h) && /not a contour height/.test(h),
+    "...naming the sheet's own tags and why they are not line heights");
+  check(/No line took its height from them/.test(h),
+    "...and that nothing used them");
+}
 
 // ---------------------------------------------------------------------------
 console.log("6. the cut/fill map comes off the drawing with the number");

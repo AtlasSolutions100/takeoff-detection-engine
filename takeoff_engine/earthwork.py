@@ -1929,6 +1929,33 @@ def _tag_index(words: list) -> list:
     return out
 
 
+def is_built_spot_tag(tg) -> bool:
+    """Does the sheet print this number as a point on the BUILT surface?
+
+    A spot grade is a POINT the designer sets - a wall top, a finish
+    grade, a rim, an invert - and a contour is a LINE at one height. The
+    two are different claims about the ground, and the sheet says which it
+    means by printing a tag beside the number ("551.2 BW"). Measured on
+    Oncor Cloudcrest engine page index 3 = printed C-04 (2026-09-17): 14
+    contour rows took their height off a tagged spot, 12 of them a wall
+    tag (BW 4, TW 5, EW 3) and FOUR of those spread further along the
+    contour by inheritance. Cut came out 2,279 CY against the offline
+    analyst's 2,002 (+14%); with those twelve refused it reads 2,056
+    (+3%), and the panel then leaves those lines to the interval count or
+    to the operator.
+
+    EG and ME - existing ground, match existing - are NOT refused: they
+    are the existing surface's own points, and dropping them as well
+    moved C-04's cut by 0 CY (2,056 either way), so the narrower rule is
+    the one taken. The spot grades themselves are not lost: they reach
+    the surfaces as POINTS through read_spot_grades, where the operator
+    already chooses ground or built per tag."""
+    if not tg:
+        return False
+    t = str(tg).strip().upper().rstrip(":")
+    return bool(_SPOT_TAG.match(t)) and t not in _SPOT_EXISTING
+
+
 def _label_tag(w, tags: list):
     """The tag printed with this number on the same text row, or None.
 
@@ -1978,13 +2005,30 @@ def suggest_elevations(chains: list, words: list,
     exclude = exclude or set()
     tags = _tag_index(words)
     cands = []
+    refused: dict = {}
     for w in words:
         t = str(w[4]).strip()
         if re.fullmatch(r"\d{3,4}(\.\d{1,2})?", t):
             v = float(t)
             if 10.0 <= v <= 9999.0:
-                cands.append(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2, v,
-                              _label_tag(w, tags)))
+                tg = _label_tag(w, tags)
+                # A SPOT GRADE IS NOT A CONTOUR LABEL (is_built_spot_tag).
+                # Refused HERE, in the pool, so every pass downstream is
+                # clean: the nearest-label match falls through to the next
+                # number on the line (C-04 chain 168's own "550" leader
+                # sits a few points beyond the wall spot it was taking),
+                # the in-break pass cannot take it either, and pass 2
+                # cannot spread it along the contour.
+                if is_built_spot_tag(tg):
+                    k = str(tg).strip().upper().rstrip(":")
+                    refused[k] = refused.get(k, 0) + 1
+                    continue
+                cands.append(((w[0] + w[2]) / 2, (w[1] + w[3]) / 2, v, tg))
+    if diag is not None and refused:
+        # said, not silent: the panel prints this beside what the filters
+        # dropped, and the operator can still type one in by hand
+        diag["spot_tag_refused"] = {"n": sum(refused.values()),
+                                    "tags": dict(sorted(refused.items()))}
     # AN OCR-ONLY POPULATION IS STILL A POPULATION.
     #
     # Until 2026-09-02 this returned [] whenever the page had no native

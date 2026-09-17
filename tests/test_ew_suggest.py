@@ -297,8 +297,21 @@ def test_c04_chain813_uniform_curve_is_not_a_break():
 
 # ---- the tag printed WITH the number, and the no-default-provenance rule --
 
-def test_radius_match_carries_the_sheets_own_spot_tag():
-    """A TAGGED NUMBER IS NOT A CONTOUR LABEL, AND THE ROW HAS TO SAY SO.
+def test_a_wall_spot_is_refused_as_a_contours_height():
+    """A TAGGED NUMBER IS NOT A CONTOUR LABEL - AND SINCE 2026-09-17 IT IS
+    REFUSED, NOT MERELY DISCLOSED.
+
+    This test used to assert the opposite half of the same fact: that the
+    row kept the number and carried the tag so the chip could say "551.2
+    BW". Disclosure was not enough - the number still went into the
+    surface. Measured on the same sheet (FINDINGS 39): 14 rows carried a
+    tagged spot's height, 12 of them a wall tag, four of those spread
+    along the contour by inheritance, and the cut read +14% against the
+    offline analyst's 2,002 CY where refusing them reads +3%. So a
+    built-point tag now refuses the candidate outright
+    (earthwork.is_built_spot_tag), the refusal is reported in `diag`, and
+    the line falls to its own label, the interval count, or the operator.
+    The original measurement stands and is kept below.
 
     Measured live on Oncor Cloudcrest engine page index 3 = printed sheet
     C-04 (job e183a0d44d89, 2026-09-01): contour chain 168 came back
@@ -317,19 +330,37 @@ def test_radius_match_carries_the_sheets_own_spot_tag():
     # the number 8 pt above the line, its tag printed just to the right -
     # the plan-body order, "551.2 BW"
     words = [_word(60.0, 108.0, "551.2"), _word(76.0, 108.0, "BW")]
-    rows = suggest_elevations([contour], words)
-    assert len(rows) == 1, rows
-    r = rows[0]
-    assert r["how"] == "radius", r
-    assert r["label_tag"] == "BW", f"the sheet's own tag was dropped: {r}"
+    diag = {}
+    rows = suggest_elevations([contour], words, diag=diag)
+    assert rows == [], f"a wall spot became a contour's height: {rows}"
+    assert diag.get("spot_tag_refused") == {"n": 1, "tags": {"BW": 1}}, diag
 
 
 def test_the_legend_order_of_tag_and_number_is_read_too():
-    # C-04's legend writes the pair the other way round: "BW 100.0".
+    # C-04's legend writes the pair the other way round: "BW 100.0". Read
+    # in either order, and refused in either order.
     contour = _hline(1, 100.0, klass="dash1", width=0.5)
-    words = [_word(76.0, 108.0, "551.2"), _word(60.0, 108.0, "TW")]
-    rows = suggest_elevations([contour], words)
-    assert rows[0]["label_tag"] == "TW", rows
+    words = [_word(76.0, 100.4, "551.2"), _word(60.0, 100.4, "TW")]
+    diag = {}
+    rows = suggest_elevations([contour], words, diag=diag)
+    assert rows == [], f"a wall spot printed tag-first became a height: {rows}"
+    assert diag.get("spot_tag_refused") == {"n": 1, "tags": {"TW": 1}}, diag
+
+
+def test_an_existing_ground_tag_still_seeds_and_still_says_so():
+    """ME and EG are the EXISTING surface's own points, not the built one.
+
+    They are not refused (refusing them as well moved C-04's cut by 0 CY),
+    and the row still carries the tag so the chip can say which it is -
+    the half of the 2026-09-01 contract that survives.
+    """
+    contour = _hline(1, 100.0, klass="dash1", width=0.5)
+    words = [_word(60.0, 108.0, "586.0"), _word(76.0, 108.0, "ME")]
+    diag = {}
+    rows = suggest_elevations([contour], words, diag=diag)
+    assert len(rows) == 1 and rows[0]["z"] == 586.0, rows
+    assert rows[0]["label_tag"] == "ME", rows
+    assert "spot_tag_refused" not in diag, diag
 
 
 def test_an_untagged_number_reports_no_tag_rather_than_a_guess():
