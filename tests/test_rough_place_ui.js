@@ -25,13 +25,15 @@ function fnSrc(name) {
 }
 for (const id of ["ewPlace", "ewPlaceDepth", "ewPlaceLess", "ewPlaceUse", "ewPlaceNote"]) check(html.includes(`id="${id}"`), `#${id} exists`);
 check(html.indexOf('id="ewExLayers"') < html.indexOf('id="ewPlace"') && html.indexOf('id="ewPlace"') < html.indexOf('id="ewPrLayers"'), "the line sits under the existing layers, above the proposed stack");
-check(/Beaumont's rule \(bid sheet line 12\)/.test(html), "the tooltip names the rule and where it comes from");
+// the client's own job name came off every visible string on 2026-09-16
+check(/Topsoil goes back over the ground you disturbed/.test(html) && !/Beaumont/.test(html),
+      "the tooltip says what the line does, without naming anyone's job");
 for (const n of ["ewPlaceSync", "ewPlaceLessSuggest"]) check(!!fnSrc(n), `${n} exists`);
 check(/  ewPlaceSync\(\);\n\}/.test(fnSrc("renderEwLayers")), "renderEwLayers syncs the line last");
 const ps = fnSrc("ewPlaceSync");
 check(/state\.ew\.placeDepthIn = isFinite\(v\) && v > 0 \? v : null; calcStateDirty\(\);/.test(ps) && /state\.ew\.placeLessSf = isFinite\(v\) && v >= 0 \? v : null; calcStateDirty\(\);/.test(ps), "typing stores the values and marks the saved state dirty");
 check(/use\.hidden = !\(tot > 0\);/.test(ps) && /use\.onclick = \(\) => \{ state\.ew\.placeLessSf = tot;/.test(ps), "the suggestion button appears only with something to suggest and fills the SF on click");
-check(/blank: the topsoil layer's respread % rule as before/.test(ps), "blank is said to mean the old rule");
+check(/Blank: the topsoil layer's percent rule is used instead\./.test(ps), "blank is said to mean the old rule");
 const sg = fnSrc("ewPlaceLessSuggest");
 check(/stCalc\(it\)\.area_sf/.test(sg) && /DRIVE\|PAV\|PATIO\|WALK\|PARK\|SLAB\|GRAVEL/.test(sg) && /z\.result/.test(sg), "the suggestion sums the structure outlines and the zones named like paving");
 check(/o\.place_depth_in = state\.ew\.placeDepthIn;/.test(fnSrc("ewBody")) && /o\.place_less_sf = isFinite\(state\.ew\.placeLessSf\) && state\.ew\.placeLessSf > 0 \? state\.ew\.placeLessSf : 0;/.test(fnSrc("ewBody")), "the run body carries the depth and the SF only when a depth is set");

@@ -865,6 +865,13 @@ canvas.ml-swatch { width: 40px; height: 9px; }
   border-radius: 3px; padding: 2px 7px; cursor: pointer; }
 .ew-spots label.sp-tag.on { border-color: var(--accent); color: var(--text); }
 .ew-spots .sp-note { font-size: var(--t-fs-xs); color: var(--dim); margin-top: 7px; line-height: 1.45; }
+.ew-spots button.sp-side { font-size: 10px; padding: 1px 5px; margin-left: 2px;
+                           border-radius: 4px; line-height: 1.5; }
+.ew-spots button.sp-side.on-ex { background: var(--t-exist-bg); border-color: var(--t-exist); color: var(--t-exist); }
+.ew-spots button.sp-side.on-pr { background: var(--t-prop-bg); border-color: var(--t-prop); color: var(--t-prop); }
+#gzSection.gz-wait .ew-bound-row button { opacity: .45; pointer-events: none; }
+#gzSection.gz-wait .ew-bound-lab { opacity: .6; }
+.gz-wait-note { font-size: var(--t-fs-xs); color: var(--dim); margin-top: 6px; line-height: 1.45; }
 .ew-spots .sp-datum { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: var(--t-fs-xs); }
 .ew-spots .sp-datum input { width: 78px; }
 .ew-area { display: flex; align-items: center; gap: 7px; padding: 8px 10px;

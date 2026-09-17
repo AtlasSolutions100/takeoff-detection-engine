@@ -40,7 +40,7 @@ const rs = fnSrc("renderSvBidsheet");
 check(/name\.oninput = \(\) => \{ ln\.name = name\.value; touch\(\); \};/.test(rs) && /sel\.onchange = \(\) => \{ ln\.unit = sel\.value; touch\(\); \};/.test(rs), "typing edits the model, never re-renders (a focused field is never rebuilt)");
 check(/lines\.splice\(i - 1, 0, lines\.splice\(i, 1\)\[0\]\)/.test(rs) && /lines\.splice\(i \+ 1, 0, lines\.splice\(i, 1\)\[0\]\)/.test(rs) && /lines\.splice\(i, 1\); touch\(\); renderSvBidsheet\(\);/.test(rs), "move up / down / remove re-render");
 check(/\$\("svBsReset"\)\.onclick = \(\) => svBsSave\(null\);/.test(rs) && /body: JSON\.stringify\(\{ lines \}\)/.test(fnSrc("svBsSave")), "Reset posts null; Save posts the list");
-check(/the printed sheet - Beaumont Excavating's standard, as scanned/.test(rs), "the default is named for what it is");
+check(/the printed sheet as scanned/.test(rs), "the default is named for what it is");
 // ---- the bid view ----------------------------------------------------------------------
 const bv = fnSrc("renderBidView");
 check(/const sheetMode = !!\(bsMode\(\) && bsSheet && bsSheet\.lines\);/.test(bv) && /sheetMode \? bsGroupRows\(rows, bsSheet\.lines\) : bidGroupRows\(/.test(bv), "sheet mode regroups the same rows onto the sheet's lines");

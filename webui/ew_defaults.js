@@ -16,7 +16,7 @@ const EW_RESEARCH = {
   // LOCAL PRIOR BEATS NATIONAL: Beaumont Estimate #853's own arithmetic is
   // 5,730 CY strip x 27 / 224,058 SF clear-and-grub = 8.29 in.
   strip_depth_in: { value: 8, national: [4, 8],
-    local: "8.29 in computed from Beaumont Estimate #853 (5,730 CY / 224,058 SF)" },
+    local: "8.29 in from a scored bid's own arithmetic (5,730 CY over 224,058 SF)" },
   materials: {
     "topsoil / loam": { b2l: 1.43, b2c: 0.74,
       src: "Cat Performance Handbook Ed.50 p.27-6 load factor 0.70 (43% swell); shrink -26% Church(1981)/FHWA(2022) via WisDOT 0092-22-05. Sources span 43-56% swell - topsoil is intrinsically wide." },

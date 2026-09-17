@@ -333,8 +333,14 @@ check(/function renderEwCoverage\(\)/.test(js)
 // dict: `state.ew.cov` is captured once and an operator can delete a row
 // after it was captured (see ewCoverageLive, and tests/test_ew_live_
 // coverage.js for the arithmetic).
-check(/for \(const sent of ewCoverageText\(ewCovNow\(\), covAcc\)\)/
-  .test(js),
+// Since 2026-09-16 the block prints the FIRST sentence - the count - on its
+// face and folds the arithmetic behind a button (four sentences in a row
+// pushed the volumes off the panel's first screen). Same source, same
+// sentences, nothing dropped: that is what this pins.
+check(/const covSents = ewCoverageText\(ewCovNow\(\), covAcc\);/.test(js)
+   && /btn\.textContent = "how this number was counted "/.test(js)
+   && /if \(covSents\.length\) line\(esc\(covSents\[0\]\)\)\.className = "ew-basis-cov";/.test(js)
+   && /for \(const sent of covSents\.slice\(1\)\)/.test(js),
   "the basis block BESIDE THE NUMBER renders the same sentences");
 check(/\.\.\.ewCoverageNote\(ewCovNow\(\), acc, APPROVE_NOTE_MAX\)/
   .test(js), "and the printed report carries them through ewApproveNotes");

@@ -7257,6 +7257,7 @@ function calcStatePayload() {
       removed: (state.ew.removed || []).slice(),
       spotOn: Object.assign({}, state.ew.spotOn),
       spotSide: state.ew.spotSide,
+      spotTagSide: Object.assign({}, state.ew.spotTagSide),
       spotDatum: calcNum(state.ew.spotDatum),
       areaSf: calcNum(state.ew.areaSf),
       placeDepthIn: calcNum(state.ew.placeDepthIn),
@@ -7526,6 +7527,17 @@ function ewApplySaved() {
     }
     if (sv.spotOn && typeof sv.spotOn === "object") state.ew.spotOn = Object.assign({}, sv.spotOn);
     if (sv.spotSide === "existing" || sv.spotSide === "proposed") state.ew.spotSide = sv.spotSide;
+    if (sv.spotTagSide && typeof sv.spotTagSide === "object") {
+      for (const [t, v] of Object.entries(sv.spotTagSide))
+        if (v === "existing" || v === "proposed") state.ew.spotTagSide[t] = v;
+    } else if (sv.spotSide === "existing") {
+      // A sidecar written before the per-tag split. "proposed" was the
+      // SHIPPED DEFAULT and says nothing about what the operator wanted -
+      // restoring it as an override put ME back on the proposed surface on
+      // every sheet already worked on, which is the defect this replaced.
+      // "existing" could only have been chosen, so it is carried.
+      for (const g of (state.ew.spots || [])) state.ew.spotTagSide[g.tag] = "existing";
+    }
     if (calcNum(sv.spotDatum) !== null) state.ew.spotDatum = sv.spotDatum;
     if (calcNum(sv.areaSf) !== null && sv.areaSf > 0) state.ew.areaSf = sv.areaSf;
     if (calcNum(sv.placeDepthIn) !== null && sv.placeDepthIn > 0) state.ew.placeDepthIn = sv.placeDepthIn;
@@ -11921,6 +11933,7 @@ function ewDoneLine(ms) {
 // `frac` (0..1) draws the progress bar under the sentence; null draws none,
 // so a line with no honest fraction behind it shows no bar.
 function ewBusyPut(txt, cls, frac) {
+  if (typeof gzGate === "function") gzGate();   // the zone section greys with it
   const el = $("ewBusy");
   if (!el) return;
   el.hidden = !txt;
@@ -12123,8 +12136,17 @@ async function ewEnsure() {
   state.ewFailed = null;
   const p = ewFetchSuggest(state.gen);
   state.ewLoading = p;
+  // the grading-zone section reads this flag for the reason it shows: it is
+  // re-gated the moment the flag moves, not only on the next progress tick
+  // (measured live 2026-09-16 - the section greyed but still said "press
+  // EARTHWORK" right through a read, because ewBusyPut's first call lands
+  // BEFORE this line)
+  if (typeof gzGate === "function") gzGate();
   try { return await p; }
-  finally { if (state.ewLoading === p) state.ewLoading = null; }
+  finally {
+    if (state.ewLoading === p) state.ewLoading = null;
+    if (typeof gzGate === "function") gzGate();
+  }
 }
 async function ewFetchSuggest(gen) {
   let j;
@@ -12244,7 +12266,12 @@ async function ewFetchSuggest(gen) {
       spotOn: { FG: true, ME: true, EG: true, PE: true },  // PE = pad elevation, proposed ground.
       // WSE deliberately NOT here: water surface, not ground (basin contours sit
       // BELOW it) - its checkbox appears when the sheet prints one, default off.
+      // A SIDE PER TAG, not one side for the sheet. Seeded from the
+      // engine's own reading of each tag (ME/EG name the ground now,
+      // every other tag names something built), overridable per tag.
+      // spotSide survives as the last bulk choice and for old sidecars.
       spotSide: "proposed",
+      spotTagSide: {},
       spotDatum: null,
       areaSf: null,
       placeDepthIn: null,   // Rough Place Topsoil: depth over the green area (Beaumont)
@@ -12976,8 +13003,8 @@ function ewPlaceSync() {
   use.onclick = () => { state.ew.placeLessSf = tot; calcStateDirty(); ewPlaceSync(); };
   const on = isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0;
   note.textContent = on
-    ? "with a depth: Rough Place Topsoil = (strip area \u2212 this SF) \u00d7 depth; what was stripped and not placed exports, a shortfall imports \u2014 press Calculate"
-    : "blank: the topsoil layer's respread % rule as before";
+    ? "Topsoil back = (strip area \u2212 this SF) \u00d7 depth. What came off and is not put back is exported; putting back more than came off imports the difference. Press Calculate."
+    : "Blank: the topsoil layer's percent rule is used instead.";
 }
 
 // ---------- material balance: where each removal goes ----------
@@ -13015,7 +13042,7 @@ function ewDispRow(lay, i) {
   // Bid-sheet exclusion 6: "Topsoil and fill material required fro the job
   // will be stockpiled onsite" - their export often never leaves the
   // property, and exclusion 23 says import/export carries its own fee.
-  dest.title = 'Where it goes. Both #853 export lines say "On site".';
+  dest.title = 'Where it goes. "On site" means moved, not hauled away.';
   dest.oninput = () => { lay.destination = dest.value; };
   function paint() {
     const r = isFinite(lay.reuse_pct) ? lay.reuse_pct : 0;
@@ -13107,12 +13134,11 @@ function ewBody() {
     export_factor: ewFactor("ewFacExp"),
     import_factor: ewFactor("ewFacImp"),
     ...(function () {
-      const pts = ewActiveSpots()
-        .filter(g => typeof wzActive !== "function" || !wzActive()
-                     || wzPtIn(g.x, g.y, state.workZones))
-        .map(g => ({ x: g.x, y: g.y, z: g.z }));
-      const key = state.ew.spotSide === "existing" ? "existing_points" : "proposed_points";
-      const o = pts.length ? { [key]: pts } : {};
+      const sides = ewSpotsSplit(g => typeof wzActive !== "function" || !wzActive()
+                                      || wzPtIn(g.x, g.y, state.workZones));
+      const o = {};
+      if (sides.existing.length) o.existing_points = sides.existing;
+      if (sides.proposed.length) o.proposed_points = sides.proposed;
       if (isFinite(state.ew.areaSf) && state.ew.areaSf > 0) o.strip_area_sf = state.ew.areaSf;
       if (isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0) {
         o.place_depth_in = state.ew.placeDepthIn;
@@ -13191,6 +13217,29 @@ function ewActiveSpots() {
     .filter(g => g && isFinite(g.z));
 }
 
+// Which surface a tag's grades belong to. The engine ships `side` on every
+// spot (earthwork._SPOT_EXISTING); a tag the operator has switched keeps the
+// operator's answer. Never guesses past the tag: an unknown tag is proposed,
+// which is what the sheet's built elevations are.
+function ewSpotSideOf(tag) {
+  if (!state.ew) return "proposed";
+  const pick = state.ew.spotTagSide && state.ew.spotTagSide[tag];
+  if (pick === "existing" || pick === "proposed") return pick;
+  const g = (state.ew.spots || []).find(s => s.tag === tag && s.side);
+  return g && g.side === "existing" ? "existing" : "proposed";
+}
+
+// The switched-on spot grades split by their tag's side, as {existing: [],
+// proposed: []} of {x, y, z}. `keep` filters a point (the work-zone crop).
+function ewSpotsSplit(keep) {
+  const out = { existing: [], proposed: [] };
+  for (const g of ewActiveSpots()) {
+    if (keep && !keep(g)) continue;
+    out[ewSpotSideOf(g.tag)].push({ x: g.x, y: g.y, z: g.z });
+  }
+  return out;
+}
+
 function renderEwSpots() {
   const box = $("ewSpots");
   const sp = state.ew && state.ew.spots;
@@ -13204,11 +13253,19 @@ function renderEwSpots() {
   head.innerHTML = `<span>Spot grades on this sheet</span><b>${sp.length}</b>`;
   const seg = document.createElement("div");
   seg.className = "seg";
-  for (const [key, lab] of [["existing", "EXIST"], ["proposed", "PROP"]]) {
+  // Bulk, not the setting: each tag below carries its own side. These move
+  // every tag at once for the sheet that really is all one side.
+  for (const [key, lab] of [["existing", "all EXIST"], ["proposed", "all PROP"]]) {
     const b = document.createElement("button");
     b.textContent = lab;
-    if (state.ew.spotSide === key) b.className = key === "existing" ? "on-ex" : "on-pr";
-    b.onclick = () => { state.ew.spotSide = key; renderEwSpots(); };
+    b.title = "put every tag on this side";
+    if (Object.keys(counts).every(t => ewSpotSideOf(t) === key))
+      b.className = key === "existing" ? "on-ex" : "on-pr";
+    b.onclick = () => {
+      state.ew.spotSide = key;
+      for (const t of Object.keys(counts)) state.ew.spotTagSide[t] = key;
+      calcStateDirty(); renderEwSpots(); draw();
+    };
     seg.appendChild(b);
   }
   head.appendChild(seg);
@@ -13220,8 +13277,23 @@ function renderEwSpots() {
     l.className = "sp-tag" + (state.ew.spotOn[t] ? " on" : "");
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = !!state.ew.spotOn[t];
-    cb.onchange = () => { state.ew.spotOn[t] = cb.checked; renderEwSpots(); draw(); };
+    cb.onchange = () => { state.ew.spotOn[t] = cb.checked; calcStateDirty(); renderEwSpots(); draw(); };
     l.append(cb, document.createTextNode(` ${t} ${counts[t]}`));
+    const side = ewSpotSideOf(t);
+    const sb = document.createElement("button");
+    sb.type = "button";
+    sb.className = "sp-side " + (side === "existing" ? "on-ex" : "on-pr");
+    sb.textContent = side === "existing" ? "EXIST" : "PROP";
+    sb.title = `${t} grades go on the ${side === "existing" ? "ground now" : "new ground"}`
+      + " \u2014 click to swap";
+    // inside the <label>: without both of these the click also flips the
+    // checkbox beside it, so swapping a side would switch the tag off
+    sb.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      state.ew.spotTagSide[t] = side === "existing" ? "proposed" : "existing";
+      calcStateDirty(); renderEwSpots(); draw();
+    };
+    l.appendChild(sb);
     tags.appendChild(l);
   }
   box.appendChild(tags);
@@ -13268,9 +13340,12 @@ function renderEwSpots() {
   const n = ewActiveSpots().length;
   const note = document.createElement("div");
   note.className = "sp-note";
+  const bySide = ewSpotsSplit();
   note.textContent = n
-    ? `${n} of ${sp.length} will be used as ${state.ew.spotSide} points. RIM, TW, BW, TS and BS are the tops of walls and pipes, not ground. Leave them off unless you mean them.`
-    : `None selected. FG is finished ground; the rest are structure tops.`;
+    ? `${n} of ${sp.length} in use: ${bySide.existing.length} on the ground now, `
+      + `${bySide.proposed.length} on the new ground. TW, BW, RIM, TS and BS `
+      + `are tops of walls and pipes, not ground.`
+    : `None in use. FG is the new ground; ME and EG are the ground now.`;
   box.appendChild(note);
 }
 
@@ -14769,9 +14844,14 @@ function renderEwBasis(j, body) {
   box.classList.toggle("off", !show);
   if (!show) return;
   const ex = j.existing_contours, pr = j.proposed_contours;
-  const nPts = ((body && body.existing_points) || []).length
-             + ((body && body.proposed_points) || []).length;
-  const side = (body && body.existing_points) ? "existing" : "proposed";
+  // BOTH SIDES, NAMED. The spot grades split by tag since 2026-09-16, so
+  // "on the existing surface" was a guess from whichever list happened to
+  // be non-empty and it described 14 of C-04's 21 points wrongly.
+  const nEx = ((body && body.existing_points) || []).length;
+  const nPr = ((body && body.proposed_points) || []).length;
+  const nPts = nEx + nPr;
+  const side = nEx && nPr ? `${nEx} on the ground now, ${nPr} on the new ground`
+             : nEx ? "on the ground now" : "on the new ground";
   box.innerHTML = "";
   const line = (html) => {
     const d = document.createElement("div");
@@ -14781,7 +14861,8 @@ function renderEwBasis(j, body) {
   };
   line(`Interpolated from <b>${ex}</b> existing and <b>${pr}</b> proposed `
      + `contour${pr === 1 ? "" : "s"}`
-     + (nPts ? `, plus <b>${nPts}</b> spot grade${nPts === 1 ? "" : "s"} on the ${side} surface` : "")
+     + (nPts ? `, plus <b>${nPts}</b> spot grade${nPts === 1 ? "" : "s"} `
+             + (nEx && nPr ? `(${side})` : `${side}`) : "")
      + `, sampled on a <b>${j.cell_ft}</b> ft grid over <b>${Number(j.area_sf).toLocaleString()}</b> SF.`);
   // WHERE THE ELEVATIONS CAME FROM, beside the number they produced. This
   // block described the geometry and the model and said nothing about the
@@ -14818,9 +14899,51 @@ function renderEwBasis(j, body) {
   // on all of them (CLAUDE.md s5: a silent cap reports as full coverage).
   // The words are ewCoverageText's, shared with the panel head above the
   // rows and with the printed report, so the three cannot drift.
+  // FOLDED, NOT DROPPED. ewCoverageText returns up to four sentences - how
+  // many contour lines carry an elevation, what share of the sheet that is,
+  // what sits outside the count and why. All four are load-bearing (s5: a
+  // silent cap reports as full coverage) and all four in a row are what
+  // pushed the numbers off the panel's first screen. The FIRST one - the
+  // count itself - stays on the face; the arithmetic behind it opens on a
+  // button. Nothing here can be dismissed, only folded.
   const covAcc = ewAcceptedSplit();
-  for (const sent of ewCoverageText(ewCovNow(), covAcc))
-    line(esc(sent)).className = "ew-basis-cov";
+  const covSents = ewCoverageText(ewCovNow(), covAcc);
+  if (covSents.length) line(esc(covSents[0])).className = "ew-basis-cov";
+  if (covSents.length > 1) {
+    const more = document.createElement("span");
+    more.hidden = true;
+    for (const sent of covSents.slice(1)) {
+      const d = document.createElement("div");
+      d.className = "ew-basis-cov";
+      d.textContent = sent;
+      more.appendChild(d);
+    }
+    // the model's REASONING joins it: the name stays on the face, the
+    // sentence explaining the pick does not need to be read every time
+    if (j.surface_model_why) {
+      const w = document.createElement("div");
+      w.className = "ew-basis-model";
+      w.textContent = `${ewModelName(j.surface_model)}: ${j.surface_model_why}.`
+        + (j.label_band_ft == null ? "" :
+          ` Measured label sparsity ${j.label_band_ft} ft (existing `
+          + `${j.label_band_existing_ft}, proposed ${j.label_band_proposed_ft}).`);
+      more.appendChild(w);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mini ew-limit-more";
+    const say = () => { btn.textContent = "how this number was counted "
+      + (more.hidden ? "\u25b8" : "\u25be"); };
+    btn.setAttribute("aria-expanded", "false");
+    btn.onclick = () => {
+      more.hidden = !more.hidden;
+      btn.setAttribute("aria-expanded", String(!more.hidden));
+      say();
+    };
+    say();
+    box.appendChild(btn);
+    box.appendChild(more);
+  }
   const prov = ewAcceptedSplit();
   if (prov.machine) {
     line(`<b>${prov.machine}</b> of the <b>${prov.total}</b> elevations `
@@ -14846,13 +14969,9 @@ function renderEwBasis(j, body) {
   // not in a tooltip: an operator must never be unable to tell which one
   // ran, or that it was picked for them.
   if (j.surface_model) {
+    // the name and where it came from; the why is in the fold above
     const m = line(`Between the contours: <b>${ewModelName(j.surface_model)}</b>`
-      + ` — ${esc(j.surface_model_source || "")}.`
-      + (j.surface_model_why ? ` ${esc(j.surface_model_why)}.` : "")
-      + (j.label_band_ft == null ? "" :
-        ` Measured label sparsity ${j.label_band_ft} ft`
-        + ` (existing ${j.label_band_existing_ft}, proposed `
-        + `${j.label_band_proposed_ft}).`));
+      + ` — ${esc(j.surface_model_source || "")}.`);
     m.className = "ew-basis-model";
   }
   renderEwModelNote(j);
@@ -15024,9 +15143,8 @@ function ewApproveNotes() {
     // keep each line under the 400-char cap `approve` applies, or the tail
     // of the disclosure is what gets cut
     "No typical cross-section, no subgrade depth, no shrink/swell factor. "
-    + "Checked once against a client estimate (Beaumont Barn Civil C3.0 vs "
-    + "Estimate #853) it read 2.3-2.5x high, over 1.42x that estimator's own "
-    + "clear-and-grub area.",
+    + "Scored once against a real bid it read about 2.4x high, over a "
+    + "clear-and-grub area 1.42x too big.",
   ];
 }
 
@@ -15143,10 +15261,8 @@ function renderEwBalance(j) {
   box.appendChild(sum);
   if (note)
     note.textContent = b.basis
-      + ". Beaumont Estimate #853 applies none: its Import Structural "
-      + "(11,581) equals Site Fill \u2212 Site Cut (11,572) to 0.08%. "
-      + '"Export" is their word, not "haul off" \u2014 both #853 export '
-      + 'lines say "On site".';
+      + ". In-place cubic yards between the two surfaces: no swell, shrink, "
+      + 'compaction or working room. "Export" means moved, not hauled away.';
 }
 
 // A FAILED RESPONSE BODY IS NOT ALWAYS JSON.
@@ -15240,16 +15356,24 @@ async function ewFetchMap() {
   const blob = await r.blob();
   const img = await createImageBitmap(blob);
   if (!state.ew) return;
-  state.ew.map = { img, bbox, refDz: refDz ? parseFloat(refDz) : null, labels: [] };
-  // the block depths ride in the map's cached meta (one number per block;
-  // the crew's copy of this map has them printed)
+  const mine = state.ew.map = { img, bbox, refDz: refDz ? parseFloat(refDz) : null, labels: [] };
+  // The block depths ride in the map's cached meta (one number per block;
+  // the crew's copy of this map has them printed). `mine`: Calculate
+  // refetches the map whenever the tick is on, so two fetches can be in
+  // flight and the slower one's meta would land on the faster one's map -
+  // measured live 2026-09-16, the canvas printed no depths at all while
+  // the endpoint was serving 87 of them.
   try {
     const mr = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/map?meta=1`);
     if (mr.ok) {
       const m = await mr.json();
-      if (state.ew && state.ew.map) { state.ew.map.labels = m.labels || []; state.ew.map.spacing = m.label_spacing_ft || null; }
+      if (state.ew && state.ew.map === mine) {
+        mine.labels = m.labels || [];
+        mine.spacing = m.label_spacing_ft || null;
+      }
     }
   } catch (e) { /* the map still paints without its numbers */ }
+  if (!state.ew || state.ew.map !== mine) return;   // a newer map owns the canvas
   const nw = $("ewMapNumsWrap");
   if (nw) nw.hidden = !(state.ew.map.labels && state.ew.map.labels.length);
   // the legend makes the ramp readable: full color = the ref depth
@@ -23350,8 +23474,8 @@ function gzExistingRows() {
   return state.ew.rows.filter(r => r.surface === "existing" && isFinite(r.z));
 }
 function gzExistingPoints() {
-  if (!state.ew || state.ew.spotSide !== "existing") return [];
-  return ewActiveSpots().map(g => ({ x: g.x, y: g.y, z: g.z }));
+  if (!state.ew) return [];
+  return ewSpotsSplit().existing;
 }
 // mode "proposed": the sheet's own design surface, the same rows the
 // whole-sheet cut/fill uses for PROPOSED
@@ -23360,8 +23484,8 @@ function gzProposedRows() {
   return state.ew.rows.filter(r => r.surface === "proposed" && isFinite(r.z));
 }
 function gzProposedPoints() {
-  if (!state.ew || state.ew.spotSide !== "proposed") return [];
-  return ewActiveSpots().map(g => ({ x: g.x, y: g.y, z: g.z }));
+  if (!state.ew) return [];
+  return ewSpotsSplit().proposed;
 }
 
 // client-side count for the modal header line: which of the assigned
@@ -23474,7 +23598,8 @@ function gzApplySaved() {
       strip_in: isFinite(+s.strip_in) ? Math.max(+s.strip_in, 0) : 0,
       base_in: isFinite(+s.base_in) ? Math.max(+s.base_in, 0) : 0,
       base_name: String(s.base_name || "Base").slice(0, 30),
-      added: !!s.added, showNums: !!s.show_nums,
+      // absent (or true) prints them; only an explicit off stays off
+      added: !!s.added, showNums: s.show_nums !== false,
       named_from: s.named_from === "text" ? "text" : null,
       result: null, img: null, err: null,
     });
@@ -23552,6 +23677,7 @@ function gzApplyItems(z) {
 // ---- the panel list -------------------------------------------------------
 function renderGz() {
   const box = $("gzRows"), tbl = $("gzTable"), st = $("gzState");
+  gzGate();
   if (!box) return;
   const zs = state.gzones || [];
   if (st) st.textContent = zs.length
@@ -23707,6 +23833,32 @@ function gzDesignSummary(z) {
   if (z.strip_in > 0) s += ` · strip ${z.strip_in}"`;
   if (z.base_in > 0) s += ` · base ${z.base_in}" ${gzBase(z).name}`;
   return s;
+}
+
+// The section is greyed while the sheet's elevations are still being read:
+// the buttons refused the click with a status line that scrolled away, so
+// the panel looked broken rather than busy. Same conditions as ewNotReady,
+// said in the panel instead of the status bar.
+function gzGate() {
+  const sec = $("gzSection");
+  if (!sec) return;
+  let why = "";
+  if (!state.result) why = "Detect the sheet first \u2014 zones need its lines.";
+  else if (state.ewLoading) why = "Reading this sheet\u2019s elevations. Zones open when that finishes.";
+  else if (state.ew && typeof ewIsThisPage === "function" && !ewIsThisPage())
+    why = "These elevations are another page\u2019s. Press EARTHWORK to read this sheet.";
+  else if (!state.ew && state.ewFailed) why = "This sheet\u2019s elevations did not read. Press EARTHWORK to try again.";
+  else if (!state.ew) why = "Press EARTHWORK to read this sheet\u2019s elevations first.";
+  sec.classList.toggle("gz-wait", !!why);
+  let n = $("gzWait");
+  if (!n) {
+    n = document.createElement("div");
+    n.id = "gzWait";
+    n.className = "gz-wait-note";
+    sec.appendChild(n);
+  }
+  n.textContent = why;
+  n.hidden = !why;
 }
 
 // ---- the two arming buttons ------------------------------------------------
@@ -23888,9 +24040,9 @@ function gzModalOpen(zone, polygon) {
   const sd = (typeof EW_RESEARCH !== "undefined") ? EW_RESEARCH.strip_depth_in : null;
   $("gzStrip").value = zone ? (Number.isFinite(zone.strip_in) ? zone.strip_in : 0)
                             : (sd ? sd.value : 0);
+  // the number and its band are in Settings; the modal says what it is for
   $("gzStripWhy").textContent = sd
-    ? `default ${sd.value}" — ${sd.local}; national band ${sd.national[0]}–${sd.national[1]} in. `
-      + `Set 0 for no strip.`
+    ? `default ${sd.value}" — how deep the topsoil comes off. 0 for no strip.`
     : "";
   if ($("gzBaseIn")) $("gzBaseIn").value = zone && Number.isFinite(+zone.base_in) ? zone.base_in : 0;
   if ($("gzBaseName")) $("gzBaseName").value = (zone && zone.base_name) || "Base";
@@ -24032,7 +24184,9 @@ $("gzMSave").onclick = () => {
       polygon: gzModalPoly.map(q => [q[0], q[1]]),
       design: c.design, strip_in: c.strip_in,
       base_in: c.base.thickness_in, base_name: c.base.name,
-      added: false, showNums: false,
+      // the depths print by default: they are what the crew reads off the
+      // map, and the button turns them OFF
+      added: false, showNums: true,
       result: null, img: null, err: null,
       autoName: true,   // just drawn: may take the structure's name printed inside it
     };
@@ -26163,7 +26317,7 @@ function renderSvBidsheet() {
   const lines = svBs.lines = svBs.lines || [];
   const where = svBs.scope === "account" ? "your account's own sheet"
     : svBs.scope === "install" ? "this server's sheet (your account has not saved its own)"
-    : "the printed sheet - Beaumont Excavating's standard, as scanned; edit it and Save to make it yours";
+    : "the printed sheet as scanned; edit it and Save to make it yours";
   note.textContent = `${lines.length} line${lines.length === 1 ? "" : "s"} · ${where}`
     + (svBsDirty ? " · unsaved changes" : "");
   box.innerHTML = "";
@@ -27049,7 +27203,7 @@ function renderSvMaterials() {
   const facNote = document.createElement("span");
   facNote.className = "sv-note";
   facNote.textContent = "these ARE the Earthwork panel's factor boxes — "
-    + "applied on the sheet's next Calculate, defaulting to 1.0 (per #853), "
+    + "applied on the sheet's next Calculate, defaulting to 1.0, "
     + "and not saved across a reload (existing behaviour, unchanged here)";
   fac.appendChild(facNote);
   box.appendChild(fac);

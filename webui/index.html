@@ -8,7 +8,7 @@
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=96">
+<link rel="stylesheet" href="style.css?v=98">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -541,26 +541,20 @@
            stay on the face of the panel, always; the two paragraphs between
            them fold behind a button. Nothing here can be cleared. -->
       <div class="ew-limit" id="ewLimit">
-        <b>What this number is.</b> We make one surface from the EXIST lines
-        and one from the PROP lines. Then we take one away from the other.
-        That is a guess made from the lines. It is not a measured dig.
-        <br><b>What it cost once.</b> We checked it on one job (Beaumont Barn
-        C3.0, printed sheet 3) against the real Estimate #853. Our cut, fill
-        and import were each <b>2.3 to 2.5 times too high</b>. The area it
-        used was <b>1.42 times too big</b> (317,632 SF against 224,058 SF).
-        That was one job, not a rule. Treat every number below as a rough
-        check. A person still has to do the real one.
+        <b>Beta &mdash; check every number.</b> We make one surface from the
+        EXIST lines and one from the PROP lines and take one away from the
+        other. It is read off the drawing, not a measured dig. The one job
+        we have scored against a real bid came out about <b>2.4 times
+        high</b>. Use it as a rough check and price from your own take-off.
         <button id="ewLimitToggle" class="mini ew-limit-more" type="button"
                 aria-expanded="false">where it counts, and what it leaves out ▸</button>
         <span id="ewLimitMore" hidden>
-        <br><span id="ewWhere"><b>Where it counts.</b> Each surface only
-        reaches as far as its own lines. The volume is counted where the two
-        surfaces overlap. That shape is a straight-sided box around the
-        lines, so <b>it is not the real graded area</b>. Set a limit of work
-        below and it will be.</span>
+        <br><span id="ewWhere"><b>Where it counts.</b> Each surface reaches
+        only as far as its own lines, and the volume is counted where the two
+        overlap. That shape is a box round the lines, <b>not the real graded
+        area</b>. Set a limit of work below and it will be.</span>
         <br><b>What it leaves out.</b> The road section, the dig depth under
-        each surface, and how much dirt swells or shrinks. None of the three is
-        on the plans or in this number.
+        each surface, and how much the dirt swells or shrinks.
         </span>
       </div>
       <!-- GRADING ZONES. For sheets that do not draw a full proposed
@@ -626,12 +620,12 @@
           <button id="ewStrip" class="mini" title="Topsoil comes off first; thickness is from the soils report, not the plans">Strip topsoil</button>
           <button id="ewAddEx" class="mini">+ add layer</button></div>
         <div id="ewExLayers" class="ew-layer-rows"></div>
-        <div class="ew-place" id="ewPlace" title="Beaumont's rule (bid sheet line 12): topsoil goes back 6-8 in deep over the green area - the limit of work less the building footprints and the paving. What was stripped and not placed exports; placing more than was stripped imports. Blank = the respread % rule.">
-          <span>Rough place topsoil</span>
+        <div class="ew-place" id="ewPlace" title="Topsoil goes back over the ground you disturbed, less the buildings and the paving. What came off and is not put back is exported; putting back more than came off imports the difference. Leave the depth blank to keep the percent rule.">
+          <span>Put topsoil back</span>
           <input id="ewPlaceDepth" type="number" min="0" max="24" step="1" placeholder="0">
-          <span>in deep over the limit less</span>
+          <span>in deep, over the limit of work less</span>
           <input id="ewPlaceLess" type="number" min="0" step="100" placeholder="0">
-          <span>SF of footprints &amp; paving</span>
+          <span>SF of buildings &amp; paving</span>
           <button id="ewPlaceUse" class="mini" hidden>use 0 SF</button>
           <div class="ew-meta" id="ewPlaceNote"></div>
         </div>
@@ -670,7 +664,7 @@
         <span id="ewResult" class="ew-result"></span>
         <label class="ew-map-toggle" title="Paint where the dirt moves: cut blue, fill yellow; deeper = stronger"><input type="checkbox" id="ewMap"> Show cut/fill map</label>
         <span id="ewMapLegend" class="ew-map-legend" hidden><span class="eml-bar"></span><span class="eml-txt"></span></span>
-        <label class="ew-map-toggle" id="ewMapNumsWrap" hidden title="Print the depth in every block of the map - the number the crew reads: cut red (−), fill blue (+), the mean over each block"><input type="checkbox" id="ewMapNums"> print depths</label>
+        <label class="ew-map-toggle" id="ewMapNumsWrap" hidden title="Print the depth in every block of the map - the number the crew reads: cut red (−), fill blue (+), the mean over each block"><input type="checkbox" id="ewMapNums" checked> print depths</label>
         <!-- The map's OWN refusal, in its own slot. /earthwork/map can
              refuse when /earthwork answered 200 (a layers-only sheet has
              layer volumes but no dz grid to paint), and writing that into
@@ -692,12 +686,12 @@
       </div>
       <div class="ew-balance" id="ewBalance">
         <div class="ew-layers-head"><span>Material balance</span></div>
-        <label class="ew-bal-cut" title="Beaumont Estimate #853: Import Structural 11,581 CY = Site Fill 17,123 - Site Cut 5,551 (11,572), so their site cut is reused against site fill 1:1"><input type="checkbox" id="ewCutReuse" checked> Site cut is reusable as structural fill</label>
+        <label class="ew-bal-cut" title="Site cut goes back in as structural fill, one for one. Untick if it does not."><input type="checkbox" id="ewCutReuse" checked> Site cut is reusable as structural fill</label>
         <div id="ewBalOut" class="ew-bal-out"></div>
         <div class="ew-bal-factors">
           <span>Multiply export volumes by</span><input id="ewFacExp" type="number" min="0" step="0.05" value="1">
           <span>Multiply import volumes by</span><input id="ewFacImp" type="number" min="0" step="0.05" value="1">
-          <span>Material preset</span><select id="ewMatPreset"><option value="">— none (per #853, no factor) —</option></select>
+          <span>Material preset</span><select id="ewMatPreset"><option value="">— none (no factor) —</option></select>
         </div>
         <div class="ew-bal-note" id="ewBalNote"></div>
       </div>
@@ -720,7 +714,7 @@
            until the datum work (commit 5390b3f) is wired into profiles;
            EXCAVATION-PLAN.md section 16. -->
       <div id="trBandBox" class="tr-bands off">
-        <div class="tr-bands-head" title="Rick, Pierce Site Work (transcript 2026-08-27): &quot;we price by the foot to install pipe... it's a two-ft interval. So within 8-in sewer main we need to know how much of it is 0 to six feet deep, how much is 6 to 8, how much is 8 to 10, and so on. Sometimes we're up to 24 feet deep.&quot; The 6-ft first edge and 2-ft step are his convention; both are editable.">Depth bands (LF per band)</div>
+        <div class="tr-bands-head" title="Pipe is priced by the foot, by how deep it is. The first band ends at 6 ft and the rest step 2 ft. Both are editable.">Depth bands (LF per band)</div>
         <div class="tr-bands-cfg">
           <label for="trBandEdge">first band to</label>
           <input id="trBandEdge" type="number" min="0.5" step="0.5" value="6">
@@ -1222,20 +1216,17 @@
         <span>% toward</span>
         <input id="gzPlAz" type="number" step="1" value="0" class="gz-num gz-sm">
         <span>&deg;</span></label>
-      <div class="gz-m-note">Azimuth is measured clockwise from the top of the
-        sheet (0&deg; = up, 90&deg; = right). Reading the top of the sheet as
-        north is general drafting practice, not this sheet's own statement
-        &mdash; check its north arrow.</div>
+      <div class="gz-m-note">0&deg; is up the page, 90&deg; is right. Check the
+        sheet's north arrow.</div>
       <label class="gz-m-row"><input type="radio" name="gzMode" value="balance">
         <span>Balance &mdash; solve the pad elevation where cut equals fill</span></label>
       <label class="gz-m-row"><input type="radio" name="gzMode" value="strip_only">
         <span>Strip only &mdash; no design surface, just the strip volume</span></label>
       <label class="gz-m-row"><input type="radio" name="gzMode" value="proposed">
         <span>Proposed contours on this sheet &mdash; the design the sheet draws</span></label>
-      <div class="gz-m-note">The PROPOSED contours and spot grades the panel assigned, against
-        the ground now, inside this zone only &mdash; one zone per building gives an engineer's
-        volume exhibit. Cells the proposed surface does not reach are left out and coverage
-        says so.</div>
+      <div class="gz-m-note">The PROP contours and spot grades against the ground now,
+        inside this zone only. One zone per building. Ground the design does not reach is
+        left out, and coverage says how much it reached.</div>
     </div>
     <div class="gz-m-strip">
       <label for="gzStrip">Topsoil strip</label>
@@ -1248,9 +1239,8 @@
       <input id="gzBaseIn" type="number" min="0" step="1" value="0" class="gz-num gz-sm">
       <span>in of</span>
       <input id="gzBaseName" type="text" value="Base" maxlength="30" class="gz-num">
-      <span class="gz-m-note">The elevation above is the finished grade. A base course sits on top of
-        the earthwork, so the dig is figured to the subgrade this much lower, and the base is its own
-        &ldquo;place&rdquo; row (zone area &times; thickness). 0 = none.</span>
+      <span class="gz-m-note">The elevation above is the finished grade. The dig stops this
+        much lower, and the base gets its own row (zone area &times; thickness). 0 = none.</span>
     </div>
     <div class="gz-m-live" id="gzMLive"></div>
     <div class="gz-m-actions">
@@ -1302,6 +1292,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=191"></script>
+<script src="app.js?v=196"></script>
 </body>
 </html>

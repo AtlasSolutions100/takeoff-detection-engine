@@ -27,7 +27,9 @@ check(/<input type="radio" name="gzMode" value="proposed">/.test(html) && /Propo
 check(html.indexOf('value="strip_only"') < html.indexOf('value="proposed"'), "it comes after the declared designs");
 check(html.includes('id="ewMapNumsWrap"') && html.includes('id="ewMapNums"') && /print depths/.test(html), "the map legend has a print-depths toggle");
 for (const n of ["gzProposedRows", "gzProposedPoints"]) check(!!fnSrc(n), `${n} exists`);
-check(/r\.surface === "proposed" && isFinite\(r\.z\)/.test(fnSrc("gzProposedRows")) && /state\.ew\.spotSide !== "proposed"/.test(fnSrc("gzProposedPoints")), "the proposed rows and spot grades are gathered like the existing ones");
+// the spot grades moved to a side PER TAG (tests/test_spot_sides_ui.js); the
+// zone body takes the same split the whole-sheet run takes
+check(/r\.surface === "proposed" && isFinite\(r\.z\)/.test(fnSrc("gzProposedRows")) && /return ewSpotsSplit\(\)\.proposed;/.test(fnSrc("gzProposedPoints")), "the proposed rows and spot grades are gathered like the existing ones");
 check(/proposed_rows: gzProposedRows\(\)\.map\(r => \(\{ chain_id: r\.chain_id, z: r\.z \}\)\),\n    proposed_points: gzProposedPoints\(\),/.test(fnSrc("gzBody")), "the zone request carries them");
 check(/return \{ design: \{ mode \}, strip_in, base \};/.test(fnSrc("gzModalCollect")), "a mode with no inputs (strip only, proposed) collects as {mode}");
 const gc = fnSrc("gzCompute");
@@ -38,7 +40,9 @@ check(/else if \(d\.mode === "proposed"\)\n    s = "proposed contours"/.test(fnS
 check(/named_from: z\.named_from === "text" \? "text" : null,/.test(js) && /named_from: s\.named_from === "text" \? "text" : null,/.test(js), "where the name came from persists with the zone");
 check(/named from the text printed inside it/.test(fnSrc("renderGz")), "the name box says so");
 const fm = fnSrc("ewFetchMap");
-check(/earthwork\/map\?meta=1/.test(fm) && /state\.ew\.map\.labels = m\.labels \|\| \[\];/.test(fm), "after the map, its meta brings the block depths");
+// the write-back is guarded by the map object this fetch made
+// (tests/test_spot_sides_ui.js): two fetches can be in flight
+check(/earthwork\/map\?meta=1/.test(fm) && /mine\.labels = m\.labels \|\| \[\];/.test(fm), "after the map, its meta brings the block depths");
 check(/nw\.hidden = !\(state\.ew\.map\.labels && state\.ew\.map\.labels\.length\);/.test(fm), "the toggle shows only when there are depths to print");
 check(/if \(\$\("ewMapNums"\)\) \$\("ewMapNums"\)\.onchange = \(\) => draw\(\);/.test(js), "the toggle repaints");
 const dr = fnSrc("draw");
