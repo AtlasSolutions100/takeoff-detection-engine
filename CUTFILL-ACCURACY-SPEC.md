@@ -136,15 +136,26 @@ estimator accepts it.
 Each stage is scored against the references in §1 and the synthetic set,
 and lands with tests + headed proof + a FINDINGS entry.
 
-**Stage 1 — every line gets a height or a stated reason.** A
-contour-ordering pass: build the adjacency of contour lines (which line
-lies between which), then propagate elevations in interval steps with a
-consistency check, replacing the one-transect-at-a-time count that refuses
-most fans today (FINDINGS 38 §6: count mismatch 33+20 on Barn, 778+163
-transects on C-04).
-*Accept when:* Barn C3.0 ≥ 85% of in-boundary contour lines carry a height
-(today 17%); no scored sheet regresses; every inferred value still flagged
-inferred with its source sentence.
+**Stage 1 — every line gets a height or a stated reason.** REWRITTEN
+2026-09-17 after the ordering solver was measured and stopped (FINDINGS
+42): adjacency means "one contour interval apart" only 33-51% of the time
+raw, 80% on C-04 with a cleaned candidate set, and on Barn C3.0 the
+sheet's 17 printed labels produce NO same-family anchor-to-anchor
+adjacency at all. A solver propagates along chains, so a one-in-five wrong
+step compounds and mints heights that look printed. The sheet does not
+carry the information; the spec's own manual-input contract applies.
+  a. coverage reported by LENGTH inside the limit of work (Barn 41%, not
+     the 17% the line count reads), every line without a height carrying a
+     stated reason;
+  b. the cleaned candidate set for the counting that already runs - same
+     family, twins merged, anchors on the family's own interval grid
+     (27% -> 80% trustworthy on C-04);
+  c. FAN FILL for the estimator: pick the fan, give one height and a
+     direction, the software counts the run and fills it - every value
+     flagged operator-counted, the count shown and editable.
+*Accept when:* the coverage statement is length-based and bounded, every
+unelevated line names its reason, and a fan an estimator fills takes one
+gesture and is provenance-flagged. **Stage 2 now runs first.**
 
 **Stage 2 — surface fidelity.** Breaklines (grade break, swale, ridge,
 toe/top of slope, wall, curb, pond) with elevations derived where contours
