@@ -1,0 +1,241 @@
+{
+ "errors": [],
+ "appJs": "v=196",
+ "css": "v=98",
+ "needed_detect": false,
+ "gate_before_earthwork": {
+  "wait": true,
+  "note": "Press EARTHWORK to read this sheet\u2019s elevations first.",
+  "draw_disabled": "none"
+ },
+ "rect_v1": {
+  "sec": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "note": [
+   0,
+   0,
+   0,
+   0
+  ]
+ },
+ "rect_v1b": {
+  "sec": [
+   137,
+   517,
+   361,
+   208.78125
+  ],
+  "note": [
+   148,
+   682,
+   339,
+   34.78125
+  ],
+  "busy": [
+   145,
+   97,
+   345,
+   48
+  ]
+ },
+ "gate_while_reading": {
+  "loading": true,
+  "wait": true,
+  "note": "Reading this sheet\u2019s elevations. Zones open when that finishes.",
+  "draw_disabled": "none",
+  "busy": "reading this sheet's elevation labels \u2014 the first read of a page takes a minute or more\u2026"
+ },
+ "gate_after": {
+  "wait": false,
+  "note": "",
+  "draw_disabled": "auto"
+ },
+ "spots_engine": {
+  "TW:proposed": 5,
+  "ME:existing": 7,
+  "BW:proposed": 5,
+  "EW:proposed": 4
+ },
+ "tag_sides": [
+  {
+   "chip": "BW 5PROP",
+   "on": true,
+   "side": "PROP"
+  },
+  {
+   "chip": "EW 4PROP",
+   "on": true,
+   "side": "PROP"
+  },
+  {
+   "chip": "ME 7EXIST",
+   "on": true,
+   "side": "EXIST"
+  },
+  {
+   "chip": "TW 5PROP",
+   "on": true,
+   "side": "PROP"
+  }
+ ],
+ "note_v2": "21 of 21 in use: 7 on the ground now, 14 on the new ground. TW, BW, RIM, TS and BS are tops of walls and pipes, not ground.",
+ "body_v2": {
+  "existing_points": 7,
+  "proposed_points": 14
+ },
+ "rect_v2": {
+  "box": [
+   137,
+   334.078125,
+   361,
+   167.171875
+  ],
+  "tags": [
+   147,
+   376.078125,
+   341,
+   56
+  ],
+  "note": [
+   147,
+   439.078125,
+   341,
+   52.171875
+  ]
+ },
+ "tag_sides_after_swap": [
+  {
+   "chip": "BW 5PROP",
+   "on": true,
+   "side": "PROP"
+  },
+  {
+   "chip": "EW 4PROP",
+   "on": true,
+   "side": "PROP"
+  },
+  {
+   "chip": "ME 7EXIST",
+   "on": true,
+   "side": "EXIST"
+  },
+  {
+   "chip": "TW 5EXIST",
+   "on": true,
+   "side": "EXIST"
+  }
+ ],
+ "body_after_swap": {
+  "existing_points": 12,
+  "proposed_points": 9
+ },
+ "rect_v3": {
+  "box": [
+   137,
+   334.078125,
+   361,
+   167.171875
+  ],
+  "tags": [
+   147,
+   376.078125,
+   341,
+   56
+  ],
+  "note": [
+   147,
+   439.078125,
+   341,
+   52.171875
+  ]
+ },
+ "limit_text": "Beta \u2014 check every number. We make one surface from the EXIST lines and one from the PROP lines and take one away from the other. It is read off the drawing, not a measured dig. The one job we have scored against a real bid came out about 2.4 times high. Use it as a rough check and price from your own take-off. where it counts, and what it leaves out \u25b8 Where it applies. Inside the limit of work you set (6 points, drawn outline). Ground outside it is not counted at all. What it leaves out. The road section, the dig depth under each surface, and how much the dirt swells or shrinks.",
+ "limit_words": 116,
+ "limit_has_client": false,
+ "rect_v4": {
+  "box": [
+   149,
+   340,
+   337,
+   154
+  ]
+ },
+ "calc": {
+  "cut": 1508.9,
+  "fill": 7107,
+  "net": 5598.2,
+  "area": 61736
+ },
+ "basis_folded": {
+  "lines": 5,
+  "has_button": false,
+  "expanded": null,
+  "text_words": 303
+ },
+ "map": {
+  "labels": 87,
+  "spacing": 30,
+  "nums_checked": true,
+  "wrap_shown": true,
+  "bbox": [
+   408.97,
+   715.8,
+   2252.17,
+   1099.8
+  ]
+ },
+ "view_v5": {
+  "cv": [
+   528,
+   52,
+   972,
+   854
+  ],
+  "toggle": [
+   157,
+   2291.625,
+   83.546875,
+   18
+  ]
+ },
+ "errors6": [],
+ "basis_fold": {
+  "button": "how this number was counted \u25b8",
+  "expanded": "false",
+  "shown_lines": 5,
+  "shown_words": 124,
+  "hidden_words": 179,
+  "face": [
+   "Interpolated from 106 existing and 23 proposed contours, plus 21 spot grades (7 on the ground now, 14 on the new ground), sampled on a 2 ft grid over 61,736 SF.",
+   "The engine found 368 contour lines. 158 carry an elevation (60% of that contour footage); 210 carry none at all and hold no height in any surface.",
+   "68 of the 129 elevations under this number had their digits read by machine off a picture of the sheet, not from its text \u2014 they can disagree with what is printed. Check them against the drawing before pricing.",
+   "That region is bounded by your limit of work (6 points): only ground inside it is counted.",
+   "Between the contours: linear TIN \u2014 auto (measured label sparsity)."
+  ]
+ },
+ "rect_v6": {
+  "box": [
+   137,
+   270.625,
+   361,
+   293
+  ]
+ },
+ "basis_open": {
+  "button": "how this number was counted \u25be",
+  "expanded": "true",
+  "words": 303
+ },
+ "rect_v6b": {
+  "box": [
+   137,
+   92.625,
+   361,
+   650
+  ]
+ }
+}
