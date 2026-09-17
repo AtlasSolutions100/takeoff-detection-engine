@@ -1,0 +1,30 @@
+{
+ "errors": [],
+ "appJs": "v=200",
+ "limit_text": "Beta \u2014 check every number. We make one surface from the EXIST lines and one from the PROP lines and take one away from the other. It is read off the drawing, not measured, and it can be off by a third or more, either way. It is off the most where contour lines have no number. Use it as a rough check and price from your own take-off. where it counts, and what it leaves out \u25b8 Where it applies. Each surface reaches only as far as its own lines, and the volume is counted where the two overlap. That shape is a box round the lines, not the real graded area. Set a limit of work below and it will be. What it leaves out. The road section, the dig depth under each surface, and how much the dirt swells or shrinks.",
+ "limit_rect": [
+  149,
+  340.125,
+  337,
+  154
+ ],
+ "where_text": "Where it applies. Each surface reaches only as far as its own lines, and the volume is counted where the two overlap. That shape is a box round the lines, not the real graded area. Set a limit of work below and it will be.",
+ "limit_rect_open": [
+  149,
+  340.125,
+  337,
+  280
+ ],
+ "limit_words_visible": 146,
+ "export_notes": {
+  "bounded": [
+   "Interpolated from 34 existing and 26 proposed contours over 168,776 SF. That region is bounded by the limit of work: only ground inside it is counted."
+  ],
+  "open": [
+   "Interpolated from 34 existing and 26 proposed contours over 168,776 SF. That region is NOT the graded area: it is where the two convex hulls of the assigned contours overlap. Set a limit of work to bound it."
+  ],
+  "beta": [
+   "No typical cross-section, no subgrade depth, no shrink/swell factor. On the one job scored against a real bid, cut and fill were each off by up to about 40%, in opposite directions."
+  ]
+ }
+}
