@@ -5084,6 +5084,12 @@ class EarthworkBody(BaseModel):
     # yards are what he wants, "reuse" means the default balance is
     # right. Empty is the honest starting state: nothing has been said.
     confirmed: list[str] = []
+    # The contour interval, when the operator has set one. Peak closure
+    # carries a summit half an interval past the last ring, so it has to
+    # be the interval the CONTOURS are drawn at, not the spacing of the
+    # labels - those differ by 5x on a sheet that labels index contours
+    # only (earthwork.read_interval_note).
+    interval_ft: float | None = None
 
 
 # ONE ELEVATION READ PER PAGE AT A TIME.
@@ -5205,9 +5211,22 @@ def earthwork_progress(job_id: str, page: int):
 
 
 @app.get("/api/job/{job_id}/page/{page}/earthwork/suggest")
-def earthwork_suggest(job_id: str, page: int, more: int = 0):
+def earthwork_suggest(job_id: str, page: int, more: int = 0,
+                      interval_ft: float | None = None):
     """Auto-pair elevation labels with the contours they sit on - a
     suggestion list for the review UI, not a decision.
+
+    `interval_ft` - THE OPERATOR'S CONTOUR INTERVAL, which beats both the
+    sheet's note and the modal step between labels. Contours are drawn at
+    the interval but only every fourth or fifth is labelled, so a
+    statistic over the labels reads the INDEX spacing: Barn C3.0 draws
+    350 lines at 1 ft, labels 26 of them and every label is a multiple of
+    5, so the labels imply 5 ft. Measured: on that sheet the counted
+    rows do not change when the note is used, because infill_intervals'
+    own _minor_interval consensus was already recovering the finer step.
+    What changes is the number the panel reports - the one an operator
+    reads and quotes - and the fact that he can now set it.
+    See earthwork.read_interval_note.
 
     `more=1` - KEEP READING: when this page's label read was cut short,
     carry it on from where it stopped (its place and reads are kept beside
@@ -5229,6 +5248,19 @@ def earthwork_suggest(job_id: str, page: int, more: int = 0):
     from takeoff_engine.extract import page_lines as _page_lines
     lines = _page_lines(doc[page])
     doc.close()
+    # WHAT THE SHEET SAYS ITS CONTOUR INTERVAL IS. Better evidence than
+    # any statistic over the labels we happened to resolve, which is what
+    # contour_interval's own docstring has said since it was written.
+    from takeoff_engine.earthwork import read_interval_note
+    interval_note = read_interval_note(lines)
+    typed_iv = None
+    try:
+        if interval_ft is not None and float(interval_ft) > 0:
+            typed_iv = float(interval_ft)
+    except (TypeError, ValueError):
+        typed_iv = None
+    # the operator, then the sheet, then the labels
+    use_iv = typed_iv or interval_note.get("interval_ft")
 
     class _C:  # minimal chain view over the stored result
         def __init__(self, d):
@@ -5608,7 +5640,8 @@ def earthwork_suggest(job_id: str, page: int, more: int = 0):
         # inherited). The reader already knows; hand it over.
         anchor_how = {int(r0["chain_id"]): r0.get("how")
                       for r0 in sug if r0.get("chain_id") is not None}
-        r = infill_intervals(assigned, cands, anchor_how=anchor_how)
+        r = infill_intervals(assigned, cands, anchor_how=anchor_how,
+                             note_ft=use_iv)
         infill_diag[side] = {"interval": r["interval"],
                              "families": r.get("families"),
                              "candidates_in_family":
@@ -5653,7 +5686,14 @@ def earthwork_suggest(job_id: str, page: int, more: int = 0):
     _COV_CACHE[(job_id, int(page))] = coverage
     coverage["interval"] = contour_interval(
         [float(r["z"]) for r in sug
-         if is_printed_how(r.get("how")) and r.get("z") is not None])
+         if is_printed_how(r.get("how")) and r.get("z") is not None],
+        note_ft=use_iv)
+    # the evidence behind it, so the panel can show what it came from and
+    # the operator can disagree with a number rather than with a mystery
+    coverage["interval"]["note"] = interval_note
+    coverage["interval"]["typed_ft"] = typed_iv
+    if typed_iv:
+        coverage["interval"]["source"] = "the interval you typed"
     return {"suggestions": sug,
             "contour_coverage": coverage,
             "suggestions_dropped": dropped,
@@ -5778,6 +5818,11 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
                  for c in res["chains"]}
 
     closures: list = []
+    try:
+        g_interval = (float(body.interval_ft)
+                      if getattr(body, "interval_ft", None) else None)
+    except (TypeError, ValueError):
+        g_interval = None
     def build(name, rows, points=()):
         surf = Surface(name)
         for r in rows:
@@ -5792,7 +5837,8 @@ def _earthwork_run(job_id: str, page: int, body: EarthworkBody,
         if body.close_peaks and surf.contours:
             # the interval is READ off this surface's own labels, never
             # invented; with no readable interval there is no closure
-            iv = contour_interval([z for _, z in surf.contours])
+            iv = contour_interval([z for _, z in surf.contours],
+                                  note_ft=g_interval)
             spots = [{"x": x, "y": y, "z": z} for x, y, z in surf.points]
             for c in closure_points(surf.contours, iv.get("interval_ft"),
                                     ft_per_pt, spots=spots):

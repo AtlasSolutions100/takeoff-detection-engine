@@ -60,8 +60,12 @@ check(/id="ewReady"/.test(HTML), "index.html has the #ewReady slot");
 check(/\.ew-ready\s*\{/.test(CSS) && /\.ew-ready\.r-ready/.test(CSS)
   && /\.ew-ready\.r-open/.test(CSS),
   "style.css styles it with a state for ready and a state for open");
-check(/app\.js\?v=206/.test(HTML) && /style\.css\?v=102/.test(HTML),
-  "index.html busts the cache for both changed files");
+// AT LEAST the version this shipped with - pinning it exactly makes every
+// later bump fail a test that has nothing to do with it.
+const ver = (re) => Number((HTML.match(re) || [])[1] || 0);
+check(ver(/app\.js\?v=(\d+)/) >= 206 && ver(/style\.css\?v=(\d+)/) >= 102,
+  "index.html busts the cache for both changed files  (app v"
+  + ver(/app\.js\?v=(\d+)/) + ", css v" + ver(/style\.css\?v=(\d+)/) + ")");
 const src = fnSrc("renderEwReady");
 check(!!src, "app.js has renderEwReady()");
 check(/renderEwProof\(j\);\s*\n\s*renderEwReady\(j\);/.test(SRC),

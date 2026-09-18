@@ -455,6 +455,17 @@ canvas#view.panning { cursor: grabbing; }
 .ew-proof li.s-none { color: var(--dim); }
 .ew-proof .ep-worst { display: block; margin-top: 4px;
   font-variant-numeric: tabular-nums; }
+/* the contour interval, with somewhere to type your own */
+.ew-cov-ivset { margin-top: 6px; display: flex; flex-wrap: wrap;
+  align-items: baseline; gap: 6px; }
+.ew-cov-ivset label { font-weight: 600; }
+.ew-cov-ivset input { width: 72px; font: inherit; padding: 1px 4px;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--text); }
+.ew-cov-ivset .ew-iv-why { color: var(--dim); }
+.ew-cov-ivset .ew-iv-quote { flex-basis: 100%; color: var(--dim);
+  font-style: italic; }
+
 /* THE REQUIRED-INPUT CONTRACT. Green only when nothing required is open;
    otherwise the warn colour every other "check this before you price it"
    state uses on this panel. */

@@ -12190,7 +12190,11 @@ $("ewBtn").onclick = async () => {
 // against 204 s cold on C-04.
 function suggestOnce() {
   const gen = state.gen, job = state.job, page = state.page;
-  const key = gen + "|" + job + "|" + page;
+  // THE INTERVAL IS PART OF THE REQUEST, so it is part of the key: typing a
+  // new one has to re-read the page rather than be handed the answer that
+  // was counted at the old one.
+  const ivq = state.ewIntervalFt ? String(state.ewIntervalFt) : "";
+  const key = gen + "|" + job + "|" + page + "|" + ivq;
   const cur = state.suggestReq;
   if (cur && cur.key === key) return cur.promise;
   // KEEP READING (ewKeepReading): this one request asks the server to carry
@@ -12206,8 +12210,14 @@ function suggestOnce() {
   const promise = (async () => {
     let r;
     try {
+      // a plain read stays exactly the request it always was - no query
+      // at all - because test_keep_reading_ui pins that shape to prove the
+      // follow-up after a keep-reading is not another more=1
+      const qs = [];
+      if (more) qs.push("more=1");
+      if (ivq) qs.push("interval_ft=" + encodeURIComponent(ivq));
       r = await fetch(`/api/job/${job}/page/${page}/earthwork/suggest`
-                      + (more ? "?more=1" : ""),
+                      + (qs.length ? "?" + qs.join("&") : ""),
                       ctl ? { signal: ctl.signal } : undefined);
     } catch (e) {
       if (ctl && ctl.signal.aborted) {
@@ -13722,7 +13732,15 @@ function ewIntervalUse(ivRaw, rows) {
     return { ft: null, ok: false, share: null, modal: modal,
       why: "This sheet's labels do not step by a readable contour interval, "
          + "so no row is ranked on one." };
-  if (modal < EW_IV_MIN_STEPS)
+  // WHERE THE NUMBER CAME FROM DECIDES HOW IT IS JUDGED. The count gate
+  // below weighs a statistic over the labels; it has nothing to say about
+  // a sheet that states its interval in its own notes, or about a value
+  // the estimator typed. Applying it to those printed "Only 0 steps ...
+  // agree on 1 ft" directly above a control reading "sheet's
+  // contour-interval note" - the same number, contradicted in two lines.
+  const ivStated = !!(ivRaw && (ivRaw.typed_ft
+    || (ivRaw.note && ivRaw.note.interval_ft)));
+  if (!ivStated && modal < EW_IV_MIN_STEPS)
     return { ft: ft, ok: false, share: null, modal: modal,
       why: "Only " + modal + " step" + (modal === 1 ? "" : "s")
          + " between labelled elevations agree on " + ft + " ft - too few "
@@ -13740,8 +13758,12 @@ function ewIntervalUse(ivRaw, rows) {
          + "more than the interval reading can carry, so the reading is "
          + "what is in doubt and no row is ranked on it." };
   return { ft: ft, ok: true, share: share, modal: modal,
-    why: "This sheet's contours step by " + ft + " ft (" + modal
-       + " agreeing steps between labelled elevations)." };
+    why: ivStated
+      ? (ivRaw.typed_ft
+         ? "You set this sheet's contour interval to " + ft + " ft."
+         : "This sheet states a " + ft + " ft contour interval in its notes.")
+      : "This sheet's contours step by " + ft + " ft (" + modal
+        + " agreeing steps between labelled elevations)." };
 }
 
 // Every row's class, with the interval self-check applied. Returns
@@ -14366,6 +14388,84 @@ function renderEwCoverage() {
   d.className = "ew-cov-iv";
   d.textContent = iv.why;
   box.appendChild(d);
+  box.appendChild(ewIntervalControl(cov));
+}
+
+// THE CONTOUR INTERVAL, AND A WAY TO ARGUE WITH IT.
+//
+// Every elevation COUNTED between two labelled contours is derived from
+// this number, and a sheet that labels only its index contours implies the
+// wrong one: Barn C3.0 draws 350 lines at the 1 ft its notes state twice
+// and labels 26 of them, every label a multiple of 5. So the panel says
+// what the interval is, where it came from, and takes the estimator's own.
+//
+// Typing re-reads the page (suggestOnce keys on it) because the counted
+// rows are downstream of it. Clearing the box hands it back to the sheet.
+function ewIntervalControl(cov) {
+  const b = (cov && cov.interval) || {};
+  const note = b.note || {};
+  const wrap = document.createElement("div");
+  wrap.className = "ew-cov-ivset";
+  const lab = document.createElement("label");
+  lab.textContent = "Contour interval";
+  lab.htmlFor = "ewIvFt";
+  wrap.appendChild(lab);
+  const inp = document.createElement("input");
+  inp.type = "number";
+  inp.id = "ewIvFt";
+  inp.step = "0.1";
+  inp.min = "0";
+  inp.placeholder = b.interval_ft == null ? "not read" : String(b.interval_ft);
+  if (state.ewIntervalFt) inp.value = state.ewIntervalFt;
+  inp.addEventListener("change", () => ewSetInterval(inp.value));
+  wrap.appendChild(inp);
+  const ft = document.createElement("span");
+  ft.className = "ew-iv-unit";
+  ft.textContent = "ft";
+  wrap.appendChild(ft);
+  const why = document.createElement("span");
+  why.className = "ew-iv-why";
+  why.textContent = state.ewIntervalFt
+    ? "\u2014 yours; clear the box to use the sheet's"
+    : "\u2014 " + (b.source || "not read");
+  wrap.appendChild(why);
+  // the sheet's own words, when it has any - the evidence behind the number
+  if (note.quote) {
+    const q = document.createElement("div");
+    q.className = "ew-iv-quote";
+    q.textContent = "\u201c" + note.quote + "\u201d";
+    wrap.appendChild(q);
+  }
+  // ...and when the sheet says more than one thing, both, because picking
+  // one of them for the operator is how a confident wrong number is made
+  if ((note.candidates || []).length > 1) {
+    const c = document.createElement("div");
+    c.className = "ew-iv-quote";
+    c.textContent = "the sheet states " + note.candidates.length
+      + " different intervals: "
+      + note.candidates.map(x => x.interval_ft + " ft").join(", ")
+      + " \u2014 type the one that applies";
+    wrap.appendChild(c);
+  }
+  return wrap;
+}
+
+function ewSetInterval(v) {
+  const n = parseFloat(v);
+  const next = isFinite(n) && n > 0 ? n : null;
+  if (next === (state.ewIntervalFt || null)) return;
+  state.ewIntervalFt = next;
+  // the counted rows come from it, so the page is read again - and the
+  // panel is repainted AFTER it lands, or the line keeps crediting the
+  // sheet for a number the operator just typed (seen live 2026-09-18:
+  // rows went 60 -> 64 while the text still said "the sheet's note")
+  if (typeof ewEnsure === "function") {
+    state.ew = null;
+    Promise.resolve(ewEnsure()).then(() => {
+      if (typeof renderEw === "function") renderEw();
+      else if (typeof renderEwCoverage === "function") renderEwCoverage();
+    }).catch(() => {});
+  }
 }
 
 // One chip per class of evidence, with its count. Clicking filters; clicking

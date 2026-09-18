@@ -4281,6 +4281,77 @@ _INFILL_STEP_TOL = 0.02
 _INFILL_MAX_TRANSECTS = 6000
 
 
+# --- the interval the SHEET states, not the one its labels imply --------
+#
+# A drafting convention this whole reader exists for: contours are drawn at
+# the interval, but only every fourth or fifth one - the INDEX contour - is
+# labelled. Beaumont's Barn C3.0 draws 350 contour lines at 1 ft and labels
+# 26 of them, every label a multiple of 5, so the modal step between labels
+# reads 5 ft: the INDEX spacing, not the interval. The sheet states 1 ft in
+# its own notes, twice.
+#
+# WHAT THIS DOES AND DOES NOT FIX, measured rather than assumed. On that
+# sheet the counted elevations do NOT move when the note is wired in - 42
+# infilled rows, zero of them differing - because infill_intervals already
+# carries `_minor_interval`, a consensus guard that derives the finer step
+# from the fans between adjacent labels. What moves is what the panel
+# REPORTS, which is what an operator reads and quotes, and whether he can
+# set it at all. The arithmetic changes only where that consensus cannot
+# form - fewer than three adjacent fans, or under 60% agreement - and there
+# the count falls back to the index spacing with nothing to catch it.
+_INTERVAL_LINE = re.compile(r"CONTOUR", re.I)
+_INTERVAL_WORD = re.compile(r"INTERVAL", re.I)
+# "1 FT", "2 FOOT", "0.5 FEET", "2'", "1'-0\"" - the number immediately
+# before a foot unit. Inches-only intervals do not exist on a grading plan.
+_INTERVAL_VAL = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:'|\u2019|FT\b|FT\.|FOOT|FEET)", re.I)
+INTERVAL_MIN_FT = 0.1
+INTERVAL_MAX_FT = 50.0
+
+
+def read_interval_note(lines) -> dict:
+    """The contour interval as the sheet states it, or nothing.
+
+    `lines` is extract.page_lines() output - [(x0, y0, x1, y1, text)] - or
+    any iterable of strings. A line counts only when it mentions CONTOUR
+    and INTERVAL together, so "SPOT ELEVATION" and "INTERVAL" in a
+    paragraph about inspections cannot contribute.
+
+    Returns {interval_ft, source, quote, candidates, n_notes}. interval_ft
+    is None when nothing was found OR when the notes disagree - the
+    candidates are handed back either way so the panel can show them and
+    the operator can settle it.
+    """
+    seen: dict = {}
+    for ln in (lines or []):
+        txt = ln if isinstance(ln, str) else (ln[4] if len(ln) > 4 else "")
+        if not txt or not _INTERVAL_LINE.search(txt) or not _INTERVAL_WORD.search(txt):
+            continue
+        for m in _INTERVAL_VAL.finditer(txt):
+            try:
+                v = float(m.group(1))
+            except ValueError:
+                continue
+            if not (INTERVAL_MIN_FT <= v <= INTERVAL_MAX_FT):
+                continue
+            q = " ".join(txt.split())
+            seen.setdefault(round(v, 3), q[:160])
+    if not seen:
+        return {"interval_ft": None, "source": "the sheet states no contour "
+                "interval", "quote": None, "candidates": [], "n_notes": 0}
+    cands = [{"interval_ft": v, "quote": q} for v, q in sorted(seen.items())]
+    if len(cands) > 1:
+        # THE SHEET IS NOT TELLING US ONE THING. Picking one here is how a
+        # confident wrong number gets made; the operator types it instead.
+        return {"interval_ft": None,
+                "source": f"the sheet states {len(cands)} different contour "
+                          f"intervals - type the one that applies",
+                "quote": None, "candidates": cands, "n_notes": len(cands)}
+    v, q = cands[0]["interval_ft"], cands[0]["quote"]
+    return {"interval_ft": v, "source": "the sheet's own contour-interval note",
+            "quote": q, "candidates": cands, "n_notes": 1}
+
+
 def contour_interval(zs, note_ft=None) -> dict:
     """The sheet's contour interval - read off the labels, never invented.
 
