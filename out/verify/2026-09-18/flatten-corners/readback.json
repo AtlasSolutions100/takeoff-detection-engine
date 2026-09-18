@@ -1,0 +1,38 @@
+{
+ "errors": [],
+ "appJs": "v=209",
+ "pick": {
+  "id": 564,
+  "wobble": 0.17228218191180944,
+  "len": 232.1905188289369,
+  "straight": 198.06708863412933,
+  "n": 36,
+  "a": [
+   1369.2237,
+   635.245175
+  ],
+  "b": [
+   1346.6566500000001,
+   703.6665500000001
+  ],
+  "m": [
+   1353.7716,
+   675.4686499999999
+  ],
+  "corners": 2,
+  "predicted": 16.17846302895441
+ },
+ "before": {
+  "n": 36,
+  "len_pt": 232.19
+ },
+ "after": {
+  "n": 7,
+  "len_pt": 220.19025866965643,
+  "id": 929,
+  "excluded": true,
+  "status": "flattened \u2014 12 pt of zigzag removed, 1 corner kept"
+ },
+ "armed": "flatten",
+ "first_click": true
+}

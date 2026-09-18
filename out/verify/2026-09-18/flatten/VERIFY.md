@@ -1,5 +1,11 @@
 # Flatten — 2026-09-18
 
+> **Superseded the same day by corner awareness.** What is below describes
+> the first version, which replaced everything between the two picks with a
+> single straight segment. Measured on an L-shaped perimeter, picking across
+> the corner took 406.7 pt to 282.8 — the bare diagonal, 30.5% of the run
+> deleted in one click. See `../flatten-corners/VERIFY.md`.
+
 Headed Edge on `http://127.0.0.1:8100`, dev, `app.js?v=208`.
 Driver: `scratchpad/live_flatten.py`. Readback: `readback.json`.
 Zero page errors, zero console errors.

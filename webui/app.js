@@ -19197,7 +19197,7 @@ function handleCanvasClick(e) {
     return;
   }
   if (state.tool === "flatten" && state.selected !== null) {
-    flattenClick(px, py);
+    flattenClick(px, py, e.shiftKey);
     return;
   }
   if (state.tool === "merge" && state.selected !== null) {
@@ -19990,8 +19990,43 @@ $("flattenBtn").onclick = () => {
   if (state.tool === "flatten") { cancelFlatten(); setStatus("flatten cancelled"); draw(); return; }
   state.tool = "flatten"; state.flatA = null;
   $("flattenBtn").classList.add("active");
-  setStatus("flatten: click where the straight run starts (Esc cancels)", "busy");
+  setStatus("flatten: click where the straight run starts, then where it "
+    + "ends — corners are kept (Esc cancels)", "busy");
 };
+// A CORNER IS NOT JITTER. Douglas-Peucker keeps every point that sits
+// further than `eps` off the chord through its neighbours, so a bend
+// survives and a wobble does not. 4.0 pt is measured, not chosen: across
+// Oncor C-04, Barn C3.0 and C2.1 (222,760 vertices) a 0.5 pt tolerance
+// removes 78% of all vertices for 0.03-0.25% of the length - that whole
+// population is trace noise - while the same sheets lose 0.41-2.59% at
+// 3 pt, which is real shape, because contours are genuinely curved.
+// See scratchpad/probe_jitter_scale.py.
+const FLATTEN_CORNER_PT = 4.0;
+function dpSimplify(ps, eps) {
+  const n = ps.length;
+  if (n < 3) return ps.slice();
+  const keep = new Array(n).fill(false);
+  keep[0] = keep[n - 1] = true;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    if (b <= a + 1) continue;
+    const p = ps[a], q = ps[b];
+    const dx = q[0] - p[0], dy = q[1] - p[1], L2 = dx * dx + dy * dy;
+    let bi = -1, bd = -1;
+    for (let i = a + 1; i < b; i++) {
+      let t = L2 ? ((ps[i][0] - p[0]) * dx + (ps[i][1] - p[1]) * dy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(ps[i][0] - (p[0] + t * dx), ps[i][1] - (p[1] + t * dy));
+      if (d > bd) { bd = d; bi = i; }
+    }
+    if (bd > eps) {
+      keep[bi] = true;
+      stack.push([a, bi]); stack.push([bi, b]);
+    }
+  }
+  return ps.filter((_, i) => keep[i]);
+}
 function dedupePts(ps) {
   const out = [];
   for (const q of ps) {
@@ -20007,7 +20042,7 @@ function cancelFlatten() {
 // Replace every vertex BETWEEN the two picks with one straight segment.
 // The picks themselves stay where they are: an operator straightening a
 // property line is saying "this run is straight", not "move its ends".
-function flattenClick(px, py) {
+function flattenClick(px, py, forceStraight) {
   const ch = chainById(state.selected);
   if (!ch) { cancelFlatten(); return; }
   const f = IMG_DPI / 72;
@@ -20022,12 +20057,21 @@ function flattenClick(px, py) {
   if (A.arc > B.arc) { const t = A; A = B; B = t; }
   const pts = ch.points;
   const before = polyLen(pts);
+  // THE SPAN, SIMPLIFIED - not replaced. Every run between corners comes
+  // out straight and every corner stays where the drawing put it. Pure
+  // jitter has no corners, so it still collapses to one segment, which is
+  // the case this was built for.
+  const span = dedupePts([A.q].concat(pts.slice(A.i, B.i), [B.q]));
+  // Shift on the second click means "I know what this is - straighten it
+  // anyway", which is what the tool did before it learned about corners.
+  const kept = forceStraight ? [A.q, B.q] : dpSimplify(span, FLATTEN_CORNER_PT);
+  const corners = Math.max(0, kept.length - 2);
   // NO DUPLICATE VERTICES. projectOnChain snaps to a nearby vertex, so
   // picking a line's own corner returns that corner as q with i one past
   // it - and the slice would then write it twice. Harmless for length (a
   // zero-length segment adds nothing) and not harmless for anything that
   // walks the points.
-  const next = dedupePts(pts.slice(0, A.i).concat([A.q, B.q], pts.slice(B.i)));
+  const next = dedupePts(pts.slice(0, A.i).concat(kept, pts.slice(B.i)));
   const after = polyLen(next);
   const saved = before - after;
   // NOTHING BETWEEN THE PICKS IS NOT AN EDIT. Two points on the same
@@ -20036,7 +20080,18 @@ function flattenClick(px, py) {
   // the operator nothing happened.
   if (saved < 0.5 || next.length < 2) {
     cancelFlatten(); updateSelBar(ch); draw();
-    return setStatus("that run is already straight — nothing to flatten", "err");
+    // WHY it did nothing, and they are different reasons. A span that
+    // simplified to nothing was already straight; a span where every bend
+    // survived is bent, and saying "already straight" there reads as a
+    // broken tool.
+    return setStatus(
+      kept.length >= span.length && span.length > 2
+        ? "every bend in that span is bigger than trace noise, so they look "
+          + "like real shape and nothing was flattened — hold Shift on the "
+          + "second click to straighten it anyway"
+        : "nothing to flatten — those points already sit on straight runs"
+          + (corners ? ` (${corners} corner${corners === 1 ? "" : "s"})` : ""),
+      "err");
   }
   captureUndo(`flatten of ${fmtQty(saved)} out of a line`, [ch.chain_id]);
   const c = materialize(ch);
@@ -20048,7 +20103,11 @@ function flattenClick(px, py) {
   cancelFlatten();
   state.selected = c.chain_id;
   updateSelBar(c);
-  afterEdit(`flattened — ${fmtLen(saved)} of zigzag removed`);
+  // SAY WHAT WAS KEPT, not just what went. An operator who spans a corner
+  // needs to see that the corner survived, and one who expected a single
+  // straight run needs to see that it did not get one.
+  afterEdit(`flattened — ${fmtLen(saved)} of zigzag removed`
+    + (corners ? `, ${corners} corner${corners === 1 ? "" : "s"} kept` : ""));
 }
 
 // DRAW ANYTIME. "users should be able to draw a line at any time" - so the

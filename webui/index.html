@@ -1098,7 +1098,7 @@
       <button id="splitBtn" class="tk" title="Split the selected line where you clicked it (S)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><path d="M8.2 7.6 20 19M8.2 16.4 20 5"/></svg></button>
       <button id="extendBtn" class="tk" title="Extend the selected line — click where it should reach, or click a point on its own body to branch a spur off it (E)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h14M13 6l6 6-6 6"/></svg></button>
       <button id="cutSpanBtn" class="tk" title="Cut a span out of the selected line — click where the cut starts, then where it ends (X)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h5M16 12h5"/><path d="M10.5 12h3" stroke-dasharray="2 2.4"/></svg></button>
-      <button id="flattenBtn" class="tk" title="Flatten a zigzag out of the selected line — click where the straight run starts, then where it ends (R; F is line rendering)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18"/><path d="M3 9l5 4 4-5 4 3 5-4" stroke-dasharray="2 2"/></svg></button>
+      <button id="flattenBtn" class="tk" title="Flatten the selected line — click where to start, then where to end. Straightens every run and KEEPS every corner, so a perimeter stays a perimeter (R; F is line rendering)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18"/><path d="M3 9l5 4 4-5 4 3 5-4" stroke-dasharray="2 2"/></svg></button>
       <button id="drawBtn" class="tk" title="Draw a line at any time — click points, double-click or Enter to finish. Snaps onto any line you cross; with nothing selected you pick the family at the end (D)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20c4-1 2.5-4.5 6-6s6-4 8-9"/><path d="M4 20h4"/></svg></button>
       <span class="tk-sep"></span>
       <button id="reclassBtn" class="tk" title="Move the selected line into another family — click a line of the target family (R)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h13M14 3l4 4-4 4M20 17H7M10 13l-4 4 4 4"/></svg></button>
@@ -1311,6 +1311,6 @@
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=208"></script>
+<script src="app.js?v=209"></script>
 </body>
 </html>
