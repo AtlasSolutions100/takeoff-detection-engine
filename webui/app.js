@@ -200,7 +200,7 @@ const state = window.state = {
 // click places a point. First piece of client feedback we got, on the measure
 // tool; every tool in this set has the same problem, so they all get it.
 const POINT_TOOLS = new Set([
-  "measure", "extend", "cutspan", "drawline", "merge", "reclass",
+  "measure", "extend", "cutspan", "flatten", "drawline", "merge", "reclass",
   "ew-bound", "ew-bound-draw", "ew-pick", "st-pick", "st-draw", "wz-draw",
   "gz-draw", "gz-box",
 ]);
@@ -18438,6 +18438,14 @@ function draw() {
     ctx.fillStyle = CV_CUTSPAN; ctx.fill();
     ctx.lineWidth = 1.5 / k; ctx.strokeStyle = CV_VERTEX; ctx.stroke();
   }
+  // flatten first anchor
+  if (state.tool === "flatten" && state.flatA) {
+    const f2 = IMG_DPI / 72;
+    ctx.beginPath();
+    ctx.arc(state.flatA.q[0] * f2, state.flatA.q[1] * f2, 5 / k, 0, Math.PI * 2);
+    ctx.fillStyle = CV_CUTSPAN; ctx.fill();
+    ctx.lineWidth = 1.5 / k; ctx.strokeStyle = CV_VERTEX; ctx.stroke();
+  }
   // in-progress drawn line
   if (state.tool === "ew-bound-draw" && state.ewBoundDraft.length) {
     const f2b = IMG_DPI / 72;
@@ -19186,6 +19194,10 @@ function handleCanvasClick(e) {
   }
   if (state.tool === "cutspan" && state.selected !== null) {
     cutSpanClick(px, py);
+    return;
+  }
+  if (state.tool === "flatten" && state.selected !== null) {
+    flattenClick(px, py);
     return;
   }
   if (state.tool === "merge" && state.selected !== null) {
@@ -19971,6 +19983,72 @@ function cutSpanClick(px, py) {
   cancelCut();
   updateSelBar(null);
   afterEdit(`cut ${fmtLen(removed)} out — ${sides.length} piece(s) remain`);
+}
+
+$("flattenBtn").onclick = () => {
+  if (state.selected === null) return;
+  if (state.tool === "flatten") { cancelFlatten(); setStatus("flatten cancelled"); draw(); return; }
+  state.tool = "flatten"; state.flatA = null;
+  $("flattenBtn").classList.add("active");
+  setStatus("flatten: click where the straight run starts (Esc cancels)", "busy");
+};
+function dedupePts(ps) {
+  const out = [];
+  for (const q of ps) {
+    const last = out[out.length - 1];
+    if (!last || Math.hypot(q[0] - last[0], q[1] - last[1]) > 1e-9) out.push(q);
+  }
+  return out;
+}
+function cancelFlatten() {
+  state.tool = null; state.flatA = null;
+  $("flattenBtn").classList.remove("active");
+}
+// Replace every vertex BETWEEN the two picks with one straight segment.
+// The picks themselves stay where they are: an operator straightening a
+// property line is saying "this run is straight", not "move its ends".
+function flattenClick(px, py) {
+  const ch = chainById(state.selected);
+  if (!ch) { cancelFlatten(); return; }
+  const f = IMG_DPI / 72;
+  const hit = projectOnChain(ch, px, py, 7 / state.view.k / f + 1.5);
+  if (!state.flatA) {
+    state.flatA = hit;
+    setStatus("flatten: now click where it ends", "busy");
+    draw();
+    return;
+  }
+  let A = state.flatA, B = hit;
+  if (A.arc > B.arc) { const t = A; A = B; B = t; }
+  const pts = ch.points;
+  const before = polyLen(pts);
+  // NO DUPLICATE VERTICES. projectOnChain snaps to a nearby vertex, so
+  // picking a line's own corner returns that corner as q with i one past
+  // it - and the slice would then write it twice. Harmless for length (a
+  // zero-length segment adds nothing) and not harmless for anything that
+  // walks the points.
+  const next = dedupePts(pts.slice(0, A.i).concat([A.q, B.q], pts.slice(B.i)));
+  const after = polyLen(next);
+  const saved = before - after;
+  // NOTHING BETWEEN THE PICKS IS NOT AN EDIT. Two points on the same
+  // straight segment, or two picks that touch, would rewrite the geometry
+  // and report a 0 ft saving - an edit that changes the export and tells
+  // the operator nothing happened.
+  if (saved < 0.5 || next.length < 2) {
+    cancelFlatten(); updateSelBar(ch); draw();
+    return setStatus("that run is already straight — nothing to flatten", "err");
+  }
+  captureUndo(`flatten of ${fmtQty(saved)} out of a line`, [ch.chain_id]);
+  const c = materialize(ch);
+  const was = c.length_pt;
+  c.points = next;
+  // the measured length travels with the geometry, the same proportional
+  // rule cutSpanClick uses on the pieces it leaves behind
+  c.length_pt = was * after / (before || 1);
+  cancelFlatten();
+  state.selected = c.chain_id;
+  updateSelBar(c);
+  afterEdit(`flattened — ${fmtLen(saved)} of zigzag removed`);
 }
 
 // DRAW ANYTIME. "users should be able to draw a line at any time" - so the
@@ -20893,7 +20971,7 @@ function lineCardPlace(ch) {
 // LINE-CARD-END ==============================================================
 
 function updateSelBar(ch) {
-  for (const id of ["splitBtn", "extendBtn", "sepBtn", "cutSpanBtn"])
+  for (const id of ["splitBtn", "extendBtn", "sepBtn", "cutSpanBtn", "flattenBtn"])
     $(id).disabled = !ch;
   // DRAW is no longer a selection-only tool ("users should be able to draw a
   // line at any time"). It needs a detected sheet, nothing more; with nothing
@@ -21322,6 +21400,7 @@ function captureUndo(label, ids, sids) {
 // chain-owning tools first, the same way stArm() does before arming.
 function undoDisarmTools() {
   if (state.tool === "cutspan") cancelCut();
+  else if (state.tool === "flatten") cancelFlatten();
   else if (state.tool === "merge") cancelMerge();
   else if (state.tool === "drawline") cancelDraw();
   else if (state.tool === "reclass") {
@@ -22638,6 +22717,9 @@ addEventListener("keydown", (e) => {
     if (state.result && state.selected !== null) {
       if (k === "s") { e.preventDefault(); $("splitBtn").click(); return; }
       if (k === "x") { e.preventDefault(); $("cutSpanBtn").click(); return; }
+      // R, not F: f is the line-rendering toggle and has been since before
+      // anyone asked for this one
+      if (k === "r") { e.preventDefault(); $("flattenBtn").click(); return; }
       if (k === "e") { e.preventDefault(); $("extendBtn").click(); return; }
       if (k === "i") {
         e.preventDefault();

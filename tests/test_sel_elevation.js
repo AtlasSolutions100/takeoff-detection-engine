@@ -148,7 +148,7 @@ function renderAll(opts) {
   // same way it gates drawBtn - see the comment there and suite A of
   // tests/test_page_reset.js
   for (const id of ["splitBtn", "extendBtn", "sepBtn", "cutSpanBtn",
-                    "drawBtn", "removeBtn", "selInfo",
+                    "flattenBtn", "drawBtn", "removeBtn", "selInfo",
                     "aiBtn", "selElev"]) els[id] = elem("div");
   const state = {
     result: { styles: [{ style_id: 7, suggested_label: "dash1 d18.0 g51.7" }] },
