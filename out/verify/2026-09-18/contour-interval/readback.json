@@ -1,0 +1,56 @@
+{
+ "errors": [],
+ "appJs": "v=207",
+ "before": {
+  "iv": {
+   "interval_ft": 1,
+   "source": "sheet's contour-interval note",
+   "modal_count": 0,
+   "n_deltas": 0,
+   "share": null,
+   "note": {
+    "interval_ft": 1,
+    "source": "the sheet's own contour-interval note",
+    "quote": "EXISTING CONTOURS ILLUSTRATED HEREIN ARE AT 1 FT INTERVAL",
+    "candidates": [
+     {
+      "interval_ft": 1,
+      "quote": "EXISTING CONTOURS ILLUSTRATED HEREIN ARE AT 1 FT INTERVAL"
+     }
+    ],
+    "n_notes": 1
+   },
+   "typed_ft": null
+  },
+  "shown": "Contour intervalft\u2014 sheet's contour-interval note\u201cEXISTING CONTOURS ILLUSTRATED HEREIN ARE AT 1 FT INTERVAL\u201d",
+  "box": "1",
+  "typed": null,
+  "rows": 60
+ },
+ "after": {
+  "iv": {
+   "interval_ft": 2,
+   "source": "the interval you typed",
+   "modal_count": 0,
+   "n_deltas": 0,
+   "share": null,
+   "note": {
+    "interval_ft": 1,
+    "source": "the sheet's own contour-interval note",
+    "quote": "EXISTING CONTOURS ILLUSTRATED HEREIN ARE AT 1 FT INTERVAL",
+    "candidates": [
+     {
+      "interval_ft": 1,
+      "quote": "EXISTING CONTOURS ILLUSTRATED HEREIN ARE AT 1 FT INTERVAL"
+     }
+    ],
+    "n_notes": 1
+   },
+   "typed_ft": 2
+  },
+  "shown": "Contour intervalft\u2014 yours; clear the box to use the sheet's\u201cEXISTING CONTOURS ILLUSTRATED HEREIN ARE AT 1 FT INTERVAL\u201d",
+  "box": "2",
+  "typed": 2,
+  "rows": 64
+ }
+}
