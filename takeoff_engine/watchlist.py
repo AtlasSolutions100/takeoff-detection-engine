@@ -3,7 +3,7 @@ keyword - septic tank, propane tank, culvert, area inlet, cleanout, wye -
 each with the size printed beside it (gallons / inches) and its scope tag
 (BY OTHERS, N.I.C., RE. TO MEP / OWTS / ...). Words only, no detect.
 
-WHY A LIST AND NOT EVERY CALLOUT. Beaumont (call 2026-09-15, the septic
+WHY A LIST AND NOT EVERY CALLOUT. A client (call 2026-09-15, the septic
 and utility part): "so many call outs everywhere" - he rejected a full
 callout dump and asked for a keyword watch-list with the tank size read off
 the callout, septic and propane separated by type. The sheet callouts panel
@@ -14,7 +14,7 @@ edge, each line at most 52 characters, at most six lines. A general note
 ("PROVIDE CLEANOUTS AT ALL DOWNSPOUT LOCATIONS THAT ARE ROUTED TO
 UNDERGROUND STORM PIPE...") is long, a numbered note starts "12.", and a
 legend key reads "C/O = CLEANOUT" - none of those is a thing on the plan,
-so none counts. Measured on Barn Civil C2.0 (index 1): the tank callouts
+so none counts. Measured on Res-A civil C2.0 (index 1): the tank callouts
 wrap over two lines ("PROPOSED 1,500 GALLON" / "SEPTIC TANK; RE. TO OWTS"),
 which is why blocks and not lines are matched.
 

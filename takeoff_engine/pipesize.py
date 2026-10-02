@@ -1,7 +1,7 @@
 """Pipe size on a run: where a line family's size comes from, per family.
 
-Beaumont prices storm by size ("storm LF per size; a colour change is a
-profile change") and Pierce sets the trench width by the pipe size, so a
+One excavator prices storm by size ("storm LF per size; a colour change is a
+profile change") and another sets the trench width by the pipe size, so a
 run needs its size on it. Three places the sheet prints it, in the order
 they are trusted:
   1. the family's NAME (its legend label or CAD layer): SE-P-UT-WATER-10''
@@ -16,8 +16,8 @@ it is NAMED (size in the name), SINGLE (nameless, one size on its runs -
 MIXED (two sizes on its runs: split the family first, never guess) or
 none. A named family whose runs print another size is flagged
 (`agrees: false`); a family with no evidence at all is not listed.
-Measured 2026-09-16: Barn Civil C3.0 prints every size in the family
-names and none on the runs; Oncor C-03 prints them on leaders ('18" RCP',
+Measured 2026-09-16: a residential C3.0 prints every size in the family
+names and none on the runs; a substation C-03 prints them on leaders ('18" RCP',
 '30" RCP') off OCR - hence the lookbehind that refuses '218"' and the
 2" of a 7'-2" dimension.
 """
@@ -31,7 +31,7 @@ from collections import defaultdict
 SIZE_IN_NAME = re.compile(r"(?<![\d.])(?<!['’′]-)(\d{1,2})\s*(?:\"|”|''|[- ]?IN(?:CH)?\b)", re.I)
 INLINE = re.compile(r'^(?:EX?-?)?(\d{1,2})["″”]?(?:W|SS|SD|FM|G|WL|SL)$')
 LEADER = re.compile(r"(?<![\d.])(?<!['’′]-)(\d{1,2})\s*(?:\"|”|''|\bIN\b|INCH)")
-# a leader's tip lands on the nearest line, and on Oncor C-03 that was a
+# a leader's tip lands on the nearest line, and on substation C-03 that was a
 # contour three times out of five: a contour is never a pipe, whatever
 # points at it
 NOT_A_PIPE = re.compile(r"CONTOUR|TOPO|GRADE|PROPERTY|SETBACK|EASEMENT|FENCE|CURB|WALL", re.I)

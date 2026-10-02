@@ -54,17 +54,16 @@ check(T.BID_BUCKETS[T.BID_BUCKETS.length - 1] === T.BID_UNASSIGNED,
 check(new Set(T.BID_BUCKETS).size === T.BID_BUCKETS.length,
       "bucket names are unique");
 
-// ---- rule 1: the app's own calculator rows, mirrored from EW_ITEM_RE ----
-// The bid rule is a verbatim copy of EW_ITEM_RE (they live ~1,700 lines
-// apart in app.js); if one is edited without the other this fails.
-const ewSrcMatch = /const EW_ITEM_RE = \/(.*)\/;/.exec(src);
-check(!!ewSrcMatch, "EW_ITEM_RE found in app.js source");
+// ---- rule 1: the app's own calculator rows ------------------------------
+// EW_ITEM_RE left with the earthwork calculator (2026-09-25); the bid rule
+// keeps its own list of the row names the calculators produce - the cut /
+// fill engine's Site Cut / Site Fill / Export / Import Structural included.
 const reRule = T.BID_RULES.find((r) => r.re);
 check(!!reRule && reRule.bucket === "Earthwork",
       "the regex rule exists and files under Earthwork");
-if (ewSrcMatch && reRule)
-  check(reRule.re.source === ewSrcMatch[1],
-        "bid rule regex is IDENTICAL to EW_ITEM_RE");
+check(reRule && reRule.re.test("Site Cut") && reRule.re.test("Site Fill")
+      && reRule.re.test("Export Cut") && reRule.re.test("Import Structural"),
+      "the rule names the cut / fill engine's rows");
 check(bucket("Site Cut", "") === "Earthwork", "Site Cut -> Earthwork");
 check(bucket("Strip Topsoil", "") === "Earthwork", "Strip Topsoil -> Earthwork");
 check(bucket("Import Structural", "") === "Earthwork", "Import Structural -> Earthwork");
@@ -275,7 +274,25 @@ check(by["Storm Drainage"].byUnit.ft === 829, "storm ft = 529 + 300 (a sum)");
 check(by["Storm Drainage"].byUnit.EA === 3, "storm EA kept separate from ft");
 check(by["Storm Drainage"].n === 3, "storm member count = 3");
 check(by["Sanitary Sewer"].byUnit.ft === 3982, "sanitary ft = its one row");
-check(by["Earthwork"].byUnit.CY === 13677, "Site Cut CY = its one row");
+// Cut, fill and the net each keep their own chip (audit 2026-09-26, D17):
+// byUnit never holds a cut / fill / net row, B.cf[kind][unit] does.
+check(by["Earthwork"].cf.cut.CY === 13677 && by["Earthwork"].byUnit.CY === undefined,
+      "Site Cut CY = its one row, on the cut chip and never in the per-unit sum");
+const g2 = T.bidGroupRows([
+  { label: "Site Cut", layer: "", unit: "CY", qty: 1000 },
+  { label: "Site Fill", layer: "", unit: "CY", qty: 400 },
+  { label: "Export Cut", layer: "", unit: "CY", qty: 600, kind: "net" },
+  { label: "Strip Topsoil", layer: "", unit: "CY", qty: 200 },
+], () => null).find((B) => B.bucket === "Earthwork");
+check(g2.cf.cut.CY === 1000 && g2.cf.fill.CY === 400 && g2.cf.export.CY === 600 && g2.byUnit.CY === 200 && g2.n === 4,
+      "a cut-heavy sheet's Earthwork bucket: 1,000 cut, 400 fill, 600 export, 200 other CY - never one 2,200 CY figure");
+const g3 = T.bidGroupRows([
+  { label: "Site Cut", layer: "", unit: "CY", qty: 400 },
+  { label: "Site Fill", layer: "", unit: "CY", qty: 1000 },
+  { label: "Import Structural", layer: "", unit: "CY", qty: 600, kind: "net" },
+], () => null).find((B) => B.bucket === "Earthwork");
+check(g3.cf.import.CY === 600 && g3.cf.fill.CY === 1000 && g3.cf.cut.CY === 400 && Object.keys(g3.byUnit).length === 0,
+      "a fill-heavy sheet keeps the import apart the same way");
 check(by["Water"].byUnit.ft === 10084 && by["Water"].n === 1,
       "a VALID override moves the row (thermal wells -> Water)");
 check(by["Water"].members[0].via === "override", "override rows say so");

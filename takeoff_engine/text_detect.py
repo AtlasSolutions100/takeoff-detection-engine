@@ -95,7 +95,7 @@ def ocr_words(img: np.ndarray, px_to_pt: float, min_conf: int = 40,
     text, no layout assumption - which is what every existing caller here
     has always used and still gets byte-for-byte. It is a parameter because
     a graphic scale bar's tick ladder is not sparse text: it is one printed
-    LINE of digits, and psm 11 shreds it. Measured on RC Ontario page index
+    LINE of digits, and psm 11 shreds it. Measured on a commercial set page index
     7 (bar 144.0 pt, ticks 5/5/10 ft, printed `0 5 10 20`): psm 11 returns
     `2`, `99`, `9`, `6`, `4`, `4` - one- and two-label rows the >=3-label
     guard refuses; psm 6 ("a single uniform block of text") returns

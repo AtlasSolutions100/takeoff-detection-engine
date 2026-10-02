@@ -24,6 +24,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY takeoff_engine/ ./takeoff_engine/
+# the cut / fill engine (mounted under /cutfill; its UI is under webui/cutfill/)
+COPY cutfill/ ./cutfill/
 COPY webui/ ./webui/
 COPY server.py .
 # The demo tab IS this file (server.py _load_demo_plans reads it, and
@@ -33,9 +35,15 @@ COPY server.py .
 # that has every one of the plans uploaded. That shipped, and it cost a
 # seeding session to find. A new single-file source of truth belongs here.
 COPY demo-plans.json .
-# ops tool, not part of the service: creates the demo logins and sets
-# which plan sets are shared. In the image so it can be re-run later
-# with `docker compose exec app python provision_demo.py`.
+# ops tool, not part of the service: creates the demo logins, and under
+# --rewrite-owners moves the owner-less non-demo rows to staff (a bare run
+# is a dry run; a row that has an owner is never touched). It carries NO
+# customer addresses (2026-10-01): it reads them at run time from
+# /data/jobs/provision-accounts.txt on the volume, so nobody holding this
+# image learns who the customers are. Never COPY that roster. In the image so
+# it can be re-run later with `docker compose exec app python
+# provision_demo.py` - without -T when you want the y/N prompt, with -T
+# only alongside --yes.
 COPY provision_demo.py .
 
 # The job store. Mounted as a volume in compose - it holds the detection cache,

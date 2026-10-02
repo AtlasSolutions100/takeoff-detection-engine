@@ -9,7 +9,11 @@
 # sharing violation - the "another app is using this file" errors, and the
 # freeze that took the machine out once already. Same reasoning that put
 # Postgres in C:/Users/kobys/takeoff-pg.
-export TAKEOFF_JOBS_DIR="${TAKEOFF_JOBS_DIR:-C:/Users/kobys/takeoff-jobs}"
+# core-redesign: its OWN job store and port, so it never touches the live
+# product's jobs (detection-engine: takeoff-jobs, :8100) or the merge fork's
+# (core-cutfill: core-cutfill-jobs, :8500). The ledger, accounts, branding
+# and cut / fill projects all live under this directory.
+export TAKEOFF_JOBS_DIR="${TAKEOFF_JOBS_DIR:-C:/Users/kobys/core-redesign-jobs}"
 cd "$(dirname "$0")"
 set -a; [ -f .env ] && source .env; set +a
 # Tesseract (raster OCR): harness-launched shells can miss the user PATH
@@ -23,4 +27,4 @@ esac
 if [ -x .venv/Scripts/python.exe ]; then PY=.venv/Scripts/python.exe
 elif [ -x .venv/bin/python ]; then PY=.venv/bin/python
 else PY=python3; fi
-exec "$PY" -m uvicorn server:app --port "${PORT:-8100}"
+exec "$PY" -m uvicorn server:app --port "${PORT:-8600}"

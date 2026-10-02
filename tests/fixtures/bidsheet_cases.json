@@ -1,51 +1,334 @@
 {
   "_": "Which printed bid-sheet line a takeoff row files onto (1-based line number of takeoff_engine.bidsheet.DEFAULT_LINES; null = not on the sheet). Read by tests/test_bidsheet.py (Python) and tests/test_bidsheet_ui.js (the JS port) so the two matchers cannot drift apart.",
   "cases": [
-    {"label": "Clear & Grub", "n": 2},
-    {"label": "Strip Topsoil", "n": 3},
-    {"label": "Pad A topsoil strip", "n": 3},
-    {"label": "Site Cut", "n": 4},
-    {"label": "Cut (earthwork)", "n": 4},
-    {"label": "Pad A cut", "n": 4},
-    {"label": "Site Fill", "n": 5},
-    {"label": "Pad A fill", "n": 5},
-    {"label": "Mass Excavation", "n": 6},
-    {"label": "Perimeter Drain", "n": 7},
-    {"label": "PROPOSED 4\" RIGID PERFORATED PVC FOOTER DRAIN PIPE", "n": 7},
-    {"label": "Structure Excavation", "n": 8},
-    {"label": "Structure Backfill", "n": 9},
-    {"label": "Slab Prep", "n": 11},
-    {"label": "Outside slab prep - patio", "n": 19},
-    {"label": "Rough Place Topsoil", "n": 12},
-    {"label": "18\" CMP CULVERT", "n": 13},
-    {"label": "DRIVEWAY SUBGRADE", "n": 14},
-    {"label": "4\" SEWER", "n": 15},
-    {"label": "SS", "n": 15},
-    {"label": "SEPTIC TANK 1500 GAL", "n": 24},
-    {"label": "WATER", "n": 16},
-    {"label": "W", "n": 16},
-    {"label": "UGE", "n": 17},
-    {"label": "E", "n": 17},
-    {"label": "GAS", "n": 18},
-    {"label": "PROPANE TANK", "n": 25},
-    {"label": "Radon", "n": 20},
-    {"label": "8\" PVC STORM", "n": 21},
-    {"label": "SD", "n": 21},
-    {"label": "SDWK", "n": null},
-    {"label": "BOULDER WALL", "n": 22},
-    {"label": "Silt / Construction Fence", "n": 23},
-    {"label": "SILT FENCE", "n": 23},
-    {"label": "BG-Limit of disturbance", "n": 23},
-    {"label": "PROPOSED STORM SEWER (legend)", "n": 21},
-    {"label": "C-TOPO-MINR-E", "n": null},
-    {"label": "C-TOPO-MAJR-W", "n": null},
-    {"label": "SE-P-OWTS-PDchmbr-trench sys", "n": null},
-    {"label": "SE-OWTS-FIELD", "n": null},
-    {"label": "BG-L-Boulder Cut", "n": 22},
-    {"label": "SE-P-UT-SS", "n": 15},
-    {"label": "Over-excavation", "n": null},
-    {"label": "solid solid", "n": null},
-    {"label": "Trench excavation 4 ft", "n": null},
-    {"label": "Import Structural", "n": null}
+    {
+      "label": "Clear & Grub",
+      "n": 2
+    },
+    {
+      "label": "Strip Topsoil",
+      "n": 3
+    },
+    {
+      "label": "Pad A topsoil strip",
+      "n": 3
+    },
+    {
+      "label": "Site Cut",
+      "n": 4
+    },
+    {
+      "label": "Cut (earthwork)",
+      "n": 4
+    },
+    {
+      "label": "Pad A cut",
+      "n": 4
+    },
+    {
+      "label": "Site Fill",
+      "n": 5
+    },
+    {
+      "label": "Pad A fill",
+      "n": 5
+    },
+    {
+      "label": "Mass Excavation",
+      "n": 6
+    },
+    {
+      "label": "Perimeter Drain",
+      "n": 7
+    },
+    {
+      "label": "PROPOSED 4\" RIGID PERFORATED PVC FOOTER DRAIN PIPE",
+      "n": 7
+    },
+    {
+      "label": "Structure Excavation",
+      "n": 8
+    },
+    {
+      "label": "Structure Backfill",
+      "n": 9
+    },
+    {
+      "label": "Slab Prep",
+      "n": 11
+    },
+    {
+      "label": "Outside slab prep - patio",
+      "n": 19
+    },
+    {
+      "label": "Rough Place Topsoil",
+      "n": 12
+    },
+    {
+      "label": "18\" CMP CULVERT",
+      "n": 13
+    },
+    {
+      "label": "DRIVEWAY SUBGRADE",
+      "n": 14
+    },
+    {
+      "label": "4\" SEWER",
+      "n": 15
+    },
+    {
+      "label": "SS",
+      "n": 15
+    },
+    {
+      "label": "SEPTIC TANK 1500 GAL",
+      "n": 24
+    },
+    {
+      "label": "WATER",
+      "n": 16
+    },
+    {
+      "label": "W",
+      "n": 16
+    },
+    {
+      "label": "UGE",
+      "n": 17
+    },
+    {
+      "label": "E",
+      "n": 17
+    },
+    {
+      "label": "GAS",
+      "n": 18
+    },
+    {
+      "label": "PROPANE TANK",
+      "n": 25
+    },
+    {
+      "label": "Radon",
+      "n": 20
+    },
+    {
+      "label": "8\" PVC STORM",
+      "n": 21
+    },
+    {
+      "label": "SD",
+      "n": 21
+    },
+    {
+      "label": "SDWK",
+      "n": null
+    },
+    {
+      "label": "BOULDER WALL",
+      "n": 22
+    },
+    {
+      "label": "Silt / Construction Fence",
+      "n": 23,
+      "why": "the fence row off the limit line or the erosion-control lines"
+    },
+    {
+      "label": "SILT FENCE",
+      "n": 23
+    },
+    {
+      "label": "BG-Limit of disturbance",
+      "n": 23
+    },
+    {
+      "label": "PROPOSED STORM SEWER (legend)",
+      "n": 21
+    },
+    {
+      "label": "C-TOPO-MINR-E",
+      "n": null
+    },
+    {
+      "label": "C-TOPO-MAJR-W",
+      "n": null
+    },
+    {
+      "label": "SE-P-OWTS-PDchmbr-trench sys",
+      "n": null
+    },
+    {
+      "label": "SE-OWTS-FIELD",
+      "n": null
+    },
+    {
+      "label": "BG-L-Boulder Cut",
+      "n": 22
+    },
+    {
+      "label": "SE-P-UT-SS",
+      "n": 15
+    },
+    {
+      "label": "Over-excavation",
+      "n": null
+    },
+    {
+      "label": "solid solid",
+      "n": null
+    },
+    {
+      "label": "Trench excavation 4 ft",
+      "n": null
+    },
+    {
+      "label": "Import Structural",
+      "n": 27,
+      "why": "the net row of the balance has its own line (27) since 2026-09-26; it filed nowhere before"
+    },
+    {
+      "label": "Import Fill",
+      "n": 27
+    },
+    {
+      "label": "Export Cut",
+      "n": 26,
+      "why": "never line 4: the whole-word CUT doubled a cut-only site"
+    },
+    {
+      "label": "Export Surplus Cut",
+      "n": 26
+    },
+    {
+      "label": "Haul off surplus",
+      "n": 26
+    },
+    {
+      "label": "Import Topsoil",
+      "n": 29,
+      "why": "topsoil placed beyond what was stripped has its own line"
+    },
+    {
+      "label": "Export Topsoil",
+      "n": 28,
+      "why": "the priced estimate's own line"
+    },
+    {
+      "label": "Net cut",
+      "n": null
+    },
+    {
+      "label": "Export Asphalt",
+      "n": null,
+      "why": "the live calculator's row for a removed asphalt layer: asphalt hauled off is not surplus cut, and no default line names asphalt (the bare EXPORT token filed it on 26)"
+    },
+    {
+      "label": "Rough Place Asphalt",
+      "n": null,
+      "why": "a layer's respread is not Rough Place Topsoil (line 12's ^Rough Place regex took it)"
+    },
+    {
+      "label": "Remove Asphalt",
+      "n": null
+    },
+    {
+      "label": "Export Base Course",
+      "n": null
+    },
+    {
+      "label": "Remove Concrete Sidewalk",
+      "n": null,
+      "why": "a layer removed is not Outside Slab Prep (the SIDEWALK token)"
+    },
+    {
+      "label": "Export Surplus",
+      "n": 26
+    },
+    {
+      "label": "Export Topsoil Stockpile",
+      "n": 28
+    },
+    {
+      "label": "Remove existing sidewalk",
+      "n": null,
+      "why": "a removal is not new flatwork (line 19's note: paths, separated by material); the default sheet has no demolition line"
+    },
+    {
+      "label": "Removal of existing sidewalk",
+      "n": null,
+      "why": "one rule for both spellings (critic RISK-1a): it summed on 19 Outside Slab Prep"
+    },
+    {
+      "label": "REMOVAL OF EXISTING SLAB",
+      "n": null
+    },
+    {
+      "label": "Export cut (net)",
+      "n": 26,
+      "why": "a renamed net row keeps the Export Cut line (critic RISK-1b)"
+    },
+    {
+      "label": "EXPORT CUT",
+      "n": 26
+    },
+    {
+      "label": "Export Cut – Zone A",
+      "n": 26
+    },
+    {
+      "label": "Export Cut - Zone A",
+      "n": 26
+    },
+    {
+      "label": "Export Cut Material",
+      "n": 26
+    },
+    {
+      "label": "Export Surplus Cut (net)",
+      "n": 26
+    },
+    {
+      "label": "export surplus",
+      "n": 26
+    },
+    {
+      "label": "Export rock and boulders",
+      "n": null,
+      "why": "rock is not surplus cut: the client's estimate prices it on its own allowance line (live earthwork.py comment)"
+    },
+    {
+      "label": "CURB AND GUTTER",
+      "n": null,
+      "why": "concrete flatwork, not a drain: it summed on 21 Site Drains through GUTTER (critic RISK-7); the default sheet has no curb line"
+    },
+    {
+      "label": "6\" CURB & GUTTER",
+      "n": null
+    },
+    {
+      "label": "Curb/Gutter",
+      "n": null
+    },
+    {
+      "label": "24\" C&G",
+      "n": null,
+      "why": "the one-letter G of C&G must not file it on Gas Trench either"
+    },
+    {
+      "label": "ROOF GUTTER",
+      "n": 21,
+      "why": "a roof gutter is drainage: unchanged"
+    },
+    {
+      "label": "Import Gravel",
+      "n": 27,
+      "why": "UNCHANGED on purpose (critic RISK-1c): Import <material> on Import Structural is an open convention question for the owner"
+    },
+    {
+      "label": "Site walls face",
+      "n": 22,
+      "why": "wall face SF (TW - BW + 1 ft) x length files on the boulder / site walls line"
+    }
   ]
 }

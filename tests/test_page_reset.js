@@ -172,7 +172,10 @@ const RESET = fnSrc("pageReset");
 const SELECT_OK = { page: "which sheet is open - identity, not content",
                     img: "the page raster, loaded by this function itself" };
 const LOAD_OK = { result: "the detection just fetched",
-                  nextChainId: "derived from that detection's chains" };
+                  nextChainId: "derived from that detection's chains",
+                  // set as the LAST thing loadResult does, and cleared by pageReset(): "Sheets for cut / fill"
+                  // waits for it so the review's decisions (the work area comes back after the result) go along
+                  resultLoaded: "the mark that this sheet loaded to the end (job, page, gen)" };
 
 for (const [name, body, ok] of [["selectPage", SELECT, SELECT_OK],
                                 ["loadResult", LOAD, LOAD_OK]]) {
@@ -219,6 +222,8 @@ const CALLEE_OK = {
   renderMultiBar: "paints the multi-select bar",
   renderMiniLegend: "paints the mini legend",
   renderItemized: "paints the itemised takeoff",
+  cfSyncButton: "shows the Cut / fill tool whenever a job is open; reads "
+              + "state.job, writes one button's hidden flag, nothing per page",
   updateSelBar: "the selection pill and the toolkit gates, every one of them "
               + "derived from state.result and the current selection - this "
               + "is where #aiBtn's gate lives",
@@ -230,6 +235,10 @@ const CALLEE_OK = {
   calcStateLoad: "this page's server-side sidecar of calculator inputs",
   arApplyItems: "re-derives the area rows from the restored selection",
   runAnalyze: "opt-in auto-analyze; everything it writes is state.ai*",
+  cfReconcile: "the cut / fill rows THIS page holds, against the engine's word (its page's last summary, then the "
+             + "engine asked by route): it writes extraItems and cfFacts, both emptied by pageReset",
+  approvalOutdated: "this page's approval out of date (the server's GET /approved), said on the status bar's lasting "
+                  + "note; it writes state.outdatedNote, emptied by pageReset",
   loadResult: "selectPage's own tail call, checked as a caller in its own right",
   selectPage: "self-reference in a comment-stripped body, not a call",
 };
@@ -357,11 +366,6 @@ const GAP_DOM = [
   check(dmiss.length === 0,
     "...and closes every panel that used to survive the switch"
     + (dmiss.length ? "  — MISSING " + dmiss.join(", ") : ""));
-  // the F5 fix itself is still delegated rather than copied, so its own
-  // comment stays the record of what that one cost
-  for (const h of ["ewPageReset", "gzPageReset", "elevReset"])
-    check(new RegExp("\\b" + h + "\\(\\)").test(strip(RESET)),
-      "pageReset delegates to " + h + "() rather than duplicating it");
 }
 
 // ===========================================================================
@@ -409,11 +413,6 @@ function runReset() {
     tool: "measure", measurePts: [[0, 0]], vScale: 3,
     ai: { x: 1 }, aiWhy: new Map([[1, "w"]]), aiUndo: {}, aiAuto: true,
     aiHidden: true, measureMode: new Map([[1, "object"]]),
-    ew: { rows: [1, 2, 3], page: 3, job: "J" }, ewLoading: true,
-    ewFailed: { status: 500 }, suggestReq: {},
-    ewBound: { poly: [1] }, ewBoundDraft: [[0, 0]], ewBoundHover: 2,
-    elev: { status: "ready", byChain: new Map([[192, { z: 545 }]]) },
-    gzones: [{ id: 1 }], gzDraft: [[0, 0]], gzHover: 1, gzDrag: {}, gzSeq: 9,
     workZones: [{ x: 1 }], wzDrag: {}, wzRev: 4,
     conf: { v: 1 }, confKey: "k", confErr: true,
     ckDone: new Set([1]), ckShowAll: true, ckCollapsed: true,
@@ -434,8 +433,7 @@ function runReset() {
     gzModalZone: {}, gzModalPoly: {}, gzModalTimer: 1, gzModalSeq: 0,
   };
   const names = Object.keys(scope);
-  const body = fnSrc("pageReset") + "\n" + fnSrc("ewPageReset") + "\n"
-             + fnSrc("gzPageReset") + "\n" + fnSrc("elevReset");
+  const body = fnSrc("pageReset");
   new Function(...names, body + "\nreturn pageReset;")
     (...names.map((n) => scope[n]))();
   return { state, els, famOpen, undo: scope.undoStack };
@@ -498,12 +496,6 @@ function runReset() {
   eq(els.restoreBtn.hidden, true, "the restore button is hidden");
 
   // F5's own fields, still cleared through the delegate
-  eq(state.ew, null, "EARTHWORK: rows gone (F5, via ewPageReset)");
-  eq(state.ewBound, null, "EARTHWORK: the limit of work gone");
-  eq(els.ewPanel.hidden, true, "EARTHWORK: panel closed");
-  eq(state.elev.status, "idle", "the elevation reader is back to idle");
-  check(state.elev.byChain === null, "...with no map from the old sheet");
-  eq(state.gzones.length, 0, "GRADING ZONES: gone");
   eq(state.workZones.length, 0, "WORK AREA: boxes gone");
   eq(state.wzRev, 5, "...and its cache token moved, so nothing is reused");
 

@@ -36,10 +36,35 @@ check(S.svAccountsVisible(null) === false, "hidden when the server could not be 
 check(/function renderSvUsers\(\)/.test(appSrc) && /renderSvAccount\(\);\s*renderSvUsers\(\);/.test(appSrc), "renderSettings renders the accounts section");
 check(/typeof renderSvUsers === "function" && !\$\("settingsView"\)\.hidden\)\s*renderSvUsers\(\);/.test(appSrc), "svMeSet re-renders the accounts section when who-am-I arrives");
 check(/fetch\("\/api\/users"\)/.test(appSrc), "the section reads /api/users");
-for (const p of ['"/api/users/" + encodeURIComponent(u.user) + "/staff"', '"/api/users/" + encodeURIComponent(u.user) + "/reset"', 'svUserAction("DELETE", "/api/users/" + encodeURIComponent(u.user)'])
+for (const p of ['"/api/users/" + encodeURIComponent(u.user) + "/reset"', 'svUserAction("DELETE", "/api/users/" + encodeURIComponent(u.user)'])
   check(appSrc.includes(p), "calls " + p.replace(/"/g, ""));
 const blk = appSrc.slice(appSrc.indexOf("// ---------- ACCOUNTS (staff)"), appSrc.indexOf('$("svNewUserBtn").onclick') + 600);
-check(blk.length > 1000 && !/\bconfirm\(/.test(blk) && /Really remove\?/.test(blk), "Remove is two presses, not a confirm() dialog");
+check(blk.length > 1000 && (blk.match(/\bconfirm\(/g) || []).length === 1 && /ch\.ask && !window\.confirm\(ch\.ask\)/.test(blk)
+  && /Really remove\?/.test(blk), "Remove is two presses; the only confirm() is the one before making an admin");
+
+// ---- roles (UI verify 2026-10-02 #3: one click on a viewer's "Client" made it an admin) ----------
+const R = new Function(appSrc.slice(a, b) + " return { svRoleOf, svRoleChoices, svRoleChange, svRoleWord };")();
+const V = { user: "v@co", staff: false, must_change: false, role: "viewer" };
+const E = { user: "e@co", staff: false, role: "estimator" }, A = { user: "a@co", staff: true, role: "admin" };
+check(R.svRoleOf(V) === "viewer" && R.svRoleOf(E) === "estimator" && R.svRoleOf(A) === "admin",
+  "the control shows the account's own role (a viewer reads Viewer, never Client)");
+check(JSON.stringify(R.svRoleChoices(V)) === '["admin","estimator","viewer"]', "a server with roles: exactly admin / estimator / viewer");
+check(R.svRoleChange(V, "viewer") === null && R.svRoleChange(A, "admin") === null && R.svRoleChange(V, "client") === null
+  && R.svRoleChange(V, "staff") === null, "picking the role it already has, or a word that is not a role, sends nothing");
+const toA = R.svRoleChange(V, "admin");
+check(toA && toA.url === "/api/users/v%40co/role" && JSON.stringify(toA.body) === '{"role":"admin"}'
+  && toA.ask === "An admin can see every company's documents. Make v@co an admin?",
+  "making a viewer an admin goes to the role route and asks first, in plain words");
+const toE = R.svRoleChange(V, "estimator"), toV = R.svRoleChange(E, "viewer");
+check(toE && toE.ask === null && JSON.stringify(toE.body) === '{"role":"estimator"}' && toV && JSON.stringify(toV.body) === '{"role":"viewer"}'
+  && !/staff/.test(toE.url + toV.url), "estimator / viewer changes name the role exactly, never the staff flag");
+// a server with no roles (staff yes / no only): admin / estimator over the staff route, admin still asks
+const S2 = { user: "c@co", staff: false, must_change: false };
+check(R.svRoleOf(S2) === "estimator" && JSON.stringify(R.svRoleChoices(S2)) === '["admin","estimator"]'
+  && R.svRoleChange(S2, "viewer") === null && JSON.stringify(R.svRoleChange(S2, "admin").body) === '{"staff":true}'
+  && R.svRoleChange(S2, "admin").ask !== null, "a server without roles: admin / estimator over the staff route, never a viewer it cannot keep");
+check(/rb\.onchange = \(\) => \{[\s\S]{0,200}svRoleChange\(u, rb\.value\)[\s\S]{0,200}rb\.value = cur; return;/.test(blk)
+  && !/rb\.onclick/.test(blk) && !/"Client"/.test(blk), "the table's role control is a pick, not a click-to-flip button, and a refused or cancelled pick goes back");
 check(/if \(j\.temp_password\) svShowTemp\(j\.user, j\.temp_password\);/.test(appSrc), "a returned temporary password is shown once");
 check(/rm\.disabled = isMe \|\| lastStaff;/.test(appSrc) && /rb\.disabled = lastStaff \|\| isMe;/.test(appSrc), "self and last-staff rules are mirrored in the table, for Remove AND for the role button");
 check(/\.sv-temp-pw \{/.test(cssSrc) && /\.sv-fld-check \{/.test(cssSrc), "style.css styles the temp-password box and the staff checkbox row");

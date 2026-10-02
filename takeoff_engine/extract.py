@@ -7,6 +7,7 @@ arrives as one unit carrying a PDF dash array. All three shapes are
 preserved here and disambiguated downstream in chain.py.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -15,6 +16,54 @@ import pymupdf
 # Two points closer than this (in pt) are considered coincident when
 # splitting a path's items into connected polylines.
 CONNECT_EPS = 0.05
+
+
+@contextmanager
+def annots_hidden(page):
+    """Run a block with the page's PDF annotations hidden, then put them back.
+
+    PyMuPDF's get_drawings() (and get_text) run the page WITH its annotation
+    appearance streams, so a client's Bluebeam markups - highlighter runs,
+    polylines, count squares, callout boxes - arrive as stroke units and are
+    chained, classed and billed like drawn linework. Measured 2026-09-26 on
+    eight of a client's civil / structural sheets: +1.3 % to +28.8 % of chain
+    length per page came from the markups (a 20 pt yellow highlighter pen was
+    an 8,668 pt "solid" family of its own on the utility plan, and a
+    structural sheet's footing family grew 27,566 pt).
+
+    MuPDF skips an annotation whose /F flag carries HIDDEN, so the flags are
+    set for the duration of the block and restored afterwards: nothing is
+    written to the file and the reviewer's page image (get_pixmap, taken
+    elsewhere) still shows the markups as delivered. Non-PDF pages have no
+    annotations and pass straight through.
+    """
+    changed = []
+    try:
+        hidden = int(getattr(pymupdf, "PDF_ANNOT_IS_HIDDEN", 2))
+        for a in (page.annots() or []):
+            f = int(a.flags)
+            if not (f & hidden):
+                a.set_flags(f | hidden)
+                changed.append((a, f))
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        for a, f in changed:
+            try:
+                a.set_flags(f)
+            except Exception:
+                pass
+
+
+def page_annotation_count(page) -> int:
+    """How many PDF annotations (markups) the page carries; 0 when none or
+    when the document kind has no annotations."""
+    try:
+        return sum(1 for _ in (page.annots() or []))
+    except Exception:
+        return 0
 
 
 @dataclass
@@ -69,7 +118,8 @@ def page_words(page) -> list:
     OCR words need no correction - they come from get_pixmap, which is
     already rotation-aware.
     """
-    words = page.get_text("words")
+    with annots_hidden(page):
+        words = page.get_text("words")
     if not page.rotation:
         return words
     rot = page.rotation_matrix
@@ -92,7 +142,7 @@ def page_lines(page) -> list:
     its tag and its value on one PDF line but nowhere near each other on a
     horizontal row, so a row-window pairing misses every rotated label and
     can reach sideways into a NEIGHBOUR's value and pair the wrong number.
-    Measured on Beaumont Guide civil page index 2: of 112 printed spot
+    Measured on Res-B civil page index 2: of 112 printed spot
     labels, 49 were missed for being rotated and 2 were paired to the value
     beside them - one of those a 3.64 ft error on a wall top, which is the
     worst kind of defect because the answer looks right.
@@ -105,7 +155,8 @@ def page_lines(page) -> list:
     """
     out = []
     try:
-        d = page.get_text("dict")
+        with annots_hidden(page):
+            d = page.get_text("dict")
     except Exception:
         return out
     rot = page.rotation_matrix if page.rotation else None
@@ -154,7 +205,7 @@ def _thin_rect_centerline(pts: np.ndarray, pca_axis: bool = False) -> np.ndarray
     pca_axis: use the perimeter-weighted PCA long axis instead of the
     longest vertex pair. The corner-to-corner diameter tilts by
     atan(width/length) off a thin box's true axis, which rendered every
-    collapsed FILL sliver askew of its printed ink (Oncor p4 property
+    collapsed FILL sliver askew of its printed ink (substation p4 property
     line, 45.7x3.3 fill slivers ~4deg off). Scoped to fill-bearing paths
     for now: flipping the axis for plain stroked rects moved C2.1's
     chain population -300 in the 2026-08-20 corpus gate, and that
@@ -199,17 +250,172 @@ def _thin_rect_centerline(pts: np.ndarray, pca_axis: bool = False) -> np.ndarray
     return np.vstack([p0, p1])
 
 
-def _clip_runs(pt_list: list, clip) -> list:
-    """Trim a polyline to a clip rect: keep runs of consecutive inside
-    points. Border-crossing segments lose their outside tail (error bounded
-    by one segment length) - fine for linework, exact intersection can come
-    later if measurement at viewport edges ever matters."""
-    if clip is None:
+def _clip_loops(items: list, scissor) -> list | None:
+    """The clip path's own outline as a list of (N, 2) loops in raw space, or
+    None when the clip IS its scissor rectangle (an axis-aligned box).
+
+    A CAD sheet's viewport is often not a rectangle: the plan window on a
+    client's storm sheets is a hexagon with two corners cut off for the title
+    block and a profile strip. `get_drawings` reports every clip's `scissor`
+    (the bounding box) AND its `items` (the actual path); the extractor
+    honoured only the box, so linework in the cut-off corners - which the
+    renderer never draws - was measured. Verified by rendering 2026-09-26 on
+    Res-A civil page index 9 (printed C4.0): 1,536 strokes under one clip sit
+    inside the box and outside its polygon, and the dark-pixel fraction along
+    every sampled one is 0.00 against a 0.03-1.00 spread on control strokes
+    inside the polygon; 158.9 ft of that was storm pipe on a bid line.
+    """
+    loops, cur = [], []
+
+    def close_cur():
+        nonlocal cur
+        if len(cur) >= 3:
+            loops.append(np.asarray(cur, dtype=np.float64))
+        cur = []
+
+    for it in items:
+        op = it[0]
+        if op == "l":
+            a, b = it[1], it[2]
+            if cur and not _close(cur[-1], (a.x, a.y)):
+                close_cur()
+            if not cur:
+                cur.append((a.x, a.y))
+            cur.append((b.x, b.y))
+        elif op == "c":
+            p1, p2, p3, p4 = it[1], it[2], it[3], it[4]
+            if cur and not _close(cur[-1], (p1.x, p1.y)):
+                close_cur()
+            if not cur:
+                cur.append((p1.x, p1.y))
+            cur.extend(_bezier_points(p1, p2, p3, p4))
+        elif op == "re":
+            close_cur()
+            r = it[1]
+            loops.append(np.asarray([(r.x0, r.y0), (r.x1, r.y0),
+                                     (r.x1, r.y1), (r.x0, r.y1)], dtype=np.float64))
+        elif op == "qu":
+            close_cur()
+            q = it[1]
+            loops.append(np.asarray([(q.ul.x, q.ul.y), (q.ur.x, q.ur.y),
+                                     (q.lr.x, q.lr.y), (q.ll.x, q.ll.y)], dtype=np.float64))
+    close_cur()
+    if not loops:
+        return None
+    # a single axis-aligned box that matches the scissor is the common case
+    # (viewports, text clips): no polygon work for it
+    if len(loops) == 1 and scissor is not None:
+        L = loops[0]
+        xs, ys = np.unique(np.round(L[:, 0], 1)), np.unique(np.round(L[:, 1], 1))
+        if len(xs) <= 2 and len(ys) <= 2:
+            return None
+    # drop duplicate consecutive vertices (a closing repeat of the start)
+    out = []
+    for L in loops:
+        keep = [0] + [k for k in range(1, len(L))
+                      if not _close(L[k], L[k - 1])]
+        if len(keep) >= 2 and _close(L[keep[-1]], L[keep[0]]):
+            keep = keep[:-1]
+        if len(keep) >= 3:
+            out.append(_ClipLoop(L[keep]))
+    return out or None
+
+
+class _ClipLoop:
+    """One loop of a clip path, with what the point test needs precomputed:
+    the vertices as a Python list (the per-path test is a short loop over a
+    handful of edges, and numpy's per-call overhead loses to it), the box,
+    and whether the loop is convex (a convex viewport contains a polyline
+    whose box it contains - the common case, decided without a point test)."""
+
+    __slots__ = ("pts", "edges", "lo", "hi", "convex")
+
+    def __init__(self, arr: np.ndarray):
+        self.pts = arr
+        v = [(float(x), float(y)) for x, y in arr]
+        self.edges = [(v[i], v[(i + 1) % len(v)]) for i in range(len(v))]
+        self.lo = (float(arr[:, 0].min()), float(arr[:, 1].min()))
+        self.hi = (float(arr[:, 0].max()), float(arr[:, 1].max()))
+        d = np.roll(arr, -1, axis=0) - arr
+        d2 = np.roll(d, -1, axis=0)
+        cross = d[:, 0] * d2[:, 1] - d[:, 1] * d2[:, 0]
+        sig = cross[np.abs(cross) > 1e-6]
+        self.convex = len(sig) == 0 or bool((sig > 0).all() or (sig < 0).all())
+
+    def contains(self, x: float, y: float) -> bool:
+        """Even-odd crossing test."""
+        inside = False
+        for (ax, ay), (bx, by) in self.edges:
+            if (ay > y) != (by > y):
+                xint = (bx - ax) * (y - ay) / ((by - ay) or 1e-12) + ax
+                if x < xint:
+                    inside = not inside
+        return inside
+
+    def near_edge(self, x: float, y: float, tol: float) -> bool:
+        t2 = tol * tol
+        for (ax, ay), (bx, by) in self.edges:
+            ex, ey = bx - ax, by - ay
+            L2 = ex * ex + ey * ey
+            if L2 < 1e-12:
+                continue
+            t = ((x - ax) * ex + (y - ay) * ey) / L2
+            t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+            qx, qy = ax + t * ex, ay + t * ey
+            if (x - qx) ** 2 + (y - qy) ** 2 <= t2:
+                return True
+        return False
+
+
+def _inside_loops(pt_list: list, loops: list, tol: float = 0.5) -> list:
+    """Per point: inside ANY loop of this clip (even-odd), or within `tol`
+    of a loop edge - the same slop the scissor box gets. Returns a list of
+    bools, one per point."""
+    n = len(pt_list)
+    xs = [float(p[0]) for p in pt_list]
+    ys = [float(p[1]) for p in pt_list]
+    lo = (min(xs), min(ys))
+    hi = (max(xs), max(ys))
+    ok = [False] * n
+    for L in loops:
+        # cheap outs: wholly outside the loop's box touches nothing; a box
+        # wholly inside a CONVEX loop is wholly inside (the viewport case)
+        if hi[0] < L.lo[0] - tol or hi[1] < L.lo[1] - tol \
+                or lo[0] > L.hi[0] + tol or lo[1] > L.hi[1] + tol:
+            continue
+        if L.convex and L.contains(lo[0], lo[1]) and L.contains(hi[0], lo[1]) \
+                and L.contains(hi[0], hi[1]) and L.contains(lo[0], hi[1]):
+            return [True] * n
+        for k in range(n):
+            if not ok[k] and (L.contains(xs[k], ys[k])
+                              or (tol > 0 and L.near_edge(xs[k], ys[k], tol))):
+                ok[k] = True
+    return ok
+
+
+def _clip_runs(pt_list: list, clip, polys: list | None = None) -> list:
+    """Trim a polyline to a clip rect (and, when the clip path is not a
+    rectangle, to its polygon): keep runs of consecutive inside points.
+    Border-crossing segments lose their outside tail (error bounded by one
+    segment length) - fine for linework, exact intersection can come later
+    if measurement at viewport edges ever matters."""
+    if clip is None and not polys:
         return [pt_list]
+    if clip is not None:
+        ok = [clip.x0 <= p[0] <= clip.x1 and clip.y0 <= p[1] <= clip.y1
+              for p in pt_list]
+    else:
+        ok = [True] * len(pt_list)
+    if polys and any(ok):
+        for loops in polys:
+            ins = _inside_loops(pt_list, loops)
+            ok = [a and b for a, b in zip(ok, ins)]
+            if not any(ok):
+                break
     runs = []
     cur = []
-    for p in pt_list:
-        if clip.x0 <= p[0] <= clip.x1 and clip.y0 <= p[1] <= clip.y1:
+    for p, keep in zip(pt_list, ok):
+        if keep:
             cur.append(p)
         elif cur:
             runs.append(cur)
@@ -277,9 +483,13 @@ def extract_strokes(page: pymupdf.Page) -> list[StrokeUnit]:
 
     # margin for numeric slop at viewport borders
     PAD = 0.5
-    clip_stack: list[tuple[int, pymupdf.Rect | None]] = []
+    clip_stack: list[tuple[int, pymupdf.Rect | None, list | None]] = []
 
-    for path in page.get_drawings(extended=True):
+    # the client's PDF markups are hidden for the walk: they are not the
+    # drawing (see annots_hidden)
+    with annots_hidden(page):
+        drawings = page.get_drawings(extended=True)
+    for path in drawings:
         ptype = path.get("type") or ""
         level = path.get("level", 0)
         # entries at deeper-or-equal levels have gone out of scope
@@ -288,10 +498,17 @@ def extract_strokes(page: pymupdf.Page) -> list[StrokeUnit]:
         if ptype == "clip":
             scissor = path.get("scissor")
             rect = None
+            loops = None
             if scissor is not None and not pymupdf.Rect(scissor).is_empty:
                 # scissor stays in raw space; points are clipped raw too
                 rect = pymupdf.Rect(scissor) + (-PAD, -PAD, PAD, PAD)
-            clip_stack.append((level, rect))
+                # the clip PATH, when it is not the box (a viewport with a
+                # corner cut off): what the renderer really honours
+                try:
+                    loops = _clip_loops(path.get("items") or [], scissor)
+                except Exception:
+                    loops = None
+            clip_stack.append((level, rect, loops))
             continue
         if "f" in ptype:
             fc = path.get("fill")
@@ -304,9 +521,12 @@ def extract_strokes(page: pymupdf.Page) -> list[StrokeUnit]:
         if path.get("layer") in off_layers:
             continue
         clip = None
-        for _, r in clip_stack:
+        polys = []
+        for _, r, loops in clip_stack:
             if r is not None:
                 clip = r if clip is None else clip & r
+            if loops:
+                polys.append(loops)
         color = path.get("color")
         width = path.get("width") or 0.0
         dashes = path.get("dashes") or "[] 0"
@@ -316,7 +536,7 @@ def extract_strokes(page: pymupdf.Page) -> list[StrokeUnit]:
 
         def emit(pt_list):
             for part in _split_loops(pt_list):
-                for run in _clip_runs(part, clip):
+                for run in _clip_runs(part, clip, polys):
                     if len(run) >= 2:
                         pts = np.asarray(run, dtype=np.float64)
                         closed = _close(run[0], run[-1]) and len(run) > 2
@@ -380,7 +600,7 @@ def extract_strokes(page: pymupdf.Page) -> list[StrokeUnit]:
                 current = seg
         flush()
 
-    # Near-white strokes over a darker fill are VISIBLE linework (Oncor p4
+    # Near-white strokes over a darker fill are VISIBLE linework (substation p4
     # draws its floodplain contours white over the FEMA wash - 26k pt of
     # real line). Mark them so the downstream whiteout skip spares them;
     # white on bare paper stays skipped. Fill rects are raw-space, so map
@@ -418,7 +638,9 @@ def fill_boxes(page: pymupdf.Page) -> list:
     UI tell a wall face from an annotation drawn with the same pen."""
     rot = page.rotation_matrix if page.rotation else None
     out = []
-    for path in page.get_drawings():
+    with annots_hidden(page):
+        drawings = page.get_drawings()
+    for path in drawings:
         if "f" not in (path.get("type") or ""):
             continue
         col = path.get("fill")
@@ -449,7 +671,7 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
     corroboration is what keeps civil sheets clean: at 1"=30'-60' the
     scaled door-radius window shrinks to a few pt and contour bends /
     symbol fillets pass every per-arc gate. Measured 2026-08-19 (function
-    output, after dedupe): Oncor Cloudcrest p4 went 72 phantom openings ->
+    output, after dedupe): the substation set p4 went 72 phantom openings ->
     1 (a title-block logo glyph); Belle Farms ROAD GRADING 1of2 p1 went
     103 -> 0; Belle Structural p1 went 6 -> 23, all 23 eyeballed real
     (crops in out/verify/2026-08-19/double-doors/).
@@ -490,7 +712,7 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
     # absolute paper-space floor: smallest real door measured across the
     # corpus is r=10.8pt (C3.0/C4.0/C9.0 building doors at 1"=20');
     # phantom classes below it: leader-arrowhead curls r=3.2-3.4pt
-    # (Oncor p4, admitted when the 25-35deg fragment window landed at
+    # (substation p4, admitted when the 25-35deg fragment window landed at
     # civil scales), logo glyph bowls r=2.1-2.4pt. 8.0 splits the
     # populations with margin both ways.
     r_lo = max(r_lo, 8.0)
@@ -504,7 +726,7 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
         # [0.611 r_lo, 2.356 r_hi] - widened to 0.55/2.5 for flattening
         # slop. Only skips units the r/sweep gates would reject anyway,
         # and spares the circle fit on every long contour polyline
-        # (Oncor p4: 5302 -> 1924 fits).
+        # (substation p4: 5302 -> 1924 fits).
         if not (0.55 * r_lo <= u.length <= 2.5 * r_hi):
             continue
         p = np.asarray(u.pts, dtype=float)
@@ -518,7 +740,7 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
         # DIAMETER is the cluster gap - radius = gap/2, sweep = 180deg,
         # radial residual ~0.01pt - so it sails through the fit-std gate
         # and lands in the 165-195deg double-acting branch. That is the
-        # phantom factory: measured 2026-08-22 on SWR Barn Residence
+        # phantom factory: measured 2026-08-22 on the Res-A residence
         # Civil (15 sheets, no doors anywhere), 92 of its 112 reported
         # openings are these hairpins, e.g. a 5-vertex unit with segment
         # lengths [0.19, 30.21, 0.19, 0.19] fitted r=15.1 std=0.009.
@@ -574,7 +796,7 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
         # measure if it really ran round this circle. Measured over the
         # 1267 openings the corpus reported before this gate: every
         # flattened real arc sits at 0.93-1.00 (Belle Structural door
-        # swings 0.998-1.000, Thielen Biggerstaff p1 0.999, C3.0 0.997),
+        # swings 0.998-1.000, Res-C p1 0.999, C3.0 0.997),
         # while the two-cluster hairpins sit at 0.645-0.836 and
         # wandering fits reach 1.8-3.7. The 1.20 ceiling also leaves room
         # for a true 190deg sweep, which arccos reports back as 170.
@@ -641,21 +863,21 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
         # away, so the hinge and one arc endpoint both sit on a single
         # straight unit running along that radius. Measured 2026-08-22
         # against source crops: true for 25/25 Belle Structural p0 door
-        # swings and 24/25 Thielen Biggerstaff p1 swings (both sheets
+        # swings and 24/25 Res-C p1 swings (both sheets
         # eyeballed as real doors), and for 0/6 of the road-edge curve
-        # returns SWR Barn Civil p0 reports - those corroborate through
+        # returns Res-A civil p0 reports - those corroborate through
         # pair_ok, two mirrored driveway returns being geometrically
         # indistinguishable from a double door without this test.
         # max(3.0, 0.15r), not max(2.0, 0.10r). Measured 2026-08-22 over
-        # the five layered Beaumont documents using the drafter's own CAD
+        # the five layered residential documents using the drafter's own CAD
         # layer as truth: at 2.0/0.10 this gate deletes 9 arcs drawn on
-        # layer A-DOOR (SWR Barn Landscaping p7/p11/p14/p15/p20, arc-length
+        # layer A-DOOR (Res-A landscaping p7/p11/p14/p15/p20, arc-length
         # ratio 0.998-1.000). The p7 case misses by 0.26 pt - its leaf, also
         # on A-DOOR, starts 2.26 pt from the fitted hinge. Note 2.0 is
         # TIGHTER than leaf_ok's own 2.7 pt tolerance at r=18, so the wall
         # test was vetoing doors the leaf test had already corroborated.
         # Loosening recovers 5 of them and adds ZERO phantoms across all 15
-        # Barn Civil and all 9 Guide Civil sheets.
+        # Res-A civil and all 9 Res-B civil sheets.
         tol = max(3.0, 0.15 * r)
         for ea in ends:
             vx, vy = float(ea[0]) - cx, float(ea[1]) - cy
@@ -682,17 +904,17 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
             return False
         # ...capped at 3.0pt absolute. Measured 2026-08-22 across 58
         # human-checked real door leaves (Belle Structural p0 25,
-        # Thielen Biggerstaff p1 24, C3.0 Site Plan 9) the worst
+        # Res-C p1 24, C3.0 Site Plan 9) the worst
         # mismatch is 2.84pt; the pipe-elbow flange lines that
-        # impersonate leaves on SWR Barn Civil p14 (a NOT-TO-SCALE
+        # impersonate leaves on Res-A civil p14 (a NOT-TO-SCALE
         # piping detail) sit at 3.25-3.30pt. Without the cap the 0.15r
         # term buys them 3.69pt of slack at r=24.6.
         # A radius-relative cap max(3.0, c*r) was MEASURED and REFUTED
         # 2026-08-22 over all 217 corpus pages (leafpool scan,
         # out/verify/2026-08-22/doors2): the first phantom admits at
-        # c=0.0481 (an angular-dimension arc on SWR Guide Structural p4,
+        # c=0.0481 (an angular-dimension arc on Res-B structural p4,
         # r=87.7, miss 4.22) - BEFORE the first lost real door at
-        # c=0.0809 (Barn Landscaping p20 r=43.2, on layer A-DOOR, miss
+        # c=0.0809 (Res-A landscaping p20 r=43.2, on layer A-DOOR, miss
         # 3.50). The window is empty, so no c both recovers a door and
         # holds the zero-phantom bar; that door comes back through
         # pair_ok's template path instead. The elbow flanges sit at
@@ -718,15 +940,15 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
         (pairpool/meetpool scans, out/verify/2026-08-22/doors2): every
         layer-confirmed A-DOOR pair matches at dR <= 0.9% / dsweep <=
         0.7deg, while every non-door pair that passes the loose test
-        misses it - road-edge returns on SWR Barn/Guide Civil dR 9.9-13.7%
+        misses it - road-edge returns on Res-A/Res-B civil dR 9.9-13.7%
         dsweep 8-12deg, existing-ground contour wiggles on C4.0/C8.0/C9.0
-        dR 10-14%, a steel-framing axonometric curve pair on SWR Barn
-        Structural p8 dsweep 2.5deg, a scanned floor plan's two unequal
-        arcs on Bill's set dsweep 49deg. The 2% / 1.5deg cuts sit >= 2.2x
+        dR 10-14%, a steel-framing axonometric curve pair on Res-A
+        structural p8 dsweep 2.5deg, a scanned floor plan's two unequal
+        arcs on a client's set dsweep 49deg. The 2% / 1.5deg cuts sit >= 2.2x
         from both populations. A template pair is trusted two ways:
         - it OVERRIDES the jamb veto (the caller): bi-fold banks hang on
           a closet-front line ~one radius from the fitted hinge, so
-          jamb_ok misses them by 7-36pt (Barn Landscaping p7/p11/p14/p15,
+          jamb_ok misses them by 7-36pt (Res-A landscaping p7/p11/p14/p15,
           20 arcs on layer A-DOOR, all currently deleted);
         - its meeting-point tolerance is max(1.5, 0.11 x r), not 0.05 x r:
           large double doors close on an astragal gap that scales with
@@ -807,7 +1029,7 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
     # split doors share r with their whole siblings (Belle p1: r=27.0
     # fragments vs confirmed r=27 doors). Radius-dimension callouts on
     # civil sheets have leaf-like leaders but no confirmed-door radius
-    # to match (Oncor p4 grew +10 phantoms without this gate).
+    # to match (substation p4 grew +10 phantoms without this gate).
     for i, (cx, cy, r, e0, e1, _mid, sweep) in enumerate(cands):
         if sweep >= 35.0:
             continue
@@ -834,14 +1056,14 @@ def door_swings(units: list, scale_ft_per_in: float | None = None,
     #    PERPENDICULAR to the chord. Measured 2026-08-22: the chord test
     #    keeps both real glass-connector doors on Belle Structural
     #    p0/p1/p2 and rejects all 16 propane-tank / circle-symbol
-    #    semicircles that survive the arc-length gate on SWR Barn and
-    #    Guide Civil (CAD layer '34008 Site|P-PROPANE').
+    #    semicircles that survive the arc-length gate on Res-A and
+    #    Res-B civil (CAD layer '34008 Site|P-PROPANE').
     if da_cands:
         def center_crossed(cx, cy, r, chord_dir, ex0, ey0):
             # equipment symbols (substation breakers on bus lines) are
             # circles with straight feeds THROUGH the middle in non-chord
             # directions; a door's only center-adjacent line is the track
-            # it hangs on, collinear with its chord. Measured on Oncor
+            # it hangs on, collinear with its chord. Measured on substation
             # p4: every phantom had a >20deg crossing; the two real glass
             # doors have none.
             if not len(S):

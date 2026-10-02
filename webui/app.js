@@ -36,12 +36,17 @@ const $ = (id) => document.getElementById(id);
 const BOOT_HASH = location.hash;
 const IMG_DPI = 130; // must match /image endpoint default
 const LF = String.fromCharCode(10);   // newline for title= tooltips
+// "1 line", "11 lines": a count and its noun, right for one (UI verify 2: the bid view said "1 lines")
+function nWord(n, one, many) {
+  return n + " " + (n === 1 ? one : (many || one + "s"));
+}
 
 const state = window.state = {
   job: null, page: 0, kinds: [],
   triage: null,             // /triage reply: per-page excavation tiers
   img: null, result: null,
   include: new Map(), labels: new Map(), isolate: null,
+  incUndo: null,            // the ticks before the last all / none / engine's picks (one step; incSnapshot)
   // FAMILY HOVER. null, or a Set of style_ids to light up on the canvas.
   // It was a single style_id (state.hot) and one caller already needed more:
   // a Bid view row pools several styles under one bid line and could only
@@ -80,10 +85,6 @@ const state = window.state = {
   cutA: null,               // first anchor of an in-progress cut-span
   drawPts: [],              // vertices of the in-progress drawn line
   vis: new Map(),           // style_id -> shown on the drawing. OVERRIDES ONLY:
-                            // an absent key means "follow the takeoff mark",
-                            // which is why an untouched app renders exactly
-                            // what it always did (FAM-VIS)
-  ewBoundDraft: [],         // vertices of an in-progress hand-drawn limit of work
   polySnap: false,          // the close-snap PREVIEW for whichever hand-drawn
                             // polygon is armed: true while the pointer sits
                             // inside the close radius of its first corner, so
@@ -108,47 +109,10 @@ const state = window.state = {
   drawPend: null,           // a finished draw waiting for its family pick
                             // {pts, head, tail} - nothing is committed yet
   legendNames: [],          // trade names read off a dedicated legend sheet
-  ew: null,                 // earthwork panel state {rows, result}
-  // THE THIRD STATE. `ew` alone is two-valued and was doing a three-valued
-  // job: null meant BOTH "never opened / no detect" and "the suggest fetch
-  // is in flight", and the first read of a page costs 94 s (Belle Farms p0)
-  // to 204 s (Oncor C-04) - measured cold, 99% of it one OCR loop. Every
-  // !state.ew guard therefore told the operator he had not opened a panel
-  // he was staring at. This holds the in-flight promise: truthy == busy,
-  // and it is also the single-flight token, so a second press (or the
-  // grading-zone restore path) joins the running fetch instead of racing a
-  // second one whose loser overwrote the winner's rows with "run Detect
-  // first". Cleared in a finally, and nulled with `ew` on every page change.
-  ewLoading: null,
   // COUNT EACH WALL ONCE (Wave 2 item 11): the page's twin families from
   // GET .../twins (null until they arrive) and the families the operator
   // counts once. Per page - pageReset clears both.
   twins: null, once: new Set(), onceRev: 0,
-  // the suggest was tried for this page and did not come back. NOT a
-  // boolean: {status, detail} from the server, because "this page was never
-  // detected" (404) can never be fixed by a retry while a dropped
-  // connection can, and one flag for both printed the retry sentence over
-  // the permanent case. null = never tried. See ewFailMsg.
-  ewFailed: null,
-  // THE ONE IN-FLIGHT /earthwork/suggest, {key, promise}. Two independent
-  // features read that endpoint - the earthwork panel and the selection
-  // pill's elevation chip - and they were issuing separate requests for the
-  // same page (proven in the server log: two GETs, one click apart). See
-  // suggestOnce(); cleared on settle and on every page change.
-  suggestReq: null,
-  // CONTOUR ELEVATIONS FOR THE SELECTION CHIP, as a state machine rather
-  // than a sentinel. It used to be `elevMap`: undefined = never asked,
-  // null = in flight, Map = answered - and the catch wrote `new Map()`, so
-  // a dropped connection was indistinguishable from "this sheet labels no
-  // contours" AND was permanent, with no way for the operator to ask again
-  // (measured 182.4 s of silence on a cold Oncor C-04). Same shape as
-  // CLAUDE.md §5's "0.0 is not None": one value doing two jobs.
-  //   idle    nothing asked yet
-  //   loading a request is in flight for this page
-  //   ready   answered. byChain may be EMPTY - that is a real answer,
-  //           meaning the sheet labels no contours, not a failure
-  //   failed  the request failed. Retried on the next selection.
-  elev: { status: "idle", byChain: null },
   conf: null,               // /confidence payload for the current page:
                             // NOT-TO-SCALE + spot-elevation provenance, the
                             // two trust facts the detect result cannot carry
@@ -164,8 +128,9 @@ const state = window.state = {
   extraItems: [],           // calculator outputs: {label, qty, unit}
   areaInc: new Map(),       // area group_id -> included in the takeoff
   areaLabels: new Map(),    // area group_id -> reviewer's label
+  areaNote: "",             // the Areas panel's one-line note when stored ticks were not kept (arSelRestore)
   areaRows: [],             // {group_id, unit} - a region can feed SEVERAL
-                            // priced rows (Estimate #853 bills the same
+                            // priced rows (a client's estimate bills the same
                             // 22,796 SF twice: to subgrade, then road base),
                             // so rows REFERENCE a group and the quantity is
                             // recomputed from it, never copied
@@ -182,16 +147,6 @@ const state = window.state = {
                             // inside the union; detection itself is untouched
   wzDrag: null,             // in-progress work-area drag {a:[x,y], b:[x,y]}
   wzRev: 0,                 // bumped on any zone or geometry change so the
-                            // per-chain inside-fraction memo invalidates
-  gzones: [],               // GRADING ZONES: declared-design regions
-                            // [{id, name, polygon, design, strip_in, added,
-                            //   showNums, labels, result, img, err}].
-                            // result/img are recomputed via the zone
-                            // endpoint, never restored from storage.
-  gzDraft: [],              // corners of an in-progress hand-drawn zone
-  gzHover: null,            // cursor position for the zone draft preview
-  gzDrag: null,             // in-progress zone box drag {a:[x,y], b:[x,y]}
-  gzSeq: 1,                 // next default zone number ("Zone 3")
   view: { x: 0, y: 0, k: 1 },
 };
 
@@ -201,14 +156,13 @@ const state = window.state = {
 // tool; every tool in this set has the same problem, so they all get it.
 const POINT_TOOLS = new Set([
   "measure", "extend", "cutspan", "flatten", "drawline", "merge", "reclass",
-  "ew-bound", "ew-bound-draw", "ew-pick", "st-pick", "st-draw", "wz-draw",
-  "gz-draw", "gz-box",
+  "st-pick", "st-draw", "wz-draw", "fl-pick", "fl-draw", "fl-close", "fl-deduct", "fl-edit",
 ]);
 
 // The three polygons the operator draws corner by corner. One set, so the
 // close-snap (POLY-SNAP) and the cursor chokepoint cannot know about
 // different tools than the click handlers do.
-const POLY_DRAW_TOOLS = new Set(["ew-bound-draw", "gz-draw", "st-draw"]);
+const POLY_DRAW_TOOLS = new Set(["st-draw", "fl-draw"]);
 function syncCursor() {
   const cv = document.getElementById("view");
   if (cv) cv.classList.toggle("tool-point", POINT_TOOLS.has(state.tool));
@@ -270,6 +224,12 @@ function uploadProgress(name, pct) {
   $("upPct").textContent = pct + "%";
 }
 
+// A PDF announces itself in its first kilobyte (%PDF-, after an optional
+// preamble). The name and the browser's MIME type are the file's own claim
+// about itself; a renamed spreadsheet or a half-written export passes both.
+function pdfHeadOk(head) {
+  return /%PDF-/.test(String(head || ""));
+}
 function uploadPdf(file) {
   if (UPLOADING) { setStatus("already uploading \u2014 one at a time", "err"); return; }
   if (!file) return;
@@ -278,6 +238,21 @@ function uploadPdf(file) {
     setStatus(`${file.name} is not a PDF \u2014 plans have to be a PDF`, "err");
     return;
   }
+  // LOOK INSIDE BEFORE SENDING (audit D35): a damaged export used to travel
+  // the whole way up, land in the store and come back as a bare 500. The
+  // server refuses the same way now (400, nothing written); this saves the
+  // transfer and says why in the operator's own terms.
+  const head = file.slice(0, 1024);
+  const go = () => uploadPdfNow(file);
+  if (typeof head.text === "function") {
+    head.text().then(t => {
+      if (!pdfHeadOk(t))
+        return setStatus(`${file.name} is not a PDF inside \u2014 export the plans again from the drawing program and upload that`, "err");
+      go();
+    }).catch(go);                    // a browser that cannot read the head: the server decides
+  } else go();
+}
+function uploadPdfNow(file) {
   UPLOADING = true;
   uploadProgress(file.name, 0);
   const mb = (file.size / 1e6).toFixed(1);
@@ -432,7 +407,12 @@ $("docRemoveBtn").onclick = async () => {
       return setStatus(e.detail || ("could not remove it (" + r.status + ")"), "err");
     }
     const j = await r.json();
-    setStatus("removed " + j.name);
+    // say what the server DID (pdf_removed / pdf_why), not what was asked:
+    // a PDF that stayed is the one thing the client would want to know, and
+    // the reload below would hide a status line, so it is held in a dialog
+    const said = pvDeleteSentence(j, meta.name);
+    setStatus(said, j.pdf_removed === false ? "err" : undefined);
+    if (j.pdf_removed === false) alert(said);
     location.reload();
   } catch (e) {
     setStatus("could not remove it \u2014 the server did not answer", "err");
@@ -550,7 +530,7 @@ async function openPath(path) {
 // from the UI at all, which on a hosted server meant there was no way in.
 // `landOn` is an OPTIONAL engine page index to open on. Every existing caller
 // passes nothing and gets page 0, exactly as before; the Projects grid passes
-// a demo plan's own page, so clicking "Oncor Cloudcrest" opens the grading
+// a demo plan's own page, so clicking a substation card opens the grading
 // sheet the card describes rather than the cover sheet in front of it.
 function applyOpened(j, landOn) {
   // the landing page yields to a document, whichever way it arrived: card
@@ -564,6 +544,10 @@ function applyOpened(j, landOn) {
   state.gen++;
   // a newly uploaded set should appear in the picker without a reload
   setTimeout(loadRecent, 300);
+  // the cut / fill on screen and its sheet picker belong to the plan set that was open: they close, and the engine
+  // frame lets go of that set's project (the third critic's w3: a drop on the header opened another set under the
+  // stage, and the old set's volumes went into the new set's takeoff). Opening Cut / fill here opens this set's.
+  if (typeof cfCloseForJob === "function") cfCloseForJob();
   state.job = j.job_id; state.result = null;
   state.triage = null;      // the old document's tiers must not paint this one
   // ...and neither may the old document's Auto-detected card. Both of its
@@ -589,6 +573,9 @@ function applyOpened(j, landOn) {
   // has to stay readable on hover now that the name is the header's subject
   $("docName").title = j.name;
   state.docName = j.name;
+  // the download links belong to this job now: hidden until the server says what it has approved (B3)
+  jobLinksReset();
+  jobLinksSync(state.job).catch(() => {});
   const sel = $("pageSel");
   sel.innerHTML = "";
   state.kinds.forEach((k, i) => {
@@ -616,7 +603,7 @@ function applyOpened(j, landOn) {
   // the kind of quiet disagreement a takeoff cannot afford. Caught live.
   $("pageSel").value = land;
   selectPage(land);
-  setStatus(`${j.pages} pages`);
+  setStatus(nWord(j.pages, "page"));
   if (!j.kinds) pollKinds(state.job, state.gen);
 }
 
@@ -646,7 +633,7 @@ async function pollKinds(job, gen) {
       renderPageStrip();
       renderSheetHead();
       if (/reading page kinds/.test($("status").textContent))
-        setStatus(`${state.kinds.length} pages`);
+        setStatus(nWord(state.kinds.length, "page"));
       return;
     }
     // Only speak up once it is slow enough to look broken. On a small set
@@ -694,7 +681,12 @@ async function selectPage(p) {
   const img = new Image();
   img.onload = () => {
     if (gen !== state.gen) return;   // a later page won the race
-    state.img = img; fitView(); draw();
+    state.img = img;
+    // the quarter turn this page was left at (view only; see rotateView)
+    let rot = 0;
+    try { rot = parseInt(store.getItem(rotKey()) || "0", 10) || 0; } catch (e) { rot = 0; }
+    state.view.rot = [90, 180, 270].includes(rot) ? rot : 0;
+    fitView(); draw();
   };
   img.src = url(`/api/job/${state.job}/page/${p}/image?dpi=${IMG_DPI}`);
   markCurrentThumb();
@@ -706,6 +698,10 @@ async function selectPage(p) {
   if (gen !== state.gen) return;
   if (st.status === "done") loadResult(gen);
   else if (st.stale) setStatus("this sheet was detected with an older engine — press Detect to refresh it", "busy");
+  // the page's lasting note (its old Earthwork calculator work was removed, or its approval is out of date) as soon as
+  // the page is open, result or not: a v1.8.5 page opens "detected with an older engine", and the note came only after
+  // a Detect (critic legacy-5, WRONG-1). loadResult asks again once a result is back
+  if (st.status !== "done") approvalOutdated(gen).catch(() => {});
 }
 
 // RUN-STATE-BEGIN ------------------------------------------------------------
@@ -835,7 +831,7 @@ async function poll(gen = state.gen) {
   // "idle" while we are polling = the worker exited without writing a
   // result OR an error. The old code fell through here silently: no timer,
   // no message, "detecting…" frozen on screen until a reload (measured on
-  // ellis p42 when a memory-starved child died during numpy import). The
+  // a client set's p42 when a memory-starved child died during numpy import). The
   // server now reports most of these as errors (fresh-result check in
   // _sched_finish_locked); this is the belt for a race or an old server.
   setPageStatus(state.page, "idle");
@@ -903,6 +899,8 @@ function setPageStatus(p, st) {
   // the one on screen going running (Detect all) still has to reach the flag,
   // so this is outside the `p === state.page` guard.
   runFlagSync();
+  // ...and the "Sheets for cut / fill" picker's row, when it is open
+  if (typeof cfsRowStatus === "function") cfsRowStatus(p, st);
 }
 async function refreshPageStatuses() {
   const job = state.job;
@@ -925,6 +923,9 @@ async function refreshPageStatuses() {
 const TRI_TIER_WORD = {
   core: "strong excavation signals",
   maybe: "some excavation signals",
+  // a floor plan or a foundation plan: the sheets Flooring, Count and
+  // Structure work on. Never dimmed as another trade (audit D38).
+  plan: "a building plan — rooms, footings, counts",
   other: "looks like another trade",
   unknown: "no text - not triaged",
 };
@@ -938,10 +939,11 @@ async function loadTriage(job) {
   // Job-scoped guard, NOT the page generation token: triage is a property
   // of the DOCUMENT, and openJob calls selectPage(0) right after this -
   // which bumps state.gen, so a gen guard discarded every reply (caught
-  // live on ellis: endpoint 200 with 54 pages scored, strip never painted).
+  // live on a client set: endpoint 200 with 54 pages scored, strip never painted).
   if (state.job !== job) return;      // a different document opened since
   state.triage = d;
   applyTriageToStrip();
+  if (typeof renderSheetHead === "function") renderSheetHead();   // the heading names the sheet by this reading too
 }
 function triageTitle(p, r) {
   const kind = state.kinds[p];
@@ -953,14 +955,14 @@ function triageTitle(p, r) {
     .map(h => `${h[0]}×${h[1]} (${h[2] > 0 ? "+" : ""}${h[2]})`)
     .join(", ");
   return head + LF
-    + `${TRI_TIER_WORD[r.tier] || r.tier} (score ${r.score})` + LF
+    + `${TRI_TIER_WORD[r.tier] || r.tier}` + (r.kind ? ` (${r.kind})` : "") + ` (score ${r.score})` + LF
     + (ev || "no keyword hits");
 }
 function applyTriageToStrip() {
   const d = state.triage;
   const hl = localStorage.getItem("core-triage-hl") === "on";
   [...$("thumbList").children].forEach((t, p) => {
-    t.classList.remove("tri-core", "tri-maybe", "tri-other",
+    t.classList.remove("tri-core", "tri-maybe", "tri-plan", "tri-other",
                        "tri-unknown", "tri-dim");
     const r = d && d.pages && d.pages[p];
     if (!r) return;
@@ -981,7 +983,7 @@ function renderTriageBar() {
     bar.hidden = true;
     return;
   }
-  const n = d.pages.filter(r => r.tier === "core" || r.tier === "maybe").length;
+  const n = d.pages.filter(r => r.tier === "core" || r.tier === "maybe" || r.tier === "plan").length;
   const dim = d.pages.length - n;     // what "highlight" would dim
   const unk = (d.counts && d.counts.unknown) || 0;
   const hl = localStorage.getItem("core-triage-hl") === "on";
@@ -1119,9 +1121,10 @@ $("detectAllBtn").onclick = async () => {
 // and the status line (loadResult is called after setStatus("done") and
 // must not wipe it).
 function pageReset() {
-  // the detection and everything derived from it
-  state.result = null; state.isolate = null;
+  // the detection and everything derived from it (resultLoaded: set again at the end of loadResult)
+  state.result = null; state.isolate = null; state.resultLoaded = null;
   state.include = new Map(); state.labels = new Map();
+  state.incUndo = null;
   // eye overrides are per PAGE, like the ticks they shadow (FAM-VIS)
   state.vis = new Map();
   state.seedLabels = new Map(); state.chainLabels = new Map();
@@ -1155,17 +1158,8 @@ function pageReset() {
   state.measureMode = new Map();
   toolRowLabel("aiBtn", "Analyze");
   $("aiBanner").hidden = true;
-  // contour elevations for the selection chip (its own single writer)
-  elevReset();
-  // EARTHWORK: the panel, its rows, its numbers and the limit of work.
-  // ewPageReset stays a function of its own because it is the F5 fix and
-  // its comment is the record of what that cost; it is called from here and
-  // from nowhere else now.
-  ewPageReset();
-  // grading zones, drafts included; this page's own saved zones come back
-  // via gzApplySaved in calcStateLoad
-  gzPageReset();
-  // the WORK AREA belongs to ONE sheet (caught live on Kayden 38->39: detect
+  if (typeof cfSyncButton === "function") cfSyncButton();   // the Cut / fill tool shows whenever a job is open
+  // the WORK AREA belongs to ONE sheet (caught live on a subdivision set 38->39: detect
   // would otherwise have silently masked the wrong sheet). This page's own
   // boxes come back from the calcstate sidecar via wzApplySaved.
   state.workZones = []; state.wzDrag = null; state.wzRev++;
@@ -1192,18 +1186,36 @@ function pageReset() {
   // the fix for the undetected one.
   state.calcSaved = null; state.calcSavedLoaded = false;
   state.calcStApplied = false;
+  state.calcFlApplied = false;
   state.calcSaveBroken = false; state.calcSaveWarned = false;
+  state.calcRowsLoaded = false;   // the job's rows are re-read per page
+  state.calcRowsTouched = false;  // ...and are written back only once changed here
+  state.calcShared = false;       // the next page's record says whether its job is shared (job_shared)
   // areas
   state.areaInc = new Map(); state.areaLabels = new Map();
   state.areaRows = []; state.areaHot = null;
+  state.areaNote = "";      // "Areas were measured again..." (arSelRestore): this page's only
   // hand-added takeoff rows
   state.extraItems = [];
+  // ...and the facts of the cut / fill rows among them: the page's own record carries them (calcSaved.cf); another
+  // page's left here would be taken as this page's (cfReconcile compares their compute with the engine's)
+  state.cfFacts = null;
+  // ...and whether the previous page dropped old Earthwork calculator rows (calcRestore)
+  state.ewDropped = false;
+  // ...and why they left the previous page's takeoff (the status bar's lasting note, cfLeftNote): not this page's news
+  state.cfLeft = null;
+  state.outdatedNote = "";             // the previous page's approval-out-of-date note (approvalOutdated)
+  state.outdatedSeq = 0;               // ...and its asks: one in flight answers a page and a load that are gone
+  if ($("sbCf")) { $("sbCf").textContent = ""; $("sbCf").title = ""; }
   // TRENCH. Stale numbers must not survive a page switch, the consent button
   // must not offer to "Remove" rows state.tr no longer describes, and the
   // band table must not describe the previous sheet's run. The PANEL closes
   // too: on an undetected sheet it used to stay open holding the previous
   // sheet's depth and width inputs, which is the F5 symptom one panel over.
   state.tr = null;
+  // ...and what the trench tool read for the previous sheet: its profile,
+  // its runs, the run lit on the canvas. Per page, like state.tr.
+  state.trProfile = null; state.trRuns = null; state.trRunHot = null;
   $("trPanel").hidden = true; $("trBtn").hidden = false;
   $("trResult").textContent = "";
   $("trTake").classList.add("off"); $("trAdd").classList.remove("on");
@@ -1234,7 +1246,7 @@ async function loadResult(gen = state.gen) {
   state.result = parsed;
   state.nextChainId = 1 + Math.max(0, ...state.result.chains.map(c => c.chain_id));
   for (const s of state.result.styles) {
-    const white = s.color && Math.min(...s.color) > 0.92;
+    // the seed is includeSeed(s) - "engine's picks" puts these back (UI verify 2026-10-02 #7):
     // white-over-wash linework is real but faint existing-conditions data;
     // it starts OFF so it never surprises the takeoff - one click turns a
     // family on when the estimator wants it
@@ -1250,13 +1262,15 @@ async function loadResult(gen = state.gen) {
     // disagreement spelled out on every row. 63 of 116 cached sheets (54%)
     // have at least one - flipping that much quietly would make an engine
     // judgement invisible, which is the same sin as silently counting it.
-    state.include.set(s.style_id,
-      (white || s.texture || s.class === "annotation" || sgSuggested(s)) ? false
-        : (s.class !== "solid" ? true : s.length_pt > 500));
+    state.include.set(s.style_id, includeSeed(s));
     state.labels.set(s.style_id, s.suggested_label);
     state.seedLabels.set(s.style_id, s.suggested_label || "");
   }
   memApply();   // the reviewer's saved decisions win over seeds, every load
+  // The legend's own sample bars start unticked (state.excluded), every
+  // load: they are sheet furniture the engine boxed, not takeoff, and ticked
+  // they billed 33.6 ft per utility line and 41 ft of contour (D05).
+  swatchExclude();
   // Calculator rows and area selections are decisions too, and they are
   // restored here for the same reason: they belong to this sheet, and the
   // operator committed them.
@@ -1280,6 +1294,9 @@ async function loadResult(gen = state.gen) {
   // priced at 1.33 (6x on length, 36x on area). Making the first paint true
   // is not a repaint's job.
   scaleMemApply();
+  // ...and the rows the job holds stand on THIS seat's scale in force from the first paint
+  // (rowsFollowScale): they may have been saved by a seat whose scale was another
+  rowsFollowScale(true);
   scopeApply();   // verdicts before the first paint; see scopeApply()
   renderSheetHead();
   renderScopeBar();
@@ -1312,6 +1329,46 @@ async function loadResult(gen = state.gen) {
   // scaleRestore() above later corrects the scale, its scaleRepaint() ->
   // renderSheetHead() -> renderSheetFacts() chain repaints this too.
   renderSheetFacts();
+  // everything of this sheet is back (the result, the review's decisions, the work area from the calcstate):
+  // "Sheets for cut / fill" waits for this before its open hands the review over
+  state.resultLoaded = { job: state.job, page: state.page, gen };
+  // the cut / fill rows this page holds, against what the engine said while another page was on screen
+  if (typeof cfReconcile === "function") cfReconcile().catch(() => {});
+  approvalOutdated(gen).catch(() => {});
+}
+
+// This page's approval out of date - its scale, or the job's cut / fill rows it carries (or should), changed since it
+// was approved (server _export_outdated) - said on the lasting side of the status bar, not only in the downloaded report
+// and bid sheet the client may also get (critic 20, MINOR-3; critic 21). The cut / fill rows' own note speaks first
+async function approvalOutdated(gen) {
+  const job = state.job, page = state.page;
+  // asked again after an approve and when the cut / fill rows' note goes (critic 22, RISK-1: the note cleared on any
+  // approve, even one that fixed nothing, and when a compute brought the rows back, while the downloads still said it);
+  // only the newest answer counts - one asked before an approve and answered after it showed a false OUT OF DATE
+  const seq = (state.outdatedSeq = (state.outdatedSeq || 0) + 1);
+  let j = null;
+  try { const r = await fetch(`/api/job/${job}/approved`); if (r.ok) j = await r.json(); } catch (e) { return; }
+  if (!j || seq !== state.outdatedSeq || gen !== state.gen || job !== state.job || page !== state.page) return;
+  // OUT OF DATE first; else the page's own note - its old Earthwork calculator work was removed (server.py _ew_removed_pages)
+  const why = (j.outdated && j.outdated[String(page)]) || (j.notes && j.notes[String(page)]) || "";
+  if (!why) {
+    // this page's approval stands (again): our note goes, another note stays
+    if (state.outdatedNote && $("sbCf") && $("sbCf").textContent === state.outdatedNote) { $("sbCf").textContent = ""; $("sbCf").title = ""; }
+    state.outdatedNote = "";
+    return;
+  }
+  if (state.cfLeft && state.cfLeft.reason) return;
+  const status = $("status");
+  if (!status || !status.parentNode) return;
+  let seg = $("sbCf");
+  if (!seg) {
+    seg = document.createElement("span");
+    seg.id = "sbCf"; seg.className = "sb-cf";
+    status.parentNode.insertBefore(seg, status);
+  }
+  seg.textContent = why + " · ";
+  seg.title = why;
+  state.outdatedNote = seg.textContent;
 }
 
 // ---------- sidebar ----------
@@ -1634,7 +1691,7 @@ function renderMiniLegend() {
     // so a footage here was a figure in the bid by construction. Now that
     // the eye and the takeoff mark are separate, a family can be drawn and
     // uncounted, and this became the one surface showing quantities without
-    // saying which kind: measured 2026-09-03 on Oncor C-03, the top row read
+    // saying which kind: measured 2026-09-03 on a substation sheet C-03, the top row read
     // "14.1k ft" while the tally below read 34.0k ft and did not include it.
     // The sidebar row and the line card both carry the mark; so does this.
     const counted = !!state.include.get(st.style_id);
@@ -1709,6 +1766,16 @@ function dimCheckFor(job, page, sc) {
   return null;
 }
 
+// A scale reading as the sheet head says it. A graphic bar's reading is the reader's own sentence with
+// the bar's measured number in it as measured, "graphic bar 0-80 ft over 143.9pt (1" = 40.0167', ticks)"
+// (scale_detect prints it with :g): that number is printed with two decimals at most, like every other
+// print of a scale since check 5A (cfScaleTxt). Only the print; the number in force keeps every
+// decimal. A printed caption is quoted as printed.
+function scaleSaid(sc) {
+  const t = String((sc && sc.text) || "");
+  if (!/^graphic bar /.test(t)) return t;
+  return t.replace(/(1" = )(\d+(?:\.\d+)?)'/, (m, a, v) => a + cfScaleTxt(v) + "'");
+}
 function renderSheetHead() {
   // The status bar's persistent half is the same set of facts this header
   // draws, so it repaints on exactly the same beats: every detect, every
@@ -1742,7 +1809,10 @@ function renderSheetHead() {
   // drawings are named by the printed number, but every filename and API
   // call in this tool is indexed - showing only one of the two is how
   // "page 4" has already meant two different sheets (CLAUDE.md §5).
-  const sheetNo = state.result && state.result.sheet_no;
+  // the page list's reading when the set is triaged (takeoff_engine/sheet_no.py: a lot sheet 3.0 was read "LOT910", a lot
+  // label), else the detection's: one number for one sheet on one screen
+  const tri = state.triage && state.triage.pages && state.triage.pages[state.page];
+  const sheetNo = tri ? tri.sheet_no : (state.result && state.result.sheet_no);
   meta.append(chip(sheetNo
     ? `${sheetNo} (page ${state.page + 1} of ${state.kinds.length})`
     : `Sheet ${state.page + 1} / ${state.kinds.length}`));
@@ -1775,23 +1845,27 @@ function renderSheetHead() {
       // person then accepted. It can never wear the corroborated colour: no
       // second source ever agreed with it, and the machine that read it is
       // the least trustworthy reader this app has.
-      meta.append(chip(sc.text + " — YOU PICKED AN UNCHECKED READING", "warn"));
+      meta.append(chip(scaleSaid(sc) + " — YOU PICKED AN UNCHECKED READING", "warn"));
     } else if (sc.typed_by_reviewer) {
       // A number a person typed has nothing behind it but their word. It can
       // never wear the corroborated colour, and it says whose it is
       // everywhere it is read - chip, banner, export, report PDF.
-      meta.append(chip(sc.text + " — SET BY HAND", "warn"));
+      meta.append(chip(scaleSaid(sc) + " — SET BY HAND", "warn"));
     } else if (sc.agrees === false) {
-      meta.append(chip(sc.text, "bad"));
-      meta.append(chip(`drawn bar says ${sc.bar_ft_per_paper_inch} ft/in` +
+      meta.append(chip(scaleSaid(sc), "bad"));
+      meta.append(chip(`drawn bar says ${cfScaleTxt(sc.bar_ft_per_paper_inch)} ft/in` +
         ` · ${sc.delta_pct}% apart — CHECK`, "bad"));
     } else if (sc.agrees === true) {
-      meta.append(chip(sc.text + " ✓ matches drawn bar", "ok"));
+      meta.append(chip(scaleSaid(sc) + " ✓ matches drawn bar", "ok"));
     } else {
       // one source only: honest, but not corroborated
-      meta.append(chip(sc.text + (sc.source === "ocr" ? " (read off a scan)" : ""),
+      meta.append(chip(scaleSaid(sc) + (sc.source === "ocr" ? " (read off a scan)" : ""),
         sc.source === "ocr" ? "warn" : "ok"));
     }
+    // where this page's scale stands against the sheet's review record (scaleRestore), said beside the scale and kept
+    // until the reviewer acts - the status line is transient and other writers overwrite it (critic 24, RISK-1)
+    const recChip = typeof scaleRecordChip === "function" ? scaleRecordChip() : null;
+    if (recChip) meta.append(chip(recChip, "warn"));
     // THE SECOND WITNESS: the dimensions the sheet prints, measured against
     // their own lines (server: /scale/dimensions, takeoff_engine.dimcheck).
     // It arrives after the head is painted and repaints it once; a sheet
@@ -1821,7 +1895,7 @@ function renderSheetHead() {
   // surfaces, one run, opposite answers. Running now wins, everywhere.
   const rs = runStateNow();
   meta.append(chip(rs.chip, rs.chipCls));
-  el.append(name, meta);
+  el.append(meta);
   renderScalePick(el);
   renderScaleTyped(el);
   // AFTER the type-it-yourself box, deliberately: suggestions are a shortcut
@@ -1849,7 +1923,7 @@ function renderSheetHead() {
 // DEFERRED, not fixed here - this run owns the confidence banner and was told
 // to leave the picker as it stands. The button tooltip below prints `count`
 // as "printed Nx". `count` is REGEX MATCHES, not printed captions, and runs
-// at exactly 2x: on Barn Landscaping engine page index 29 the 3/4" caption is
+// at exactly 2x: on a landscaping set's engine page index 29 the 3/4" caption is
 // printed at 3 sites and the tooltip advertises 6, and all 11 candidates
 // measured across engine page indices 29, 18 and 27 are 2x. The honest field
 // is the candidate's `sites`, which the engine now emits alongside `count`;
@@ -1904,7 +1978,9 @@ function renderScalePick(host) {
       });
       try { store.setItem(scaleKey(), String(c.ft_per_paper_inch)); } catch (e) { /* private mode */ }
       try { store.removeItem(scaleTypedKey()); } catch (e) { /* private mode */ }
+      scaleMarkSeen();
       setStatus(`scale set to ${(+c.ft_per_paper_inch).toFixed(2)} ft per inch — every quantity on this sheet recalculated`);
+      rowsFollowScale(false);                                    // the trench rows and the flooring rooms too
       renderSheetHead(); renderStyles(); renderAreas(); renderItemized();
       renderMiniLegend(); draw();
     };
@@ -1921,7 +1997,7 @@ function renderScalePick(host) {
 // scale, and wrong here - picking one leaves every sloped pipe measured with
 // the other axis exaggerated.
 //
-// SUGGESTED, NEVER APPLIED. Measured on Kayden Springs Unit 2 p39: the
+// SUGGESTED, NEVER APPLIED. Measured on a subdivision set p39: the
 // engine finds 1"=50' governing 100% of the linework and 1"=5' governing
 // 0.0%, because the ranking is region-scoped and a vertical scale governs no
 // REGION - it governs an axis. That 0%/100% split with the smaller reading
@@ -1932,7 +2008,7 @@ function renderScalePick(host) {
 //
 // The control applies one ratio to the WHOLE PAGE. On a plan-and-profile
 // sheet only the bottom graph carries two scales, so the plan half above it
-// gets divided down too. Measured on the delivered approve for Kayden Springs
+// gets divided down too. Measured on the delivered approve for a subdivision set
 // U2 engine page index 39 = printed sheet C5.2
 // (takeoff-jobs/d0e10205df40/p39_elements.json, 354 elements):
 //
@@ -2133,6 +2209,7 @@ function scaleTypedObj(sc, ft, text) {
   return Object.assign({}, sc || {}, {
     ft_per_paper_inch: ft,
     text: text,
+    source: "typed",                  // the sheet facts line prints the source; a typed scale said "(undefined)"
     agrees: null, delta_pct: null,
     picked_by_reviewer: true,
     typed_by_reviewer: true,
@@ -2156,7 +2233,7 @@ function scaleTypedObj(sc, ft, text) {
 // CONVENTIONS, and where they come from:
 //   * `1/4" = 1'-0"` is the architect's form: a quarter inch of paper is one
 //     foot of building, so 4 ft per paper inch. Read straight off every
-//     Beaumont and Thielen title block in this corpus.
+//     client title block of that kind in this corpus.
 //   * A bare number is FEET PER PAPER INCH, the unit this whole app is
 //     built on (server.py ApproveScale.ft_per_paper_inch,
 //     scale_detect.ScaleCandidate.ft_per_paper_inch).
@@ -2285,7 +2362,35 @@ function applyTypedScale(ft, text) {
     store.setItem(scaleTypedKey(), JSON.stringify({ ft, text }));
     store.removeItem(scaleKey());
   } catch (e) { /* private mode: this session still honours it */ }
+  scaleMarkSeen();
   scaleRepaint();
+}
+
+// WHICH RECORD A SAVED SCALE WAS SET AGAINST. A scale the reviewer types or picks here is saved with the stamp of the
+// review record this page held at that moment (scaleRestore takes it from GET .../scale and from every approve). On the
+// next load (a page switch and back, Restore, a reload) scaleRestore compares STAMPS, never clocks: the same stamp means
+// the record has not changed since the typing - the typing is newer, it stays (shown as not approved yet); another
+// stamp means the record changed after it - the record wins, the typing is dropped, said. A browser clock that is wrong
+// by hours cannot make an old typing beat a newer record, because no time is compared. A typing saved with no stamp
+// (before the page knew one, or by the page before this fix) counts as older than any record (critic 24, RISK-1).
+// The words beside the scale chip when the page's scale and the review record part ways, or null. Kept on the sheet
+// head (repainted on every scale change) until the reviewer acts: types, picks, puts back or approves.
+function scaleRecordChip() {
+  const sc = state.result && state.result.scale;
+  if (!sc) return null;
+  const rec = state.result._scaleRec, drop = state.result._scaleDropped;
+  if (drop && Math.abs(+sc.ft_per_paper_inch - drop.ft) < 1e-9)
+    return `your saved 1" = ${confFt(drop.saved)} ft was dropped: the review changed it after you set it`;
+  if (rec && Math.abs(+sc.ft_per_paper_inch - rec) > 1e-9)
+    return `not approved yet: the review says 1" = ${confFt(rec)} ft until you approve`;
+  return null;
+}
+function scaleSeenKey() {
+  return "scaleseen::" + (state.docName || "?") + "::p" + state.page;
+}
+function scaleMarkSeen() {
+  try { store.setItem(scaleSeenKey(), (state.result && state.result._scaleSeen) || ""); } catch (e) { /* private mode */ }
+  if (state.result) state.result._scaleDropped = null;     // the reviewer acted: the dropped-scale note has done its job
 }
 
 function renderScaleTyped(host) {
@@ -2343,6 +2448,7 @@ function renderScaleTyped(host) {
               { ft: +prev.ft_per_paper_inch, text: prev.text }));
           else store.removeItem(scaleTypedKey());
         } catch (e) { /* private mode */ }
+        scaleMarkSeen();
         scaleUndo.key = null; scaleUndo.scale = undefined;
         scaleTypedOpen = false;
         setStatus(`back to ${prevFt} ft per inch — ${whose}. Approve to make `
@@ -2447,10 +2553,10 @@ function renderScaleTyped(host) {
 // rather than promoting one, because promotion was measured confidently wrong
 // twice in one evening:
 //
-//   * Thielen ID-1.04: OCR ate the trailing 0" of `1/4" = 1'0"` and produced
+//   * An interior sheet ID-1.04: OCR ate the trailing 0" of `1/4" = 1'0"` and produced
 //     40 ft/in where the truth is 4. Ten times out on every length; volume
 //     moves with the SQUARE of scale, so a hundred times out in cubic yards.
-//   * Hurricane C.3.5 PRINTS THREE scales - HORIZ 1"=40', VERT 1"=10' and a
+//   * A civil sheet C.3.5 PRINTS THREE scales - HORIZ 1"=40', VERT 1"=10' and a
 //     key map at 1"=300'. Only the key map's OCR survived, and a sound ranker
 //     read that as an uncontested single: 7.5x wrong, silently. No filter
 //     over the recovered text can catch this, because the evidence that would
@@ -2514,7 +2620,7 @@ function sugWhere(c) {
 // (scale_detect.graphic_scale_bar) returns a reading or nothing, and records
 // nothing about bar geometry it found but could not label. So the honest
 // negative is "did not find one it could read" - never "there is no bar",
-// which this UI cannot know and was measured saying falsely (Hurricane
+// which this UI cannot know and was measured saying falsely (sheet
 // C.3.5 prints one). The positive arm is reachable only if the engine ever
 // carries a bar reading alongside an abstention; it exists so the sentence
 // is read off the data rather than assumed.
@@ -2532,7 +2638,7 @@ function scaleBarSentence() {
   // independently of the caption's own recogniser, and it CONTRADICTS the
   // reading - which is the whole reason the reading was not promoted. On
   // the six corpus pages that take this arm the refused values are 2x to
-  // 40x wrong (RC Ontario p10 offers 10 against a bar of 20; Hurricane p1
+  // 40x wrong (one set's p10 offers 10 against a bar of 20; another's p1
   // offers 1.0 against 40), so telling the operator nothing had been
   // checked would hide the one fact that should stop the click.
   const why = (sg && sg.pick && sg.pick.why) || "";
@@ -2592,6 +2698,7 @@ function applySuggestedScale(c) {
     store.setItem(scaleKey(), String(+c.ft_per_paper_inch));
     store.removeItem(scaleTypedKey());
   } catch (e) { /* private mode: this session still honours it */ }
+  scaleMarkSeen();
   scaleRepaint();
 }
 
@@ -2649,7 +2756,7 @@ function renderScaleSuggest(host) {
   // stated rather than implied by a colour.
   //
   // Every sentence here says what the ENGINE knows, never what the DRAWING
-  // has. Measured 2026-09-01 on Hurricane C.3.5 (page index 6): this block
+  // has. Measured 2026-09-01 on a civil sheet C.3.5 (page index 6): this block
   // told the operator the sheet had NO drawn bar backing the reading, on a
   // sheet that PRINTS a 0/40'/80' bar directly above the caption; the
   // engine had failed to read it, not found it absent - and that bar is
@@ -2687,46 +2794,100 @@ function renderScaleSuggest(host) {
   host.appendChild(row);
 }
 
+// THE ROWS STAND ON THE SCALE IN FORCE IN THIS SEAT. A scale typed or picked belongs to the seat
+// that set it until Approve; the calculator rows belong to the job. So rows restored from the
+// job may have been measured at another seat's scale (check 5B, 2026-09-27: one seat pressed
+// 8.00 and did not approve; a second seat, its sheet at 1/4", showed Carpet 1,365 SF where its
+// own scale gives 474 - with nothing on screen saying so). Flooring rooms carry the scale they
+// stand on and are measured again when it is not the one in force; trench runs are always
+// calculated again from their own points. `loaded` = called once as a page loads: it says so.
+function rowsFollowScale(loaded) {
+  // as a page loads the trench runs are calculated again only when the job's record says its
+  // rows stand on another scale (rows_scale, written with the rows); on a scale change, always
+  const was = +((state.calcSaved || {}).rows_scale), now = typeof flScreenScale === "function" ? flScreenScale() : null;
+  const moved = !loaded || (was > 0 && now > 0 && Math.abs(was - now) > 1e-9 * now);
+  if (moved && typeof trRecalcAdded === "function") trRecalcAdded();
+  const n = typeof flRescale === "function" ? flRescale() : 0;
+  if (loaded && n) {
+    const sc = state.result && state.result.scale;
+    setStatus(`${n} flooring room${n === 1 ? " was" : "s were"} measured at another scale in another session - `
+      + `shown at the scale in force here (${sc && sc.text ? sc.text : cfScaleTxt(sc && sc.ft_per_paper_inch) + " ft per inch"})`, "warn");
+  }
+  return n;
+}
+
 // Everything downstream of the scale, repainted. Same list the candidate
 // picker uses, so the two paths can never disagree about what is stale.
 function scaleRepaint() {
+  // the trench rows and the flooring rooms already in the takeoff follow the scale now in force
+  rowsFollowScale(false);
   renderSheetHead(); renderStyles(); renderAreas(); renderItemized();
   renderMiniLegend(); draw();
-  // Cut/fill does NOT follow a scale change - the surfaces are integrated
-  // server-side at whatever scale was in force when Calculate was pressed
-  // (see ewScaleStale). The warning banner existed for exactly this case but
-  // was only painted by the Calculate handler itself, so the natural order -
-  // Calculate, notice the lengths look wrong, correct the scale - repainted
-  // the stale cubic yards as priced rows with no banner at all. Volume moves
-  // with the SQUARE of the scale; a silent 2x here is 4x on every CY.
-  renderEwStale();
 }
 
-// Restore a scale a reviewer set on an EARLIER visit to this page. The
-// browser's own memory is a session Map (see `store`), so a reload forgets
-// it; the durable record is the server sidecar `p<N>_scale.json` that
-// approve writes, and GET .../scale was built to hand it back. A pick made
-// in THIS session is newer and wins, so the restore stands down when the
-// session already holds one.
+// THE SERVER IS THE ONE SOURCE OF A SHEET'S SCALE: its review record, the sidecar `p<N>_scale.json` that the approve
+// and the Cut / fill Scale card write (a pick, or a tombstone: back to the engine's reading). Asked on EVERY load and
+// reload, and whenever the Scale card is heard. A scale this browser saved (scaleMemApply: localStorage lasts for days)
+// that disagrees with a record on file is dropped, and that is said. It used to win without the server being asked: a
+// tab that never heard the Scale card (Open in a tab, a second tab, another seat) kept its old number through every
+// reload, and its next Approve wrote it over the reviewer's (critic 23, RISK-1). The record's stamp rides on the result
+// (`_scaleSeen`, per page by construction) and goes back with Approve, which the server refuses when the record changed
+// since and the number disagrees (_scale_seen_check). No record on file: no review decision - this browser's own pick
+// of a reading stands until it is approved.
 async function scaleRestore(gen) {
   const job = state.job, page = state.page;
-  let live = false;
-  try {
-    live = !!(store.getItem(scaleTypedKey()) || store.getItem(scaleKey()));
-  } catch (e) { live = false; }
-  if (live) return;
   let j;
   try {
     const r = await fetch(`/api/job/${job}/page/${page}/scale`);
     if (!r.ok) return;
     j = await r.json();
   } catch (e) { return; }
-  if (gen !== state.gen || !state.result) return;   // page changed under us
+  if (gen !== state.gen || !state.result || job !== state.job || page !== state.page) return;   // page changed under us
+  state.result._scaleSeen = (j && typeof j.stamp === "string") ? j.stamp : null;
   const rv = j && j.reviewer;
-  const ft = rv && scaleSane(rv.ft_per_paper_inch);
+  // the review's number: its pick, else - a record that went back to the engine's reading - the engine's
+  let ft = rv && scaleSane(rv.ft_per_paper_inch);
+  const backToEngine = !ft && !!(j && j.recorded) && !!(j.engine && scaleSane(j.engine.ft_per_paper_inch));
+  if (backToEngine) ft = scaleSane(j.engine.ft_per_paper_inch);
+  state.result._scaleRec = ft || null;        // the review's number, for the chip's "not approved yet"
   if (!ft) return;
   const sc = state.result.scale;
   if (sc && Math.abs(+sc.ft_per_paper_inch - ft) < 1e-9) return;
+  // what this browser had saved for the page, and the record's stamp it was set against (scaleMarkSeen)
+  let saved = null, savedSeen = "";
+  try {
+    const t = JSON.parse(store.getItem(scaleTypedKey()) || "null");
+    saved = (t && scaleSane(t.ft)) || scaleSane(parseFloat(store.getItem(scaleKey()) || ""));
+    savedSeen = store.getItem(scaleSeenKey()) || "";
+  } catch (e) { saved = null; }
+  if (saved && sc && Math.abs(+sc.ft_per_paper_inch - saved) < 1e-9 && savedSeen && savedSeen === j.stamp) {
+    // set here AFTER the record this page holds now: the newer one stays, on screen and in the next Approve, and the
+    // chip says it is not approved yet (critic 24, RISK-1: a page switch or Restore put the older record back)
+    renderSheetHead();
+    return;
+  }
+  // the record changed after it was set (or it carries no stamp): the review wins, the saved scale is dropped
+  try {
+    store.removeItem(scaleTypedKey());
+    store.removeItem(scaleKey());
+    store.setItem(scaleSeenKey(), j.stamp || "");
+  } catch (e) { /* private mode */ }
+  state.result._scaleDropped = saved && Math.abs(saved - ft) > 1e-9 ? { saved, ft } : null;
+  const said = saved && Math.abs(saved - ft) > 1e-9
+    ? `This sheet's scale is 1" = ${confFt(ft)} ft, from its review. The scale this browser had saved `
+      + `(1" = ${confFt(saved)} ft) was dropped.`
+    : `scale restored from this sheet's review record: ${(+ft).toFixed(2)} ft per inch, `
+      + (backToEngine ? "the engine's reading" : "set by the reviewer");
+  if (backToEngine) {
+    // the engine's own reading, as the detection holds it (the saved scale had replaced it on screen)
+    state.result.scale = Object.assign({}, sc || {}, {
+      ft_per_paper_inch: ft, text: j.engine.text || `1" = ${confFt(ft)}'`, source: j.engine.source || (sc && sc.source),
+      agrees: null, delta_pct: null, picked_by_reviewer: false, typed_by_reviewer: false, from_suggestion: false,
+    });
+    setStatus(said, saved ? "warn" : undefined);
+    scaleRepaint();
+    return;
+  }
   // Was it typed, or picked off a printed caption? The sidecar does not say,
   // and it must not be invented: if the value matches a reading the engine
   // found, restore it as a PICK; otherwise no caption on this sheet says it,
@@ -2760,8 +2921,7 @@ async function scaleRestore(gen) {
     try { store.setItem(scaleTypedKey(), JSON.stringify({ ft: ft, text: text })); }
     catch (e) {}
   }
-  setStatus(`scale restored from this page's approved record: `
-    + `${(+ft).toFixed(2)} ft per inch, set by the reviewer`);
+  setStatus(said, saved ? "warn" : undefined);
   scaleRepaint();
 }
 
@@ -2859,7 +3019,7 @@ function confTagCheck() {
 // MATCHES, not captions printed on paper - _scan runs several patterns over
 // the same text - so no branch below turns it into "printed N times". Each
 // candidate now also carries `sites`, which IS the printed-location count:
-// on all 11 candidates of Barn Landscaping engine page indices 29, 18 and 27,
+// on all 11 candidates of a landscaping set's engine page indices 29, 18 and 27,
 // `sites` equals pymupdf page.search_for's own count of the caption on the
 // page and `count` is exactly 2x it (A8_DEFERRED_picker_tooltip_counts.png).
 // `sites` is still not quoted below - the governed SHARE is the story, and a
@@ -2893,13 +3053,13 @@ function confTagCheck() {
 // the 37 the two measures do not even agree WHICH scale wins - at reported
 // margins of 1.02 and 2.33. So:
 //   - the 1.02 page is caught here;
-//   - the 2.33 page (Town Pump 007^S-01 New Foundation p0, reported 2.33,
+//   - the 2.33 page (a foundation sheet 007^S-01 p0, reported 2.33,
 //     1.09 the other way on chains) is NOT, and nothing below 2.35 would
 //     catch it - at which point "barely leads" would be firing on 2:1 leads
 //     and claim (1) would be false. Left uncaught deliberately;
 //   - two more read clear here and thin on chains (061^S2.1 p0 1.75 -> 1.38,
-//     Barn Landscaping p27 1.93 -> 1.45), and two read thin on this side of
-//     nothing and clearer on chains (the Church p3 pair, 1.76 -> 1.93).
+//     the landscaping set p27 1.93 -> 1.45), and two read thin on this side of
+//     nothing and clearer on chains (a house set's p3 pair, 1.76 -> 1.93).
 // That residue is why the clear arm below states the mechanism and both
 // shares instead of asserting confidence, and why BOTH arms stay amber. The
 // threshold moves emphasis, never the colour, and never which scale is in
@@ -3242,7 +3402,7 @@ function confLines() {
   // plausible elevation. See takeoff_engine/earthwork.read_spot_datum.
   const sp = cf && cf.spots;
   if (sp && sp.n) {
-    // A sheet can disagree WITH ITSELF: Barn C3.3's legend note reads 7605.25
+    // A sheet can disagree WITH ITSELF: a civil sheet C3.3's legend note reads 7605.25
     // while its own printed contours sit at 7720-7735. The old banner called
     // the note "the drafter's statement" unconditionally and coloured it
     // green - over 171 elevations that were exactly 100 ft low. When the two
@@ -3294,7 +3454,7 @@ function confLines() {
         + `elevations at all.</b> The sheet prints them shortened and there `
         + `is nothing readable on the page to say what the missing `
         + `hundreds are. Type `
-        + `the base elevation in the Earthwork panel; until then those `
+        + `the base elevation in the Cut / fill panel (Datum card); until then those `
         + `points carry no height.`);
   }
 
@@ -3391,7 +3551,7 @@ function renderConfidence() {
   // A verdict is only a verdict once the checks it depends on have answered.
   // While /confidence is outstanding the banner starts UNRESOLVED and can
   // only move toward green from there; it never opens on a claim it has to
-  // take back. Measured before this: Barn Civil engine p4 painted "conf ok /
+  // take back. Measured before this: a civil set's engine p4 painted "conf ok /
   // CORROBORATED" at t=210 ms and dropped to "conf warn / check first" at
   // t=1373 ms - 1.16 s warm, 2.7 s cold - labelling a page whose 104
   // elevations rest on the consensus guess as corroborated. 5 of the 182
@@ -3413,7 +3573,7 @@ function renderConfidence() {
 }
 
 // ---------- CHECK THESE: the confidence-ranked review queue ---------------
-// The style list on a civil sheet runs to 280 undifferentiated rows (Barn
+// The style list on a civil sheet runs to 280 undifferentiated rows (e.g.
 // C3.0, engine page index 2 = printed sheet 3), and a list with no opinion
 // about which rows matter moves the checking work onto the operator instead
 // of removing it (EXCAVATION-PLAN.md section 7 item 2). This panel lists the
@@ -3451,7 +3611,7 @@ const CK_CAP = 12;
 
 // A style whose welded-gap + picked-up-ink share exceeds this fraction of
 // its footage is queued: a quarter of the length being paper the drafter
-// never inked is past what routine stitching produces (Kayden C5.1's whole
+// never inked is past what routine stitching produces (one sheet C5.1's whole
 // sheet measures 2.27% welded; its worst billable layer 6.10%), so 25%
 // marks a style whose number is substantially inferred rather than drawn.
 const CK_WELD_FRAC = 0.25;
@@ -3552,7 +3712,7 @@ function ckDrops(saved, chainIds, styleIds) {
 // promote (scaleSuggestions().length). It says what the ENGINE did - read
 // captions it will not stand behind, or read none - and never what the
 // DRAWING has or lacks, which nothing in this UI can know. Measured
-// 2026-09-01 on Hurricane C.3.5 (page index 6): the sheet prints THREE
+// 2026-09-01 on a civil sheet C.3.5 (page index 6): the sheet prints THREE
 // scales and a 0/40'/80' bar, the engine recovers one caption (the key
 // map's) as an abstained reading, and the banner, this queue and the areas
 // card each told the operator the SHEET had no scale. Shared by all three
@@ -3660,13 +3820,12 @@ function ckBuild(inp) {
   // ---- the spot-elevation datum: worth 100 ft per elevation -------------
   const dt = inp.datum || { state: "pending" };
   if (dt.state === "checked" && dt.conflict) {
+    const notes = (dt.notes || []).map((d) => ckDec(d[0]) + " = " + ckDec(d[1]) + " ft");
     out.push({ id: "datum", sev: "warn", w: totalPt * CK_W_PAGE,
-      head: "The sheet disagrees with itself about the elevation datum.",
-      text: "Its own note reads " + ckDec(dt.declared) + " ft while "
-        + dt.bandN + " printed elevation" + (dt.bandN === 1 ? " sits" : "s sit")
-        + " in the " + ckDec(dt.bandBase) + " ft band - a wrong pick moves "
-        + "every cut/fill volume by the difference. Open Earthwork and check "
-        + "one printed elevation by eye.",
+      head: "The sheet prints datum notes that disagree.",
+      text: notes.join(" and ") + (dt.used ? " (using " + ckDec(dt.used[0]) + " = " + ckDec(dt.used[1]) + " ft)" : "")
+        + " - a wrong pick moves every cut/fill volume by the difference. "
+        + "Open Cut / fill and type the one that applies in the Datum card.",
       act: { t: "ew" } });
   }
   const sp = inp.spots || { state: "pending" };
@@ -3677,17 +3836,17 @@ function ckBuild(inp) {
         + " spot elevations carry no height.",
       text: "The sheet prints them shortened and nothing readable on the "
         + "page says what the missing hundreds are - they stay out of every "
-        + "volume until a base elevation is typed in Earthwork.",
+        + "volume until a base is typed in Cut / fill (Datum card).",
       act: { t: "ew" } });
   }
   if (dt.state === "pending" || sp.state === "pending")
     pending.push("Elevation checks have not answered yet - where each spot "
       + "elevation's base height came from is still being read off the page "
-      + "(earthwork not opened; the page reader runs on its own).");
+      + "(the sheet has not been read in Cut / fill yet).");
   else if (dt.state === "failed" || sp.state === "failed")
     pending.push("Elevation checks could not run - the page reader did not "
       + "answer, so nothing here has ruled out a guessed datum. Reload the "
-      + "sheet, or open Earthwork to read the elevations directly.");
+      + "sheet, or open Cut / fill to read the elevations directly.");
 
   // ---- saved operator inputs that no longer apply ------------------------
   const dr = inp.drops || { state: "pending" };
@@ -3696,11 +3855,13 @@ function ckBuild(inp) {
       ? " (the engine has changed since they were saved)" : "";
     if (dr.ew > 0)
       out.push({ id: "drops:ew", sev: "warn", w: totalPt * CK_W_DROPS,
-        head: dr.ew + " saved earthwork input" + (dr.ew === 1 ? "" : "s")
-          + " no longer match" + (dr.ew === 1 ? "es" : "") + " this detection.",
-        text: "Contour or boundary picks made on an earlier detection"
-          + sig + " cannot be applied, and any volume they fed needs "
-          + "re-checking - open Earthwork to see what survives.",
+        head: dr.ew + " saved input" + (dr.ew === 1 ? "" : "s") + " of the old Earthwork calculator no longer match"
+          + (dr.ew === 1 ? "es" : "") + " this detection.",
+        // that calculator is gone: its inputs are kept on record only, and nothing here reads them (critic legacy-1,
+        // MINOR-4: the words sent the estimator to Cut / fill "to see what survives")
+        text: "Contour or boundary picks made on an earlier detection" + sig + " belong to the old Earthwork "
+          + "calculator, which is gone; they are kept on record only. Dirt rows it made say 'from the old Earthwork "
+          + "calculator' - to update them, in Cut / fill: compute, Add to takeoff, then Approve.",
         act: { t: "ew" } });
     if (dr.tr > 0)
       out.push({ id: "drops:tr", sev: "warn", w: totalPt * CK_W_DROPS,
@@ -3724,11 +3885,15 @@ function ckBuild(inp) {
   } else {
     for (const mk of inp.marks) {
       if (typeof mk.sched !== "number" || mk.sched === mk.n) continue;
+      // a schedule read on another sheet counts the whole set: one sheet holding fewer is
+      // no contradiction (the total is checked in Whole job); more than the schedule is one
+      if (mk.setWide && mk.n < mk.sched) continue;
       out.push({ id: "sym:" + mk.code, sev: "warn",
         w: totalPt * CK_W_SCHED + Math.abs(mk.n - mk.sched),
         head: mk.code + ": counted " + mk.n + ", the schedule says "
           + mk.sched + ".",
-        text: "The sheet's own schedule contradicts the geometric count - "
+        text: (mk.setWide ? "The set's schedule (on another sheet) gives fewer than this one sheet holds - "
+                          : "The sheet's own schedule contradicts the geometric count - ")
           + "one of the two is wrong. Hover the row in Counts to see every "
           + "counted instance.",
         act: { t: "sym" } });
@@ -3741,7 +3906,7 @@ function ckBuild(inp) {
     if (!s.included || !(s.pt >= floor)) continue;
     // Unnamed AND unfiled: no legend row matched it, the drafter gave it no
     // usable layer (empty, or AutoCAD's default "0"), and the operator has
-    // not named it. On Barn C4.0, 38.8% of the footage had no name at all
+    // not named it. On a civil sheet C4.0, 38.8% of the footage had no name at all
     // (EXCAVATION-PLAN.md section 15 item 14) - footage that reaches the
     // priced takeoff under a pattern string.
     const leaf = (s.layerLeaf || "").trim();
@@ -3858,24 +4023,17 @@ function ckCollect() {
   const tc = confTagCheck();
   const tag = tc ? { agrees: tc.agrees, implied: tc.implied,
                      ratio: tc.ratio, n: tc.tc.n_matched } : null;
-  // datum + spots: the earthwork suggest payload when the panel has been
-  // opened, else the /confidence payload, else pending/failed. Item 3 and
-  // item 5 of the queue spec, one truth each, never both counted twice.
-  const dj = (state.ew && state.ew.datum)
-    || (state.conf && state.conf.spots && state.conf.spots.datum) || null;
-  const checkedSrc = !!(state.ew || state.conf);
-  const dstate = checkedSrc ? "checked" : (state.confErr ? "failed" : "pending");
-  const datum = { state: dstate, conflict: !!(dj && dj.conflict),
-    declared: dj && dj.declared, bandBase: dj && dj.band_base,
-    bandN: (dj && dj.band_n) || 0 };
-  let spots = { state: dstate, n: 0, unresolved: 0 };
-  if (state.ew && Array.isArray(state.ew.spots)) {
-    spots = { state: "checked", n: state.ew.spots.length,
-      unresolved: state.ew.spots.filter(g => !g.resolved).length };
-  } else if (state.conf && state.conf.spots) {
-    spots = { state: "checked", n: state.conf.spots.n || 0,
-      unresolved: state.conf.spots.unresolved || 0 };
-  }
+  // datum + spots: the cut / fill engine's own reading of this sheet, through
+  // /confidence ({state: pending | checked | failed} each) - pending until the
+  // sheet has been read in Cut / fill. Item 3 and item 5 of the queue spec,
+  // one truth each, never both counted twice.
+  const fallback = state.confErr ? "failed" : "pending";
+  const dj = (state.conf && state.conf.datum) || null;
+  const datum = { state: (dj && dj.state) || fallback, conflict: !!(dj && dj.conflict),
+    used: dj && dj.used, notes: (dj && dj.notes) || [], off: !!(dj && dj.off) };
+  const sj = (state.conf && state.conf.spots) || null;
+  const spots = { state: (sj && sj.state) || fallback, n: (sj && sj.n) || 0,
+    unresolved: (sj && sj.unresolved) || 0 };
   let drops = { state: state.calcSaveBroken ? "failed" : "pending",
                 ew: 0, tr: 0, sigChanged: false };
   if (state.calcSavedLoaded) {
@@ -3892,7 +4050,8 @@ function ckCollect() {
   const marks = state.sym
     ? state.sym.filter(g => (g.name || "").trim()
                             && g.schedule_qty !== undefined)
-        .map(g => ({ code: g.name.trim(), n: g.n, sched: g.schedule_qty }))
+        .map(g => ({ code: g.name.trim(), n: g.n, sched: g.schedule_qty,
+                     setWide: typeof symSetWide === "function" && symSetWide() }))
     : null;
   return { totalPt: totalPt, ftPerIn: sc ? sc.ft_per_paper_inch : null,
            styles: styles, scale: scale, tag: tag, datum: datum,
@@ -4032,8 +4191,7 @@ function ckGo(e) {
     const el = $("sheetHead");
     if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
   } else if (a.t === "ew") {
-    if ($("ewPanel").hidden) $("ewBtn").onclick();
-    else $("ewPanel").scrollIntoView({ block: "start", behavior: "smooth" });
+    cfOpen();                       // the cut / fill engine answers what the earthwork panel used to
   } else if (a.t === "tr") {
     if ($("trPanel").hidden) $("trBtn").onclick();
     else $("trPanel").scrollIntoView({ block: "start", behavior: "smooth" });
@@ -4063,11 +4221,11 @@ $("ckHead").querySelector("h2").onclick = () => ckSetCollapsed(!state.ckCollapse
 // label OVERWRITES the layer-derived name (detect_page's
 // `label = _legend_labels.get(sid, label)`), so on a row whose legend match
 // is wrong the layer is the only surviving evidence that it is wrong - and
-// until this it was not on screen anywhere. Barn Civil engine page index 12
+// until this it was not on screen anywhere. A civil set's engine page index 12
 // = printed sheet 13 = C4.3 emits style 106, 23 chains / 380.9 LF, layer
 // `BR FND - BARN EAST|A-WALL`, labelled `PROPOSED PVC SURFACE STORM DRAIN
 // PIPE (legend)` and ticked on: at the $50/LF rate on the client's own
-// Estimate #853 that is $19,045 of foundation wall priced as pipe, with
+// estimate that is $19,045 of foundation wall priced as pipe, with
 // nothing on the row saying A-WALL. Isolating the style on the canvas draws
 // the building footprint, not the pipe
 // (out/verify/2026-08-23/stylelayer/PLATE-2-app-vs-source-it-is-a-wall.png).
@@ -4103,7 +4261,7 @@ function layerTail(lay) {
 // that arrives through an external reference with the source drawing's name,
 // so `A|B` is layer B seen through xref A. layerTail() prints "…B", which
 // makes a bare B and an xref'd B indistinguishable on screen - and those two
-// are routinely different things: on Kayden Springs U2 sheet 39 the bare
+// are routinely different things: on a subdivision set's sheet 39 the bare
 // C-U2-SSWR-LAT is two NTS lot details, the xref'd one is the actual laterals.
 function layerSplit(lay) {
   const s = String(lay);
@@ -4112,9 +4270,9 @@ function layerSplit(lay) {
 }
 
 // ======================= operator-declared trade scope =====================
-// The engine measures everything drawn. On Beaumont's Barn Civil that is
+// The engine measures everything drawn. On a client's residential civil set that is
 // 697,036 ft of default-on linework across 12 scaled sheets against a bid
-// (Beaumont Excavating Estimate #853) whose entire linear scope is 7,248 LF -
+// (the excavator's own estimate) whose entire linear scope is 7,248 LF -
 // 96x more line than the job bills. Nothing in the document says which of it
 // is the operator's, because a drawing does not know who is reading it. So
 // the operator says, and this filters on what they said.
@@ -4135,7 +4293,7 @@ function layerSplit(lay) {
 //   material  a schedule row's MATERIAL cell. NOTHING PRODUCES THIS TODAY -
 //             `/symbols/suggest` returns codes, not schedule rows. The branch
 //             exists because these tokens are only meaningful against that
-//             cell and must never be tried against a layer name: Beaumont has
+//             cell and must never be tried against a layer name: one client has
 //             77 style rows on `BG-L-Steel Retaining`, a landscape edging
 //             layer, which a loose STEEL token would read as a hollow-metal
 //             door.
@@ -4150,7 +4308,7 @@ function layerSplit(lay) {
 //   * the layer tokens are strings THIS corpus prints - A-DOOR, A-DOOR-GLAZ,
 //     A-DOOR-FRAM, A-GLAZ, P1-BLDG-DOORS, C-BLDG-DOOR, over 38 style rows in
 //     the 115 cached results.
-//   * the material tokens are cells printed in Mission Bell's own
+//   * the material tokens are cells printed in a client set's own
 //     "Window - Storefront - Door schedules.pdf" (dumped verbatim at
 //     out/verify/2026-08-22/billscope/SCHEDULES.txt), and the split between
 //     them - VINYL / ALUM / GLASS is a glazed leaf, STEEL / HM / SC,WOOD is
@@ -4186,7 +4344,7 @@ const SCOPE_TOKENS = {
     label: ["PAVEMENT", "PAVING", "CURB", "SIDEWALK", "CONCRETE", "ASPHALT",
       "ROAD", "DRIVE", "GUTTER", "FLATWORK", "APRON", "EDGE OF"],
     material: [] },
-  // Split out of "Structures" on 2026-08-24. Jeff Ellis (ECI Foundations) was
+  // Split out of "Structures" on 2026-08-24. A foundation contractor was
   // asked in the demo which trade he needed and answered "Footing and
   // foundation" - and the filter built to narrow a sheet to HIS work could not
   // express his work. Structures held FOOTING, FTG, FOUNDATION, PIER and SLAB
@@ -4253,7 +4411,7 @@ function scopeTradesNamed(kind, text) {
 //    witness says somebody else. A contradiction never hides.
 //
 // 2. Not every witness may hide. `mayHide` is false for anything read by OCR
-//    off a scan. The alternative was measured on Bill's Mission Bell answer
+//    off a scan. The alternative was measured on a client's marked-up answer
 //    key: reading each bubble independently at 8x, one of his 283 detected
 //    openings reads as a scheduled non-glazed door, so letting an OCR'd code
 //    set a row aside costs one real opening in 285 with no symptom
@@ -4412,7 +4570,7 @@ function scopeApply() {
   if (!state.result) { state.scopeKeep = new Set(); state.scopeOffBy = new Set(); return; }
   const rec = scopeRec();
   // `keep` and `offBy` are both page state keyed on style_id, not on
-  // styleFp: the fingerprint is NOT unique (Barn Civil C3.0's 280 style rows
+  // styleFp: the fingerprint is NOT unique (a civil sheet C3.0's 280 style rows
   // collapse to 194 fingerprints), and keyed on it a put-back of one 25.0k ft
   // row returned two rows and 25.5k ft. Only `trades` and `showAside` - the
   // declaration itself - are document-scoped.
@@ -4426,7 +4584,7 @@ function scopeApply() {
   // lets the bar quote a footage that is genuinely IN the takeoff.
   //
   // Keyed on style_id, NOT on styleFp. The fingerprint is not unique: on
-  // Barn Civil C3.0 the sheet's 280 style rows collapse to 194 distinct
+  // a civil sheet C3.0 the sheet's 280 style rows collapse to 194 distinct
   // fingerprints, so restoring by fingerprint ticked 39 rows back on that
   // this filter had never touched (measured live: ownerOn 204 where the
   // detector had ticked 165). style_id is unique within a page, and the set
@@ -4478,7 +4636,7 @@ function scopeKeepRow(s, on) {
   if (on) state.scopeKeep.add(s.style_id); else state.scopeKeep.delete(s.style_id);
   // Handing a kept row BACK to the filter has to tick it on first, or the
   // filter never records that IT is the reason the row is off and "show
-  // everything" leaves it behind. Measured live on Barn Civil C3.0 before
+  // everything" leaves it behind. Measured live on a civil sheet C3.0 before
   // this line existed: put style 209 back (25.0k ft), hand it back to the
   // filter, then clear the declaration - the sheet returned 153.0k ft where
   // it started at 178.0k, one row and 25.0k ft short, with nothing on screen
@@ -4620,7 +4778,7 @@ function renderScopeBar() {
   // Its OWN LINE, not a chip in the header. The header is a flex row in a
   // 330px column already holding the title, "show everything" and the close
   // control; a fourth item there overlapped the title outright (measured on
-  // Barn C3.0, out/verify/2026-09-01/settings-page).
+  // a civil sheet C3.0, out/verify/2026-09-01/settings-page).
   if (declared && rec.from === "default") {
     const src = document.createElement("div");
     src.className = "scope-src";
@@ -4752,7 +4910,7 @@ function renderSymScope() {
 // parts of the sheet, because that is the shape a typical-detail block makes -
 // same layer name, own scale, parked in a corner.
 //
-// Measured on Kayden Springs U2 sheet 39: the itemized panel reads
+// Measured on a subdivision set's sheet 39: the itemized panel reads
 // `C-U2-SSWR-LAT 79 lines 3913.6 ft` while the plan holds 71 lines / 3,308 ft.
 // The surplus is eight lines inside TYPICAL 35' and 25' WIDE LOT - LATERAL
 // DETAIL, both captioned NTS, so they have no length at the sheet's scale at
@@ -4798,7 +4956,7 @@ function splitItems() {
   // NOTES: that label carries 14 styles across only 2 layers - the same
   // annotation layer drawn at a dozen widths, scattered over the sheet - and
   // each little blob is disjoint from the others, so every one of them lit up.
-  // 14 of the first build's 22 chips on Kayden sheet 39 were that, and a chip
+  // 14 of the first build's 22 chips on the subdivision sheet 39 were that, and a chip
   // on a 14-way split is useless anyway: there is nothing to go and look at.
   const byLabel = new Map();
   for (const [sid, e] of chains) {
@@ -4829,7 +4987,7 @@ function splitItems() {
     // The chip exists to point at ONE other place worth looking at. When an
     // item is spread over more than a handful of style rows, no row-level chip
     // can do that, and plain fragmentation is a likelier read than a hidden
-    // detail block. Measured: this cut takes Kayden sheet 39 from 22 flagged
+    // detail block. Measured: this cut takes the subdivision sheet 39 from 22 flagged
     // rows to 8 - exactly the four civil layers that are genuinely split - and
     // across 110 cached client sheets it drops the worst sheet from 89% of
     // rows to 10%, mean 5% to 2%, without changing the 67 sheets that flag
@@ -4854,9 +5012,9 @@ function splitItems() {
 //
 // THE SIZE OF THE PROBLEM, measured off the two sheets this was built
 // against (counts are style ROWS, from each row's own `class` field):
-//   Barn Civil C3.0 (engine page 2)  280 rows / 1,840 chains
+//   Civil set C3.0  (engine page 2)  280 rows / 1,840 chains
 //       solid 103 - dash1 81 - annotation 49 - dash2 41 - dash3 6
-//   Oncor C-04     (engine page 4)    65 rows /   589 chains
+//   Substation C-04 (engine page 4)    65 rows /   589 chains
 //       dash1 20 - annotation 14 - dash2 14 - solid 13 - dash-text 3 - dash3 1
 //
 // THREE GROUPS, NOT SIX. He said "annotation, or solid, or dashed" - three
@@ -4874,7 +5032,7 @@ function splitItems() {
 // claims - it renders only when the sheet actually has one, so a future
 // engine class can never fall out of the list unseen.
 //
-// This also fixes a documented oddity (webui/CHANGES.md "Known limits"):
+// This also fixes a documented oddity (docs/webui-CHANGES.md "Known limits"):
 // `annotation` was absent from the old CLASS_ORDER, so `indexOf` returned -1
 // and the sheet's 49 annotation rows sorted ABOVE its 103 solid ones. The
 // group order below is deliberate and is the operator's reading order:
@@ -5272,7 +5430,7 @@ function sgSyncHeads() {
 // A GROUP TICK MUST BE ABLE TO GIVE BACK WHAT IT TOOK.
 //
 // The header checkbox is three-state, and a real sheet usually starts
-// PARTIAL: Barn C3.0's Solid group is 37 of 103 ticked, 87.0k LF counted,
+// PARTIAL: a civil sheet C3.0's Solid group is 37 of 103 ticked, 87.0k LF counted,
 // and that mix is the operator's (or the engine's default) - work, either
 // way. The native cycle is indeterminate -> all on -> all off, and there is
 // no click that returns to 37 of 103. Measured 2026-09-01: one click moved
@@ -5467,7 +5625,7 @@ function sgHeadEl(g) {
     + "footage from the total and its lines from the sheet. To put the rows "
     + "away without changing a number, use the arrow on the left."
     + (g.filtered ? LF + LF + "Your filter is narrowing this group, so it "
-        + "acts on the " + g.nHit + " rows shown, not on all " + g.nAll + "."
+        + "acts on the " + nWord(g.nHit, "row") + " shown, not on all " + g.nAll + "."
       : "");
   // by KEY, not by this closure's `g`: between paint and click an edit can
   // have removed a family, and a bulk tick must never act on a stale list
@@ -5713,6 +5871,10 @@ function renderStyles() {
   box.innerHTML = "";
   $("approveBtn").disabled = !state.result;
   $("csvBtn").disabled = !state.result;
+  renderIncBtns();   // undo / engine's picks beside all / none (INC-BULK)
+  // the walls-once button offers the pairing until it has been asked for on
+  // this page; once answered, the "once" switches (or the reason) take over
+  if ($("onceAskBtn")) $("onceAskBtn").hidden = !state.result || !!state.twins;
   if (!state.result) return;
   const q = ($("styleSearch") ? $("styleSearch").value : "").trim().toUpperCase();
   // Roughly 23% of chains corpus-wide carry no CAD layer, and it is not
@@ -5880,7 +6042,7 @@ function renderStyles() {
     }
     if (state.legendNames.length) lab.setAttribute("list", "legendVocab");
     // A NAMED family had no title, and an <input> can neither wrap nor
-    // ellipsise - it just cuts. Measured 2026-09-01 on Oncor C-04: 8 of the
+    // ellipsise - it just cuts. Measured 2026-09-01 on a substation sheet C-04: 8 of the
     // 65 rows cut their own name, the worst losing 36%, and the only way to
     // read the rest was to click in and scroll. The unnamed path already
     // explained itself on this same attribute; the named one now shows the
@@ -5902,7 +6064,7 @@ function renderStyles() {
       (state.once && state.once.has(s.style_id) && onceFamily(s.style_id)
         ? `${fmtQty(styleLenPt(s))} once (${fmtQty(styleDrawnPt(s.style_id))} drawn) · `
         : `${fmtQty(styleLenPt(s))} · `)
-      + `${styleLiveCount(s.style_id)} lines · `));
+      + `${nWord(styleLiveCount(s.style_id), "line")} · `));
     // Same string as before, in a mono chip: `dash1 d18.0 g9.0` is what the
     // engine measured off the sheet, not what the thing is called.
     const eid = document.createElement("span");
@@ -6127,7 +6289,7 @@ function renderStyles() {
         + '" is the total of these ' + sp.parts.length + " CAD layers:" + LF + LF
         + sp.parts.map(p => "   " + (p === sp.me ? "→ " : "   ")
             + (p.layer || "(no layer)") + "   " + fmtQty(p.pt) + ", "
-            + p.n + " lines").join(LF)
+            + nWord(p.n, "line")).join(LF)
         + LF + LF
         + "They are different CAD layers and they sit in different parts of "
         + "the sheet. Often that is fine. Sometimes one of them is a TYPICAL "
@@ -6149,7 +6311,7 @@ function renderStyles() {
         }
         setStatus(state.isolate === null ? "isolate off"
           : "isolated: " + (next.layer || "(no layer)") + " — "
-            + fmtQty(next.pt) + ", " + next.n + " lines of the "
+            + fmtQty(next.pt) + ", " + nWord(next.n, "line") + " of the "
             + fmtQty(sp.total) + ' in "' + sp.label + '". Esc shows everything again');
         draw();
       };
@@ -6338,13 +6500,13 @@ function famRenderList(s) {
   if (row) row.after(wrap); else box.appendChild(wrap);
 }
 // ---------- filled AREA regions: the square-foot takeoff ----------
-// Hardscape is bought by the square foot - Beaumont's own Estimate #853
+// Hardscape is bought by the square foot - a client's own estimate
 // prices "Paths To Subgrade 22,796 SF", "Slab Prep 9,237 SF" (client
 // document, not an industry prior). A group here is one APPEARANCE (fill
 // colour + CAD layer); its regions are the measured things, and takeoff
 // rows reference the group rather than copying its number, so one region
 // can feed several priced rows at different depths or materials - which is
-// exactly how #853 bills the same 22,796 SF twice.
+// exactly how that estimate bills the same 22,796 SF twice.
 const AR_COLOR = "#00c2a8";
 const AR_HOT = "#ffd166";
 
@@ -6380,7 +6542,7 @@ const arFmt = (v, d = 0) =>
 //
 //   sf = pt2 / 72^2 * (ft per paper inch)^2      lf = pt / 72 * (ft per inch)
 //
-// Checked against the server's own output on Barn Civil printed sheet 3:
+// Checked against the server's own output on a civil set's printed sheet 3:
 // 822,301.2 pt2 at 30 ft/in gives 142,760.6 SF, and 3,957.3 pt gives 1,648.9
 // LF - both exact to the tenth the server reported.
 function arFpi() {
@@ -6388,14 +6550,16 @@ function arFpi() {
   const f = sc && sc.ft_per_paper_inch;
   return (typeof f === "number" && isFinite(f) && f > 0) ? f : null;
 }
+// typeof, not isFinite: isFinite(null) is TRUE, and a fill the engine refused
+// to measure (area_pt2 null, `unmeasured` says why) must give no number, never 0
 function arSf(o) {
   const f = arFpi();
-  return (f === null || !o || !isFinite(o.area_pt2)) ? null
+  return (f === null || !o || typeof o.area_pt2 !== "number" || !isFinite(o.area_pt2)) ? null
        : o.area_pt2 / 5184 * f * f;
 }
 function arLf(o) {
   const f = arFpi();
-  return (f === null || !o || !isFinite(o.perim_pt)) ? null
+  return (f === null || !o || typeof o.perim_pt !== "number" || !isFinite(o.perim_pt)) ? null
        : o.perim_pt / 72 * f;
 }
 // The regions in this group whose area the DRAFTER printed on the sheet, and
@@ -6439,7 +6603,7 @@ function arApplyItems() {
     if (qty === null || qty === undefined) continue;   // no scale: no number
     const base = arLabel(g);
     let label = row.label || (row.unit === "LF" ? `${base} (edge)` : base);
-    // The second row on one region is the POINT of this shape (#853 bills
+    // The second row on one region is the POINT of this shape (the estimate bills
     // the same 22,796 SF to subgrade and again for road base), but prices
     // and overrides are keyed by LABEL - two identical labels would share
     // one rate. Number the repeats so each can carry its own.
@@ -6534,6 +6698,20 @@ function renderAreas() {
   scaleBox.className = cls;
   scaleBox.innerHTML = parts.join("<br>");
 
+  // stored ticks that were not put back (arSelRestore): one line, until the
+  // user ticks a row or dismisses it
+  if (state.areaNote) {
+    const n = document.createElement("div");
+    n.className = "ar-note"; n.id = "arNote";
+    const t = document.createElement("span");
+    t.textContent = state.areaNote;
+    const x = document.createElement("button");
+    x.className = "mini"; x.textContent = "×"; x.title = "Dismiss";
+    x.onclick = (e) => { e.stopPropagation(); arNoteClear(); renderAreas(); };
+    n.append(t, x);
+    box.appendChild(n);
+  }
+
   for (const g of groups) {
     const row = document.createElement("div");
     row.className = "ar-row" + (state.areaInc.get(g.group_id) ? "" : " off");
@@ -6542,6 +6720,7 @@ function renderAreas() {
     cb.onclick = (e) => {
       e.stopPropagation();
       state.areaInc.set(g.group_id, cb.checked);
+      if (cb.checked) arNoteClear();
       if (cb.checked && !state.areaRows.some(r => r.group_id === g.group_id))
         state.areaRows.push({ group_id: g.group_id, unit: "SF" });
       renderAreas(); arApplyItems(); draw();
@@ -6576,6 +6755,16 @@ function renderAreas() {
     why.textContent = g.name_source || "unnamed";
     why.title = src;
     meta.appendChild(why);
+    if (g.n_unmeasured) {
+      // the engine would not measure one of these fills inside its cost guard:
+      // the row has no number at all rather than a sum that leaves it out
+      const u = document.createElement("span");
+      u.className = "ar-check bad"; u.textContent = "too complex to measure";
+      u.title = `${g.n_unmeasured} of these ${g.n} fills ${g.n_unmeasured === 1 ? "is" : "are"} `
+        + `${g.unmeasured || "too complex to measure"} - so this row has no square feet. `
+        + "Measure it by hand if it is takeoff.";
+      meta.appendChild(u);
+    }
     if (g.furniture) {
       const f = document.createElement("span");
       f.className = "ar-why none"; f.textContent = "sheet furniture";
@@ -6616,7 +6805,7 @@ function renderAreas() {
       + "bills more than once (subgrade, then road base).";
     add.onclick = (e) => {
       e.stopPropagation();
-      state.areaInc.set(g.group_id, true);
+      state.areaInc.set(g.group_id, true); arNoteClear();
       state.areaRows.push({ group_id: g.group_id, unit: "SF" });
       renderAreas(); arApplyItems(); draw();
     };
@@ -6627,7 +6816,7 @@ function renderAreas() {
       + "are priced by the foot, separately from the slab.";
     edge.onclick = (e) => {
       e.stopPropagation();
-      state.areaInc.set(g.group_id, true);
+      state.areaInc.set(g.group_id, true); arNoteClear();
       state.areaRows.push({ group_id: g.group_id, unit: "LF" });
       renderAreas(); arApplyItems(); draw();
     };
@@ -6673,8 +6862,21 @@ function renderAreas() {
   }
 }
 
+// the note goes once the user has acted on it, and the stored selection
+// forgets it at once (a reload must not bring a dismissed note back)
+function arNoteClear() {
+  if (!state.areaNote) return;
+  state.areaNote = "";
+  try {
+    const sel = arSelPayload();
+    if (sel.rows.length || sel.inc.length || sel.labels.length) store.setItem(areaSelKey(), JSON.stringify(sel));
+    else store.removeItem(areaSelKey());
+  } catch (e) { /* storage full */ }
+}
+
 $("arAllBtn").onclick = () => {
   const a = arData(); if (!a) return;
+  arNoteClear();
   for (const g of a.groups) {
     if (g.furniture) continue;
     state.areaInc.set(g.group_id, true);
@@ -6689,6 +6891,18 @@ $("arNoneBtn").onclick = () => {
 };
 
 // ---------- sheet legend (detector-read) ----------
+// A pen in words, the way the cut / fill Families card names one: "gray 0.0 · solid · w0.4" and its layer
+// when it has one (gray = how dark the ink is, 0 black to 1 white). The legend chips' tooltips said
+// "applied to style 11", the engine's own row number, which nothing on this screen shows (check 6A).
+function penWords(s) {
+  if (!s) return "";
+  const c = s.color || [0, 0, 0];
+  const gray = 0.299 * (+c[0] || 0) + 0.587 * (+c[1] || 0) + 0.114 * (+c[2] || 0);
+  const kind = s.class === "solid" ? "solid" : sgKeyOf(s.class) === "dashed" ? "dashed" : String(s.class || "");
+  const leaf = layerSplit(String(s.layer || "").trim()).leaf.trim();
+  return [`gray ${gray.toFixed(1)}`, kind || null, `w${Math.round((+s.width || 0) * 100) / 100}`,
+    leaf && leaf !== "0" ? "layer " + (leaf.length > 16 ? leaf.slice(0, 15) + "…" : leaf) : null].filter(Boolean).join(" · ");
+}
 function renderLegend() {
   const box = $("legendBox"), head = $("legendHead");
   box.innerHTML = ""; box.hidden = true; head.hidden = true;
@@ -6741,11 +6955,13 @@ function renderLegend() {
     const applied = (state.labels.get(sid) || "").startsWith(e.label);
     const chip = document.createElement("button");
     chip.className = "legend-chip" + (applied ? " applied" : "");
-    chip.appendChild(mkSample(state.result.styles.find(s2 => s2.style_id === sid)));
+    const sty = state.result.styles.find(s2 => s2.style_id === sid);
+    chip.appendChild(mkSample(sty));
     chip.appendChild(document.createTextNode(e.label));
+    const pen = penWords(sty) || "of this sheet";
     chip.title = applied
-      ? `applied to style ${sid}`
-      : `click to label style ${sid} "${e.label}" — hover to highlight`;
+      ? `applied to the pen ${pen}`
+      : `click to label the pen ${pen} "${e.label}" — hover to highlight`;
     chip.onmouseenter = () => hotFam([sid]);
     chip.onmouseleave = () => hotFamOff();
     chip.onclick = () => {
@@ -6766,8 +6982,82 @@ $("styleSearch").oninput = () => renderStyles();
 // in a field advertising "water, dash, solid". Set here rather than in
 // index.html so the promise and the filter that keeps it live in one file.
 $("styleSearch").placeholder = "Filter line types… (water, dash, solid, A-WALL)";
-$("allBtn").onclick = () => { for (const k of [...state.include.keys()]) setInclude(k, true); renderStyles(); renderChips(); renderItemized(); renderMiniLegend(); draw(); };
-$("noneBtn").onclick = () => { for (const k of [...state.include.keys()]) setInclude(k, false); renderStyles(); renderChips(); renderItemized(); renderMiniLegend(); draw(); };
+// INC-BULK-BEGIN -------------------------------------------------------------
+// "all" / "none" overwrote every keep / drop tick the engine chose, and only "Reset this
+// document" (which also deletes names and the detection) brought them back (UI verify
+// 2026-10-02 #7: 44.8k -> 71.0k ft). Two ways back now, beside the buttons:
+//   undo           - one step: the exact ticks (and their saved records) before the last
+//                    all / none / engine's picks;
+//   engine's picks - the keep / drop ticks this detection was seeded with (includeSeed), and
+//                    nothing else: names, colours and the detection stay as they are.
+// The engine's own keep / drop for a style, before any saved decision (loadResult's seed).
+function includeSeed(s) {
+  const white = s.color && Math.min(...s.color) > 0.92;
+  return (white || s.texture || s.class === "annotation" || sgSuggested(s)) ? false
+    : (s.class !== "solid" ? true : s.length_pt > 500);
+}
+function incSnapshot() {
+  const byId = new Map(((state.result && state.result.styles) || []).map(st => [st.style_id, st]));
+  const rows = [];
+  for (const sid of new Set([...state.include.keys(), ...byId.keys()])) {
+    const st = byId.get(sid);
+    let rec = null;
+    try { rec = st ? store.getItem(includeKey(st)) : null; } catch (e) { rec = null; }
+    rows.push([sid, state.include.has(sid) ? state.include.get(sid) : null, rec,
+               state.inheritedInc.has(sid) ? state.inheritedInc.get(sid) : null]);
+  }
+  return { job: state.job, page: state.page, rows };
+}
+function incRestore(snap) {
+  const byId = new Map(((state.result && state.result.styles) || []).map(st => [st.style_id, st]));
+  for (const [sid, on, rec, inh] of snap.rows) {
+    if (on === null) state.include.delete(sid); else state.include.set(sid, on);
+    if (inh === null) state.inheritedInc.delete(sid); else state.inheritedInc.set(sid, inh);
+    const st = byId.get(sid);
+    try { if (st) { if (rec === null) store.removeItem(includeKey(st)); else store.setItem(includeKey(st), rec); } }
+    catch (e) { /* private mode: the session still shows the ticks put back */ }
+  }
+}
+function incUndoUsable() {
+  const u = state.incUndo;
+  return !!(u && state.result && u.job === state.job && u.page === state.page);
+}
+function incSeedDiffers() {
+  return !!state.result && state.result.styles.some(st => !!state.include.get(st.style_id) !== includeSeed(st));
+}
+function renderIncBtns() {
+  const u = $("incUndoBtn"), s = $("incSeedBtn");
+  if (u) u.hidden = !incUndoUsable();
+  if (s) s.hidden = !incSeedDiffers();
+}
+function incBulk(label, pick) {
+  if (!state.result) return;
+  state.incUndo = incSnapshot();
+  for (const k of [...state.include.keys()]) {
+    const v = pick(k);
+    if (v !== undefined) setInclude(k, v);
+  }
+  incAfter(label + " - undo puts the ticks back");
+}
+function incAfter(msg) {
+  renderStyles(); renderChips(); renderItemized(); renderMiniLegend(); draw(); renderIncBtns();
+  if (msg) setStatus(msg);
+}
+$("allBtn").onclick = () => incBulk("all lines on", () => true);
+$("noneBtn").onclick = () => incBulk("all lines off", () => false);
+$("incSeedBtn").onclick = () => {
+  if (!state.result) return;
+  const seed = new Map(state.result.styles.map(st => [st.style_id, includeSeed(st)]));
+  incBulk("keep / drop back to the engine's picks (names and colors stay)", k => seed.get(k));
+};
+$("incUndoBtn").onclick = () => {
+  if (!incUndoUsable()) { state.incUndo = null; renderIncBtns(); return; }
+  incRestore(state.incUndo);
+  state.incUndo = null;
+  incAfter("ticks put back as they were");
+};
+// INC-BULK-END ---------------------------------------------------------------
+if ($("onceAskBtn")) $("onceAskBtn").onclick = twinsAsk;
 
 // ---------- color bulk-toggle chips ----------
 function renderChips() {
@@ -7034,14 +7324,19 @@ $("memBtn").onclick = (e) => {
       if (c.approved) bits.push(c.approved + " APPROVED SHEET EXPORT(S)");
       if (c.report) bits.push(c.report + " REPORT PDF");
       if (c.other) bits.push(c.other + " other cached file(s)");
+      // the cut / fill engine's store is named on its own line: it holds the
+      // datum, the limit and typed heights beside its reading cache and
+      // volumes, and a reset takes all of it so Analyze reads the sheet again
+      if (c.cutfill) bits.push(c.cutfill + " CUT / FILL file(s): datum, limit, typed heights, "
+        + "the sheet reading and the volumes");
       const willLose = bits.length
         ? "The service will delete, for this PDF:\n  \u2022 " + bits.join("\n  \u2022 ")
           + "\n\nso the next detect runs from scratch in front of whoever is watching."
         : "The service will delete every cached detection for this PDF so the "
           + "next detect runs from scratch.";
-      const warn = (c.approved || c.report)
-        ? "\n\nNOTE: approved exports and the report PDF are your WORK, not a "
-          + "cache. Download the report first if you still need it.\n"
+      const warn = (c.approved || c.report || c.cutfill)
+        ? "\n\nNOTE: approved exports, the report PDF and the cut / fill work are "
+          + "your WORK, not a cache. Download the report first if you still need it.\n"
         : "\n";
       if (!confirm("Reset \"" + (state.docName || "this document") + "\" for a fresh run?\n\n"
         + nDoc + " saved decision(s) for this PDF will be forgotten.\n\n"
@@ -7130,7 +7425,11 @@ if (memDropped)
     + "cleared: they applied to EVERY sheet of their document and did not "
     + "record which sheet you typed them on. Those rows now show the DETECTED "
     + "quantity. Re-enter any you still want, on the sheet it belongs to.", "err");
-function priceKey(label) { return "price:" + label; }
+// a grading zone's own row ("Site Cut – Island") is priced as Site Cut / Site Fill: one unit price
+// for the dirt, whatever zone it came out of (a zone's row used to carry no price at all, and the
+// job's cut and fill dollars dropped out of the total)
+function priceLabel(label) { const m = /^(Site Cut|Site Fill) – /.exec(label == null ? "" : String(label)); return m ? m[1] : label; }
+function priceKey(label) { return "price:" + priceLabel(label); }
 // quantity/footage override: the estimator's number beats the detector's.
 // PAGE-scoped and UNIT-scoped. The comment that stood here argued for exactly
 // that while the key did the opposite: "this sheet has 24 shear walls; another
@@ -7164,44 +7463,165 @@ function priceKey(label) { return "price:" + label; }
 // render (see arApplyItems), which is what makes them follow a scale
 // correction. Storing the numbers would freeze exactly what that fixed.
 function calcKey() { return docKey() + "::p" + state.page + "::calc"; }
+// THIS app's row cache: its own, versioned key (G6). v1.8.5 keeps a page's takeoff rows ONLY under calcKey(), so this
+// app never writes, rewrites or removes that key: it stays byte-for-byte as v1.8.5 left it at the upgrade, and an undo
+// to v1.8.5 finds exactly what it had. It is READ once, to migrate, when this key is absent (calcRestore)
+function calcKey2() { return docKey() + "::p" + state.page + "::calc2"; }
 function areaSelKey() { return docKey() + "::p" + state.page + "::areasel"; }
 
 function calcSave() {
   if (!state.result) return;
-  // `_area` rows are derived; never store them.
+  // the operator changed the rows on this page: from here on the job's
+  // record carries them (an untouched seat never writes an empty list over
+  // rows another seat may hold locally - see calcStatePayload)
+  state.calcRowsTouched = true;
+  // `_area` rows are derived; never store them. The trench tool's provenance
+  // (run / runOf / utility) and a row's kind travel with the row, so a
+  // restored run row is still keyed and still replaces its family on the bid
+  // sheet (bidRunReplacement).
   const rows = state.extraItems.filter(it => !it._area)
-    .map(it => ({ label: it.label, qty: it.qty, unit: it.unit }));
-  if (rows.length) store.setItem(calcKey(), JSON.stringify(rows));
-  else store.removeItem(calcKey());
+    .map(it => {
+      const o = { label: it.label, qty: it.qty, unit: it.unit };
+      if (Number.isInteger(it.run)) o.run = it.run;
+      // where the row came from ("cutfill": the Cut / fill engine's)
+      for (const k of ["runOf", "kind", "utility", "src"])
+        if (typeof it[k] === "string" && it[k]) o[k] = it[k];
+      return o;
+    });
+  // under this app's own key (calcKey2), as {core: 2, rows} - an empty list too, so "this page has no rows here" is
+  // never read as "not migrated yet". v1.8.5's key (calcKey) is never touched: a v1.8.5 tab cannot load this app's rows
+  // and write them back stripped of their marks (critic legacy-3, RISK-1), and an undo finds v1.8.5's rows as they were
+  // `ew_dropped`: this browser dropped old Earthwork calculator rows at the move (calcRestore); the record hears it once
+  store.setItem(calcKey2(), JSON.stringify({ core: 2, rows, ...(state.ewDropped ? { ew_dropped: true } : {}) }));
 
-  const sel = {
-    rows: state.areaRows.map(r => ({ group_id: r.group_id, unit: r.unit,
-                                     label: r.label })),
-    inc: [...state.areaInc].filter(([, v]) => v).map(([k]) => k),
-    labels: [...state.areaLabels],
-  };
-  if (sel.rows.length || sel.inc.length || sel.labels.length)
-    store.setItem(areaSelKey(), JSON.stringify(sel));
+  // area ticks and labels by a stable key, stamped with the detection they were made on (arSelPayload)
+  const sel = (state.areaRows.length || state.areaInc.size || state.areaLabels.size || state.areaNote)
+    ? arSelPayload() : null;
+  if (sel) store.setItem(areaSelKey(), JSON.stringify(sel));
   else store.removeItem(areaSelKey());
 }
 
 function calcRestore() {
   try {
-    const rows = JSON.parse(store.getItem(calcKey()) || "[]");
+    // this app's own key once it exists - v1.8.5's key is then never looked at again, so a stale v1.8.5 tab writing it
+    // after the upgrade changes nothing here; until then, ONE migration reads v1.8.5's rows (a bare array) and files them
+    // under this app's key (a build of this app from 2026-10-01 stored {core: 2, rows} under the old key: read too).
+    // The old Earthwork calculator's rows are not carried over (ewOldRow: the owner's decision, 2026-10-01): they count
+    // nowhere, and the page says so once (ew_dropped -> the record -> its note)
+    const mine = store.getItem(calcKey2());
+    const got = JSON.parse((mine !== null ? mine : store.getItem(calcKey())) || "[]");
+    const all = Array.isArray(got) ? got : (got && Array.isArray(got.rows) ? got.rows : null);
+    const rows = Array.isArray(all) ? all.filter((r) => !ewOldRow(r, mine === null)) : null;
+    state.ewDropped = !!(got && got.ew_dropped) || (Array.isArray(all) && rows.length < all.length);
+    if ((mine === null && Array.isArray(all) && all.length) || (mine !== null && Array.isArray(all) && rows.length < all.length))
+      store.setItem(calcKey2(), JSON.stringify({ core: 2, rows, ...(state.ewDropped ? { ew_dropped: true } : {}) }));
     if (Array.isArray(rows))
       for (const r of rows)
-        if (r && r.label && isFinite(r.qty))
-          state.extraItems.push({ label: String(r.label), qty: +r.qty,
-                                  unit: String(r.unit || "EA") });
+        if (r && r.label && isFinite(r.qty)) {
+          const it = { label: String(r.label), qty: +r.qty, unit: String(r.unit || "EA") };
+          if (Number.isInteger(r.run)) it.run = r.run;
+          for (const k of ["runOf", "kind", "utility", "src"])
+            if (typeof r[k] === "string" && r[k]) it[k] = r[k];
+          state.extraItems.push(it);
+        }
   } catch (e) { /* corrupt entry: start clean rather than throw */ }
   try {
     const sel = JSON.parse(store.getItem(areaSelKey()) || "null");
-    if (sel) {
-      state.areaRows = Array.isArray(sel.rows) ? sel.rows : [];
-      state.areaInc = new Map((sel.inc || []).map(k => [k, true]));
-      state.areaLabels = new Map(sel.labels || []);
-    }
+    if (sel) arSelRestore(sel);
   } catch (e) { /* same */ }
+}
+
+// ---------- area ticks: a stable key, and never onto another detection ----------
+// A tick used to be stored as the group's POSITION in the Areas list, and the
+// list is ordered by area. When the engine measures again (any engine change
+// re-detects every sheet), the positions reshuffle: on the 2026-10-02 fill-rule
+// fix 345 positions on 154 of 1,691 corpus pages came to name a DIFFERENT fill,
+// and a ticked row would have put that other fill's area into the takeoff
+// without a word. So a tick now carries (1) the detection it was made on
+// (engine_sig) and (2) a key for the fill itself; a tick from another detection
+// is not applied, and a key not on the page is dropped - never re-pointed. Both
+// say so in one line on the Areas panel until the user ticks or dismisses it.
+const AR_REMEASURED = "Areas were measured again. Tick the rows you want.";
+
+// The fill's identity: its CAD layer, its exact fill colour, and a fingerprint
+// of its geometry - the union of its regions' bboxes as the engine rounds them,
+// its region count and its subpath count. A FINGERPRINT, not a proximity test
+// (CLAUDE.md 5): both sides read the same engine output, so the same page
+// detected by the same engine reproduces it exactly, and anything else does not
+// match. (layer, fill) alone is already unique per page - the engine groups on
+// it - the geometry makes a changed drawing a non-match instead of a re-point.
+function arKey(g) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, nr = 0;
+  for (const r of arRegionsOf(g)) {
+    const b = r.bbox || [];
+    x0 = Math.min(x0, +b[0]); y0 = Math.min(y0, +b[1]);
+    x1 = Math.max(x1, +b[2]); y1 = Math.max(y1, +b[3]);
+    nr += +r.n_rings || 0;
+  }
+  const box = [x0, y0, x1, y1].map(v => (isFinite(v) ? v.toFixed(1) : "-")).join(",");
+  return [g.layer || "", (g.fill || []).join(","), g.n, nr, box].join("|");
+}
+
+// What calcSave stores for the Areas panel: the selection, each item with its
+// key AND its position (the position only breaks a tie between equal keys),
+// stamped with the detection, plus the note while it is still showing.
+function arSelPayload() {
+  const keyOf = (gid) => { const g = arGroup(gid); return g ? arKey(g) : null; };
+  const out = {
+    v: 2, engine_sig: (state.result && state.result.engine_sig) || null,
+    rows: state.areaRows.map(r => ({ key: keyOf(r.group_id), group_id: r.group_id, unit: r.unit, label: r.label })),
+    inc: [...state.areaInc].filter(([, v]) => v).map(([k]) => ({ key: keyOf(k), group_id: k })),
+    labels: [...state.areaLabels].map(([k, lab]) => ({ key: keyOf(k), group_id: k, label: lab })),
+  };
+  if (state.areaNote) out.note = state.areaNote;
+  return out;
+}
+
+// Put a stored selection back - only onto the detection it was made on, and
+// only where its key is on the page. Everything else is counted and dropped.
+function arSelRestore(sel) {
+  state.areaRows = []; state.areaInc = new Map(); state.areaLabels = new Map();
+  state.areaNote = typeof sel.note === "string" ? sel.note : "";
+  const items = [...(sel.rows || []), ...(sel.inc || []).map(x => (typeof x === "object" && x ? x : { group_id: x })),
+    ...(sel.labels || []).map(x => (Array.isArray(x) ? { group_id: x[0], label: x[1] } : x))];
+  const cur = state.result && state.result.engine_sig;
+  const said = (n) => `${AR_REMEASURED} ${n} earlier tick${n === 1 ? " was" : "s were"} not kept.`;
+  const persist = () => { try { store.setItem(areaSelKey(), JSON.stringify(arSelPayload())); } catch (e) { /* storage full */ } };
+  if (sel.v !== 2 || !sel.engine_sig || !cur || sel.engine_sig !== cur) {
+    // made on another detection (or by a build that stored positions only)
+    const n = new Set(items.map(x => (x && x.key) || ("#" + (x && x.group_id)))).size;
+    if (n) { state.areaNote = said(n); persist(); }
+    return;
+  }
+  const a = arData();
+  const byKey = new Map();
+  for (const g of (a ? a.groups : [])) {
+    const k = arKey(g);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(g);
+  }
+  const find = (x) => {
+    const c = (x && x.key && byKey.get(x.key)) || [];
+    if (!c.length) return null;
+    return (c.find(g => g.group_id === x.group_id) || c[0]).group_id;
+  };
+  const lost = new Set();
+  for (const r of sel.rows || []) {
+    const gid = find(r);
+    if (gid === null) { lost.add(r.key || "#" + r.group_id); continue; }
+    state.areaRows.push({ group_id: gid, unit: r.unit, ...(r.label ? { label: r.label } : {}) });
+  }
+  for (const x of sel.inc || []) {
+    const gid = find(x);
+    if (gid === null) { lost.add((x && x.key) || "#" + (x && x.group_id)); continue; }
+    state.areaInc.set(gid, true);
+  }
+  for (const x of sel.labels || []) {
+    const gid = find(x);
+    if (gid === null) { lost.add((x && x.key) || "#" + (x && x.group_id)); continue; }
+    state.areaLabels.set(gid, x.label);
+  }
+  if (lost.size) { state.areaNote = said(lost.size); persist(); }
 }
 
 // ---------- calculator INPUT sidecar (the server record) -----------------
@@ -7236,71 +7656,6 @@ function calcStatePayload() {
   if (!state.result) return null;
   const saved = state.calcSaved || {};
   const out = { v: 1, engine_sig: state.result.engine_sig || null };
-  if (state.ew) {
-    out.ew = {
-      rows: state.ew.rows.map(r => ({
-        chain_id: r.chain_id,
-        z: calcNum(r.z), surface: r.surface || null,
-        width: r.width || 0, dist: r.dist == null ? null : r.dist,
-        manual: !!r.manual,
-        // WHO CHOSE THIS SURFACE. calcStatePayload snapshots EVERY row, not
-        // the edited ones, and calcStateDirty() fires from 18 unrelated
-        // gestures (a check-queue tick, a zone, the limit-of-work ring), so
-        // a sheet the operator merely visited already has all of its ENGINE
-        // DEFAULTS frozen on disk. ewApplySaved then wrote them back
-        // unconditionally. Without this flag, improving the default would
-        // have been invisible on every sheet anyone had touched: the old
-        // width-median guess would restore itself over the sheet's own
-        // legend, and the operator would have no way to see why.
-        // `surfaceBy` is the same "the saved record is the authority on
-        // provenance" pattern `how`/`tag`/`inferred` above already use.
-        ...(r.surfaceBy ? { surface_by: r.surfaceBy } : {}),
-        ...(r.splitBy ? { split_by: r.splitBy } : {}),
-        // provenance is a page fact that must survive a reload: without it
-        // a restored row falls back to "we did not record where this came
-        // from" and the report's printed/not-printed split goes with it
-        ...(r.how ? { how: r.how } : {}),
-        ...(r.tag ? { tag: r.tag } : {}),
-        // an INFERRED elevation stays inferred across a reload. Without
-        // this the badge and the report's inferred-count line vanish on
-        // the next visit and a counted elevation reads as a printed one -
-        // the same class of defect as the resurrected-junk-rows bug.
-        ...(r.inferred ? { inferred: true,
-                           inferred_why: r.inferredWhy || "" } : {}),
-      })),
-      layers: {
-        existing: state.ew.layers.existing.map(l => Object.assign({}, l)),
-        proposed: state.ew.layers.proposed.map(l => Object.assign({}, l)),
-      },
-      removed: (state.ew.removed || []).slice(),
-      spotOn: Object.assign({}, state.ew.spotOn),
-      spotSide: state.ew.spotSide,
-      spotTagSide: Object.assign({}, state.ew.spotTagSide),
-      spotDatum: calcNum(state.ew.spotDatum),
-      areaSf: calcNum(state.ew.areaSf),
-      placeDepthIn: calcNum(state.ew.placeDepthIn),
-      placeLessSf: calcNum(state.ew.placeLessSf),
-      added: !!state.ew.added,
-    };
-    // Picked/stitched boundary: the SEED chain, not the ring - geometry
-    // re-derives from the live detection on restore, so a re-detect that
-    // renumbers or improves the family re-stitches instead of replaying
-    // stale points. HAND-DRAWN boundary: the points themselves - they are
-    // the operator's own geometry, tied to no chain, and a re-detect can
-    // neither improve nor orphan them.
-    const m = state.ewBound && /^chain (\d+)$/.exec(state.ewBound.src || "");
-    const seed = state.ewBound && typeof state.ewBound.seed === "number"
-      ? state.ewBound.seed : (m ? +m[1] : null);
-    if (seed !== null) out.ew_bound = { chain_id: seed };
-    else if (state.ewBound && state.ewBound.src === "drawn outline")
-      out.ew_bound = { pts: state.ewBound.pts.map(q =>
-        [Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10]) };
-    else out.ew_bound = null;
-  } else {
-    // panel never opened this session: the earlier record stands untouched
-    if (saved.ew) out.ew = saved.ew;
-    if (saved.ew_bound) out.ew_bound = saved.ew_bound;
-  }
   if (state.tr) {
     out.tr = {
       style_id: typeof state.tr.style_id === "number" ? state.tr.style_id : null,
@@ -7308,6 +7663,23 @@ function calcStatePayload() {
       rules: state.tr.rules.map(r => ({ to_ft: r.to_ft, clr_in: r.clr_in })),
       utility: state.tr.utility || "",
       layback_hv: state.tr.layback_hv, layback_from_ft: state.tr.layback_from_ft,
+      // width convention, bedding envelope, depth source and the runs the
+      // operator added (fix/trenching, 2026-09-26). Additive keys: a record
+      // written before them restores exactly as it did.
+      conv: state.tr.conv || "preset", clr_in: calcNum(state.tr.clr_in),
+      detail_clr_in: calcNum(state.tr.detail_clr_in), detail_note: state.tr.detail_note || "",
+      bed_below_in: calcNum(state.tr.bed_below_in), bed_above_in: calcNum(state.tr.bed_above_in),
+      depth_src: state.tr.depth_src || "profile", surface_i: calcNum(state.tr.surface_i),
+      pipe_i: calcNum(state.tr.pipe_i), profile_i: calcNum(state.tr.profile_i),
+      profile_picked: !!state.tr._profilePicked,
+      below_invert_in: calcNum(state.tr.below_invert_in), detail_util: state.tr.detail_util || "",
+      band_edge: calcNum(state.tr.band_edge), band_step: calcNum(state.tr.band_step),
+      split: state.tr.split !== false,
+      // the run by its own key (system + chains), never the positional id
+      run_key: state.tr.run_key || null,
+      added: [...(state.tr.added || [])],
+      // the inputs each added run was added with: what its rows mean
+      run_inputs: state.tr.runInputs || {},
     };
   } else if (saved.tr) out.tr = saved.tr;
   const st = (state.st && state.st.result === state.result
@@ -7326,8 +7698,18 @@ function calcStatePayload() {
       fill_depth_ft: isFinite(+st.fill_depth_ft) && st.fill_depth_ft !== null ? +st.fill_depth_ft : null,
       footing_ft: st.footing_ft, footing_w_ft: st.footing_w_ft, layback_hv: st.layback_hv,
       wall_in: st.wall_in, datum_ft: Number.isFinite(+st.datum_ft) ? +st.datum_ft : null,
+      // walls by footing elevation: the printed-elevation reading and the typed ground per group
+      printed_is: st.printed_is === "top" ? "top" : "bottom",
+      groupE: Object.fromEntries(Object.entries(st.groupE || {}).filter(([, v]) => Number.isFinite(+v)).map(([k, v]) => [k, +v])),
+      groupsAdded: !!st.groupsAdded,
     };
   } else if (saved.st) out.st = saved.st;
+  // FLOORING (additive key "fl"): floor types with their colours and
+  // prices, every room with its polygon and numbers, the hand-closed gaps.
+  const fl = (state.fl && state.fl.result === state.result
+              && state.calcFlApplied) ? state.fl : null;
+  if (fl) out.fl = flSavePayload(fl);
+  else if (saved.fl) out.fl = saved.fl;
   // WORK AREA boxes (additive key "zones"): plain page-pt rects, keyed to
   // no chain or style id, so a re-detect can never orphan them - restore
   // re-applies them against whatever the live detection holds. Unlike the
@@ -7336,34 +7718,108 @@ function calcStatePayload() {
   // and an empty list correctly writes no key (= zones cleared).
   if (state.workZones && state.workZones.length)
     out.zones = state.workZones.map(z => [z[0], z[1], z[2], z[3]]);
-  // GRADING ZONES (additive key "gzones"): the operator's INPUTS only -
-  // polygon, declared design, strip, name, added flag. Results are
-  // recomputed through the zone endpoint on restore, never staged from
-  // storage (the rule every calculator here follows). Like the work-area
-  // boxes there is no "never opened" carry case: gzApplySaved runs on
-  // every load before the first snapshot, so state.gzones IS the truth
-  // and an empty list correctly writes no key (= zones cleared).
   // COUNTED ONCE (additive key "once"): style ids, restored before the
   // snapshot like the zones, so state.once IS the truth after a load
   if (state.once && state.once.size)
     out.once = [...state.once].sort((a, b) => a - b);
-  if (state.gzones && state.gzones.length)
-    out.gzones = state.gzones.map(z => ({
-      id: z.id, name: z.name,
-      polygon: z.polygon.map(q => [Math.round(q[0] * 10) / 10,
-                                   Math.round(q[1] * 10) / 10]),
-      design: z.design, strip_in: z.strip_in,
-      base_in: isFinite(+z.base_in) ? +z.base_in : 0, base_name: z.base_name || "Base",
-      added: !!z.added, show_nums: !!z.showNums,
-      named_from: z.named_from === "text" ? "text" : null,
-    }));
   // Review-queue check-offs (additive key, same carry-forward rule as the
   // panels above: until the queue has seeded from the sidecar, the earlier
   // record stands untouched). Ids only - a check-off is the operator saying
   // "I looked at this", never a number.
   if (state.ckDone) out.checks = { done: [...state.ckDone].sort() };
   else if (saved.checks) out.checks = saved.checks;
+  // CALCULATOR ROWS, PRICES AND TRADES (additive keys, D42, 2026-09-26).
+  // The committed rows lived in one browser's localStorage, keyed by the
+  // document's name: a second seat, a private window or a cleared cache
+  // saw the inputs and none of the rows. They belong to the JOB. Rows are
+  // the same {label, qty, unit(, details)} calcSave writes locally (the
+  // local copy is now a cache; the record here wins on load), and the
+  // prices and trades are those of the labels on this page - the label-keyed
+  // store entries the seat has set, nothing the app chose by itself.
+  // The rows key is written only once this seat has CHANGED rows (calcSave)
+  // or the record already carries it: a seat that merely opened a page holds
+  // no rows, and writing `rows: []` from it would wipe, on the next load,
+  // the rows another seat still keeps in its browser from before this key
+  // existed (the critic's H5).
+  // a job every account opens (job_shared: a demo or a shared sheet): rows, prices and trades stay in this browser
+  // (calcSave's own key) and are never sent; the server would not keep them (_calcstate_put)
+  if (state.calcShared) {
+    /* nothing of this seat's takeoff goes to the record */
+  } else if (state.calcRowsLoaded && (state.calcRowsTouched || Array.isArray(saved.rows))) {
+    // a row's provenance travels with it (run / runOf / kind / utility / basis): a record that
+    // kept label, qty and unit only gave back untagged rows on every load, and the run's feet
+    // counted twice until the Trench panel was opened (checker T4r, 2026-09-27)
+    const cff = state.cfFacts || saved.cf || null;
+    if (cff && state.extraItems.some(it => typeof CF_ROW_RE !== "undefined" && cfIsRow(it))) out.cf = cff;
+    out.rows = state.extraItems.filter(it => !it._area)
+      .map(it => ({ label: it.label, qty: it.qty, unit: it.unit,
+                    ...(Number.isInteger(it.run) ? { run: it.run } : {}),
+                    ...(it.runOf ? { runOf: String(it.runOf) } : {}),
+                    ...(it.kind ? { kind: String(it.kind) } : {}),
+                    ...(it.utility ? { utility: String(it.utility) } : {}),
+                    ...(it.basis ? { basis: String(it.basis) } : {}),
+                    ...(it.src ? { src: String(it.src) } : {}),
+                    ...(Array.isArray(it.details) ? { details: it.details } : {}) }));
+    const labels = new Set(out.rows.map(r => r.label));
+    for (const v of state.labels.values()) if (v) labels.add(v);
+    const prices = {}, trades = {};
+    for (const lab of labels) {
+      const p = parseFloat(store.getItem(priceKey(lab)) || "");
+      if (!isNaN(p) && p > 0) prices[lab] = p;
+      const tr = store.getItem(tradeKey(lab));
+      if (tr && TRADES.includes(tr)) trades[lab] = tr;
+    }
+    out.prices = prices;
+    out.trades = trades;
+    // the scale these rows stand on: the one in force in the seat that writes them (every seat
+    // brings the rows to its own scale before it shows or saves them: rowsFollowScale)
+    const rs = typeof flScreenScale === "function" ? flScreenScale() : null;
+    if (rs) out.rows_scale = rs;
+  } else {
+    if (saved.rows_scale) out.rows_scale = saved.rows_scale;
+    if (saved.rows) out.rows = saved.rows;
+    if (saved.prices) out.prices = saved.prices;
+    if (saved.trades) out.trades = saved.trades;
+  }
+  // THE OLD EARTHWORK CALCULATOR'S INPUTS (v1.8.5: ew, ew_bound, gzones), carried untouched. Nothing here writes them
+  // (the calculator is gone), and dropping them at the first save left an undo to v1.8.5 with empty earthwork panels
+  // (PARITY.md section 4d). The server keeps them too (_calcstate_put)
+  for (const k of ["ew", "ew_bound", "gzones"])
+    if (saved[k] !== undefined) out[k] = saved[k];
+  // this page had old Earthwork calculator rows that were dropped (calcRestore): the record keeps it (its note)
+  if (state.ewDropped || saved.ew_dropped) out.ew_dropped = true;
   return out;
+}
+
+// The job's rows, prices and trades back into this seat (see the keys
+// above). Rows REPLACE the local copy when the record carries the key at
+// all - an empty list is "the operator removed them", not "nothing saved" -
+// and a record from before the key leaves the local copy standing. Prices
+// and trades fill only what this seat has not set itself (setSession: a
+// value the job holds, not a decision made here).
+function rowsApplySaved() {
+  // a shared job's record carries nobody's rows or prices: this browser's own stand (calcRestore)
+  const sv = state.calcShared ? {} : (state.calcSaved || {});
+  if (Array.isArray(sv.rows)) {
+    state.extraItems = state.extraItems.filter(it => it._area);
+    for (const r of sv.rows)
+      if (r && r.label && isFinite(+r.qty))
+        state.extraItems.push({ label: String(r.label), qty: +r.qty, unit: String(r.unit || "EA"),
+                                ...(Number.isInteger(r.run) ? { run: r.run } : {}),
+                                ...(typeof r.runOf === "string" && r.runOf ? { runOf: r.runOf } : {}),
+                                ...(typeof r.kind === "string" && r.kind ? { kind: r.kind } : {}),
+                                ...(typeof r.utility === "string" && r.utility ? { utility: r.utility } : {}),
+                                ...(typeof r.basis === "string" && r.basis ? { basis: r.basis } : {}),
+                                ...(typeof r.src === "string" && r.src ? { src: r.src } : {}),
+                                ...(Array.isArray(r.details) ? { details: r.details } : {}) });
+  }
+  if (sv.prices && typeof sv.prices === "object")
+    for (const [lab, p] of Object.entries(sv.prices))
+      if (isFinite(+p) && +p > 0 && !store.getItem(priceKey(lab))) store.setSession(priceKey(lab), String(+p));
+  if (sv.trades && typeof sv.trades === "object")
+    for (const [lab, tr] of Object.entries(sv.trades))
+      if (TRADES.includes(tr) && !store.getItem(tradeKey(lab))) store.setSession(tradeKey(lab), tr);
+  state.calcRowsLoaded = true;
 }
 
 // Debounced save. The payload is SNAPSHOTTED at edit time: the operator can
@@ -7403,7 +7859,10 @@ async function calcStatePush() {
     }
     if (p.gen === state.gen) {
       calcStateSent = p.txt;
+      const was = !!(state.calcSaved && state.calcSaved.ew_dropped);
       state.calcSaved = JSON.parse(p.txt);
+      // the record now says this page's old Earthwork calculator rows were dropped: its note shows (approvalOutdated)
+      if (!was && state.calcSaved.ew_dropped && typeof approvalOutdated === "function") approvalOutdated(state.gen).catch(() => {});
     }
   } catch (e) {
     setStatus("calculator inputs NOT saved " + '\u2014' + " server unreachable", "err");
@@ -7412,12 +7871,16 @@ async function calcStatePush() {
 
 // One GET per page load, awaited by loadResult before the panels can paint.
 async function calcStateLoad(gen) {
-  // which families on this page are drawn as twin lines - its own fetch,
-  // not gated on the sidecar below (a sidecar that cannot be read must not
-  // hide the switch)
-  twinsLoad(gen);
-  state.calcSaved = null; state.calcSavedLoaded = false; state.calcStApplied = false;
-  state.calcSaveBroken = false; state.calcSaveWarned = false;
+  // The twin-line pairing (GET .../twins) is NOT asked for here any more.
+  // It used to run on every page load, so one visit to a civil sheet of a
+  // set with a misread footing schedule started ~29 minutes of O(n^2) work
+  // and took the server to 7-17 GB (audit 2026-09-26, D01). It is asked for
+  // when something needs it: the Structure panel (stFootingsBlock), a saved
+  // "once" choice on this page (onceApplySaved) or the walls-once button in
+  // the Line styles header (twinsAsk).
+  state.calcSaved = null; state.calcSavedLoaded = false; state.calcStApplied = false; state.calcFlApplied = false;
+  state.calcSaveBroken = false; state.calcSaveWarned = false; state.calcRowsLoaded = false; state.calcRowsTouched = false;
+  state.calcShared = false;
   calcStateSent = null;
   const job = state.job, page = state.page;
   let j = {}, ok = false;
@@ -7434,20 +7897,21 @@ async function calcStateLoad(gen) {
     return;
   }
   state.calcSaved = (j && typeof j === "object" && !Array.isArray(j)) ? j : {};
+  state.calcShared = !!state.calcSaved.job_shared;
   state.calcSavedLoaded = true;
   // zones BEFORE the snapshot below: they restore straight into state (no
   // panel to wait for), and a snapshot taken without them would make the
   // first unrelated edit's save look like a change to them
   wzApplySaved();
-  // grading zones restore straight into state too (their geometry and
-  // design are page facts, tied to no chain); their RESULTS recompute
-  // asynchronously through the endpoint after the snapshot below
-  gzApplySaved();
   onceApplySaved();
+  // the job's calculator rows, prices and trades, for the same reason
+  rowsApplySaved();
   // what the server holds right now, so a no-op save is never sent
   calcStateSent = JSON.stringify(calcStatePayload());
+  // ...but this browser's dropped old Earthwork calculator rows are told to the record once (the page's note)
+  if (state.ewDropped && !state.calcSaved.ew_dropped) { calcStateSent = null; calcStateDirty(); }
   stApplySaved();
-  gzRestoreCompute();
+  flApplySaved();
 }
 
 // The count-of-dropped sentence, in the panel where the loss happened.
@@ -7474,126 +7938,6 @@ function calcDropText(n) {
     + " and " + (n === 1 ? "was" : "were") + " not applied.";
 }
 
-// Merge the saved earthwork inputs into the panel state ewBtn just built
-// from /earthwork/suggest. Chain-keyed values only where the chain still
-// exists; everything else counted into the panel note.
-function ewApplySaved() {
-  const saved = state.calcSaved || {};
-  const sv = saved.ew;
-  let dropped = 0, applied = 0;
-  const chains = new Map(state.result.chains.map(c => [c.chain_id, c]));
-  if (sv) {
-    const live = new Map(state.ew.rows.map(r => [r.chain_id, r]));
-    for (const r of (Array.isArray(sv.rows) ? sv.rows : [])) {
-      if (!r || typeof r.chain_id !== "number") continue;
-      const surf = (r.surface === "existing" || r.surface === "proposed") ? r.surface : null;
-      const row = live.get(r.chain_id);
-      const ch = chains.get(r.chain_id);
-      if (row) {
-        if (calcNum(r.z) !== null) row.z = r.z;
-        // ONLY AN OPERATOR'S CHOICE OVERRIDES THE FRESH DEFAULT. A saved
-        // row carries surface_by "operator" only if someone clicked
-        // EXIST/PROP/skip on it; everything else in the blob is an engine
-        // default that was snapshotted because some unrelated gesture
-        // dirtied the page. Restoring those would pin every sheet to
-        // whatever the engine believed the first time it was opened - so an
-        // engine that learned to read the legend would never be seen again
-        // on any sheet already visited. A blob written before this flag
-        // existed has no surface_by at all, and is therefore treated as
-        // engine defaults and allowed to refresh: that is the deliberate
-        // choice, because the alternative freezes the old guess forever and
-        // the operator can always click the row back.
-        if (r.surface_by === "operator") {
-          row.surface = surf;
-          row.surfaceBy = "operator";
-        } else if (r.split_by) {
-          row.splitBy = r.split_by;
-        }
-        // the saved record is the authority on provenance: a row the
-        // operator accepted as inferred keeps saying so
-        if (r.inferred) {
-          row.inferred = true;
-          if (r.inferred_why) row.inferredWhy = r.inferred_why;
-        }
-        if (r.how && !row.how) row.how = r.how;
-        if (r.tag && !row.tag) row.tag = r.tag;
-        applied++;
-      } else if (ch && !ch.custom) {
-        // usually a hand-added contour: its chain is still on the sheet
-        state.ew.rows.push({ chain_id: r.chain_id,
-          z: calcNum(r.z) !== null ? r.z : NaN,
-          width: calcNum(r.width) !== null ? r.width : (ch.width || 0),
-          dist: r.dist == null ? null : r.dist,
-          surface: surf, manual: !!r.manual,
-          ...(r.how ? { how: r.how } : {}),
-          ...(r.tag ? { tag: r.tag } : {}),
-          ...(r.inferred ? { inferred: true,
-                             inferredWhy: r.inferred_why || "" } : {}) });
-        applied++;
-      } else dropped++;
-    }
-    if (Array.isArray(sv.removed) && sv.removed.length) {
-      // deletions the operator saved: drop what the fresh suggest re-seeded,
-      // except chains the saved rows themselves still carry (add > delete)
-      const savedIds = new Set((Array.isArray(sv.rows) ? sv.rows : [])
-        .filter(r => r && typeof r.chain_id === "number").map(r => r.chain_id));
-      const rm = new Set(sv.removed.filter(id => !savedIds.has(id)));
-      const n0 = state.ew.rows.length;
-      state.ew.rows = state.ew.rows.filter(r => !rm.has(r.chain_id));
-      state.ew.removed = sv.removed.slice();
-      applied += n0 - state.ew.rows.length;
-    }
-    if (sv.layers && Array.isArray(sv.layers.existing) && Array.isArray(sv.layers.proposed)) {
-      const lay = (l, ex) => Object.assign(
-        { name: String((l && l.name) || ""), thickness_in: calcNum(l && l.thickness_in) || 0 },
-        ex ? { reuse_pct: calcNum(l && l.reuse_pct),
-               respread_pct: calcNum(l && l.respread_pct),
-               destination: (l && l.destination !== undefined) ? l.destination : "on site" } : {});
-      state.ew.layers = { existing: sv.layers.existing.map(l => lay(l, true)),
-                          proposed: sv.layers.proposed.map(l => lay(l, false)) };
-    }
-    if (sv.spotOn && typeof sv.spotOn === "object") state.ew.spotOn = Object.assign({}, sv.spotOn);
-    if (sv.spotSide === "existing" || sv.spotSide === "proposed") state.ew.spotSide = sv.spotSide;
-    if (sv.spotTagSide && typeof sv.spotTagSide === "object") {
-      for (const [t, v] of Object.entries(sv.spotTagSide))
-        if (v === "existing" || v === "proposed") state.ew.spotTagSide[t] = v;
-    } else if (sv.spotSide === "existing") {
-      // A sidecar written before the per-tag split. "proposed" was the
-      // SHIPPED DEFAULT and says nothing about what the operator wanted -
-      // restoring it as an override put ME back on the proposed surface on
-      // every sheet already worked on, which is the defect this replaced.
-      // "existing" could only have been chosen, so it is carried.
-      for (const g of (state.ew.spots || [])) state.ew.spotTagSide[g.tag] = "existing";
-    }
-    if (calcNum(sv.spotDatum) !== null) state.ew.spotDatum = sv.spotDatum;
-    if (calcNum(sv.areaSf) !== null && sv.areaSf > 0) state.ew.areaSf = sv.areaSf;
-    if (calcNum(sv.placeDepthIn) !== null && sv.placeDepthIn > 0) state.ew.placeDepthIn = sv.placeDepthIn;
-    if (calcNum(sv.placeLessSf) !== null && sv.placeLessSf >= 0) state.ew.placeLessSf = sv.placeLessSf;
-    state.ew.added = !!sv.added;
-  }
-  const bd = saved.ew_bound;
-  if (bd && Array.isArray(bd.pts) && bd.pts.length >= 3 && !state.ewBound) {
-    if (ewBoundSet(bd.pts, "drawn outline")) {
-      state.ewBound.seed = null;
-      applied++;
-    } else dropped++;
-  } else if (bd && typeof bd.chain_id === "number" && !state.ewBound) {
-    const ch = chains.get(bd.chain_id);
-    const st = ch ? ewBoundStitch(ch) : null;
-    if (st && ewBoundSet(st.pts, st.n > 1
-          ? `${st.n} lines stitched (${(ch.layer || "style " + ch.style_id).split("|").pop()})`
-          : "chain " + ch.chain_id)) {
-      state.ewBound.seed = ch.chain_id;
-      applied++;
-    }
-    else dropped++;
-  }
-  calcNotePut("ewHint", dropped ? calcDropText(dropped) : "");
-  if (applied) setStatus("earthwork inputs restored from this page's saved record "
-    + '\u2014' + " press Calculate to recompute");
-  return dropped;
-}
-
 function trApplySaved() {
   const sv = (state.calcSaved || {}).tr;
   let dropped = 0;
@@ -7613,6 +7957,31 @@ function trApplySaved() {
       t.rules = sv.rules.map(r => ({
         to_ft: calcNum(r && r.to_ft) !== null ? r.to_ft : 99,
         clr_in: calcNum(r && r.clr_in) !== null ? r.clr_in : 6 }));
+    // the width convention, bedding envelope, depth source and added runs
+    if (["preset", "detail", "rules"].includes(sv.conv)) t.conv = sv.conv;
+    if (calcNum(sv.clr_in) !== null) t.clr_in = sv.clr_in;
+    if (calcNum(sv.detail_clr_in) !== null) t.detail_clr_in = sv.detail_clr_in;
+    if (typeof sv.detail_note === "string") t.detail_note = sv.detail_note;
+    if (calcNum(sv.bed_below_in) !== null) { t.bed_below_in = sv.bed_below_in; t._bedRestored = true; }
+    if (calcNum(sv.bed_above_in) !== null) { t.bed_above_in = sv.bed_above_in; t._bedRestored = true; }
+    if (sv.depth_src === "typed" || sv.depth_src === "profile") t.depth_src = sv.depth_src;
+    if (calcNum(sv.surface_i) !== null) t.surface_i = sv.surface_i;
+    if (calcNum(sv.pipe_i) !== null) t.pipe_i = sv.pipe_i;
+    if (calcNum(sv.profile_i) !== null) t.profile_i = sv.profile_i;
+    // picked by the operator only when the record says so (the first cut
+    // took every restored index for a pick)
+    if (sv.profile_picked === true) t._profilePicked = true;
+    if (calcNum(sv.below_invert_in) !== null) t.below_invert_in = sv.below_invert_in;
+    if (typeof sv.detail_util === "string") t.detail_util = sv.detail_util;
+    if (calcNum(sv.band_edge) !== null && sv.band_edge > 0) { t.band_edge = sv.band_edge; $("trBandEdge").value = sv.band_edge; }
+    if (calcNum(sv.band_step) !== null && sv.band_step > 0) { t.band_step = sv.band_step; $("trBandStep").value = sv.band_step; }
+    if (typeof sv.split === "boolean") t.split = sv.split;
+    if (typeof sv.run_key === "string") t.run_key = sv.run_key;
+    // added runs by their own keys; a record from the first cut carried
+    // positional ids, which no longer mean anything and are dropped
+    if (Array.isArray(sv.added)) t.added = new Set(sv.added.filter(k => typeof k === "string"));
+    if (sv.run_inputs && typeof sv.run_inputs === "object")
+      t.runInputs = Object.fromEntries(Object.entries(sv.run_inputs).filter(([k, v]) => t.added.has(k) && v && typeof v === "object"));
     setStatus("trench inputs restored from this page's saved record "
       + '\u2014' + " press Calculate to recompute");
   }
@@ -7662,6 +8031,10 @@ function stApplySaved() {
   if (calcNum(sv.layback_hv) !== null) st.layback_hv = sv.layback_hv;
   if (calcNum(sv.wall_in) !== null) st.wall_in = sv.wall_in;
   if (calcNum(sv.datum_ft) !== null) st.datum_ft = +sv.datum_ft;
+  if (sv.printed_is === "top" || sv.printed_is === "bottom") st.printed_is = sv.printed_is;
+  if (sv.groupE && typeof sv.groupE === "object")
+    for (const [k, v] of Object.entries(sv.groupE)) if (calcNum(v) !== null) st.groupE[k] = +v;
+  st.groupsAdded = !!sv.groupsAdded;
   if (st.items.length && stFtPerPt()) {
     stApplyItems();
     if (!$("stPanel").hidden) renderSt();
@@ -7675,7 +8048,7 @@ function stApplySaved() {
 // Delegation instead of per-field hooks so a field added later cannot be
 // forgotten. Edits made on the CANVAS (limit-of-work pick, + Add contour)
 // call calcStateDirty at their own mutation sites.
-for (const pid of ["ewPanel", "trPanel", "stPanel"]) {
+for (const pid of ["trPanel", "stPanel"]) {
   const el = $(pid);
   if (el) {
     el.addEventListener("input", calcStateDirty);
@@ -7804,32 +8177,32 @@ function styleFp(st) {
 //      build, and a label that travels wrongly is a visible typo while an
 //      EXCLUSION that travels wrongly is silently deleted footage. So
 //      no-layer rows abstain and keep their per-page seeds - 529/2,664
-//      rows (19.9%) on Barn, 103/1,059 (9.7%) on Kayden, 22/22 on the
-//      ellis sheet, where the whole feature therefore stays inert;
+//      rows (19.9%) on set A, 103/1,059 (9.7%) on set B, 22/22 on the
+//      set C sheet, where the whole feature therefore stays inert;
 //   3. only the row's own checkbox writes the set-level record. Bulk
 //      gestures (all / none / color chips / AI apply / scope filter) stay
 //      page-scoped: "none" on sheet 1 must not empty sheets 2-48.
 //
 // MEASURED 2026-08-30, before building, offline detect_page on this tree:
-// Barn 15 pages / 2,664 style rows, Kayden 12-page spread / 1,059 rows,
-// plus cached Kayden p38-39 (327) and ellis p42 (22). A candidate key of
+// Set A 15 pages / 2,664 style rows, set B 12-page spread / 1,059 rows,
+// plus cached set B p38-39 (327) and set C p42 (22). A candidate key of
 // (layer LEAF, class, signature rounded to 1 pt) fuses rows the engine
 // split ON THE SAME PAGE - different-looking styles by construction - for
-// 714/2,664 rows (26.8%) on Barn and 262/1,059 (24.7%) on Kayden, worst
-// group 14 rows, and 7 Kayden groups put 54,985 pt of real linework under
+// 714/2,664 rows (26.8%) on set A and 262/1,059 (24.7%) on set B, worst
+// group 14 rows, and 7 set-B groups put 54,985 pt of real linework under
 // an annotation row's key: an exclusion there deletes footage silently,
 // so leaf-keyed inheritance is dead on arrival. styleFp collides on
 // 0/2,664, 0/1,059, 0/327 and 0/22 (the theorem above, re-measured
 // anyway). Coverage under styleFp with this eligibility rule: 948/2,067
 // eligible later-page rows (45.9%) already have a key on an earlier page
-// on Barn, 495/956 (51.8%) on Kayden - the misses are mostly dash-cadence
-// jitter (of 6,581 Barn cross-page pairs matched on layer+class+weight+
+// on set A, 495/956 (51.8%) on set B - the misses are mostly dash-cadence
+// jitter (of 6,581 set-A cross-page pairs matched on layer+class+weight+
 // colour, 3,328 = 50.6% agree on cadence too), which fails SAFE: the row
 // keeps its seed and its checkbox. The headline case holds: excluding
 // C3.0's four G-ANNO-TTLB title-block styles reaches every TTLB row on
-// all 14 other Barn sheets (40/40). A rounded-signature styleFp variant
+// all 14 other set-A sheets (40/40). A rounded-signature styleFp variant
 // also measured 0 collisions and would add +84/+18 covered rows, but its
-// zero is a corpus fact, not a construction (Kayden p38 carries
+// zero is a corpus fact, not a construction (set B p38 carries
 // 'd8.8 g4.5' and 'd9.1 g4.5' as two rows, kept apart only by the XREF
 // prefix in the full layer), and the label record travels on the exact
 // signature - one identity for both records, so exact it stays.
@@ -8457,7 +8830,7 @@ function labelKey(st) {
 // result. style_id is an ordinal inside one page's style table - it means
 // nothing anywhere else - so the key names the only scope in which it is
 // valid, and _assign_styles is deterministic inside it (measured: two runs
-// of Barn Civil p12 agree 151/151, C4.0 p0 113/113). Two consequences:
+// of a civil set's p12 agree 151/151, C4.0 p0 113/113). Two consequences:
 //   * within a page an include tick can no longer reach another row, which
 //     is the lost prune (5 styles / 16,558.7 ft came back as 22 styles /
 //     28,248.2 ft, x1.706, through one page round trip);
@@ -8473,7 +8846,7 @@ function includeKey(st) {
 // checkbox persisted its choice and NOTHING ELSE DID, so `none` + a hand
 // pick, then navigating away and back, silently restored every style the
 // operator had turned off - memApply() reads the store and the store still
-// said ON. Measured live on Barn Civil C4.3: an approved 4,927.3 ft became
+// said ON. Measured live on a civil sheet C4.3: an approved 4,927.3 ft became
 // 44,352.9 ft on re-approve, 9.00x, same button, no warning. Shape B from
 // CLAUDE.md section 5, in the UI: one fact, five writers, one of them
 // keeping the record. Route new writers through here too.
@@ -8509,7 +8882,7 @@ function setIncludeSetWide(st, on) {
 // put every row back exactly, and a page change must leave no trace.
 // Writing these through setInclude laundered them into the include record,
 // where scopeApply's own undo set (page state) could no longer reach them:
-// measured live on Barn Civil printed sheet 3, 178.0k ft / 165 ticked ->
+// measured live on a civil set's printed sheet 3, 178.0k ft / 165 ticked ->
 // declare -> 64.9k / 126 -> page away and back -> 39.2k / 104 -> "show
 // everything" -> still 39.2k / 104, with the bar reporting the reduced set
 // as the detector's own baseline. 138.8k ft, 78.0%, gone with no symptom.
@@ -8529,7 +8902,7 @@ function memSave(st, touchedMeasure) {
   // LABEL edit made the third unreachable for any named style, which
   // silently cut the cross-document measure::<LABEL> memory off from
   // exactly the typed names it exists to serve. Gate 1 demonstrated it
-  // live on Barn Civil engine page 12 = printed sheet 13, style 84.
+  // live on a civil set's engine page 12 = printed sheet 13, style 84.
   const prev = (() => { try { return JSON.parse(store.getItem(k) || "null"); }
                         catch (e) { return null; } })();
   const keepMeasure = touchedMeasure ||
@@ -8685,8 +9058,8 @@ function tradeFor(label, layers) {
           "JOIST", "TRUSS", "MOMENT FRAME")) return "Structures";
   if (has("FENCE", "WALL", "RAIL", "GATE", "BARRIER", "LANDSCAP", "TREE",
           "SILT", "PROPERTY", "EASEMENT", "SETBACK")) return "Fencing & Sitework";
-  // THE DECLARED SCOPE FILES WHAT NOTHING ELSE NAMES (Jeff Ellis, ECI
-  // Foundations, 2026-08-24 / plan J15). A foundation sheet with no CAD
+  // THE DECLARED SCOPE FILES WHAT NOTHING ELSE NAMES (a foundation
+  // contractor, 2026-08-24 / plan J15). A foundation sheet with no CAD
   // layers and no legend leaves every wall row nameless; the ladder above
   // filed them all as General, so his export said "General" on his own
   // work. When the operator has declared exactly ONE trade for this
@@ -8750,7 +9123,7 @@ function legKey(ax, ay, bx, by) {
 
 // O(legs) with one dict - NOT a chain-vs-chain pass. CONTAINMENT sec 1.4
 // counts 171,652,550 naive C(n,2) pairs corpus-wide and 21,278,026 on one
-// sheet, which is the CO3 marker-collapse shape; this never compares two
+// sheet, which is one set's marker-collapse shape; this never compares two
 // chains to each other at all.
 //
 // excess = sum over legs of (k-1) x len, where k is the number of DISTINCT
@@ -8824,7 +9197,7 @@ function chainLenPt(ch) {
   if (!p || p.length < 2) return ch.length_pt;
   // SCALE the engine's length, never replace it. length_pt is NOT the polyline
   // length of `points`: a chain that picks up across a gap adds that gap to its
-  // length without adding a leg. Measured on Kayden Springs p39, 515 of 682
+  // length without adding a leg. Measured on a subdivision set p39, 515 of 682
   // chains differ, one by 17.8%. Recomputing from points would silently drop
   // every one of those gaps the moment a vertical scale was switched on.
   let plain = 0, axis = 0;
@@ -9031,7 +9404,15 @@ function chainBilledPt(ch) {
 function onceFamily(sid) {
   return (state.twins && state.twins.families && state.twins.families[String(sid)]) || null;
 }
-async function twinsLoad(gen) {
+// ON DEMAND, never on page load: the pairing runs when the Structure panel
+// opens, when this page has a saved "once" choice, or when the operator
+// presses the walls-once button. `state.twins` is null until then; one
+// request per page load at most (`state.twinsAsked`), and `say` reports the
+// server's reason on the status line when the operator asked and nothing
+// was offered ("a civil sheet...", "too big to check...").
+async function twinsLoad(gen, say) {
+  if (state.twinsAsked === gen && !say) return;
+  state.twinsAsked = gen;
   let j = null;
   try {
     const r = await fetch(`/api/job/${state.job}/page/${state.page}/twins`);
@@ -9040,7 +9421,20 @@ async function twinsLoad(gen) {
   if (gen !== state.gen) return;
   state.twins = j && j.families ? j : { families: {}, reason: "could not be read" };
   state.onceRev++;
+  if (say) {
+    const n = Object.keys(state.twins.families || {}).length;
+    setStatus(n
+      ? `${n} line type${n === 1 ? "" : "s"} here drawn as twin lines — the "once" switch is on their rows`
+      : "walls counted once: " + (state.twins.reason || "nothing here is drawn as twin lines"),
+      n ? undefined : "err");
+  }
   renderStyles(); renderItemized(); renderMiniLegend(); draw();
+}
+// the Line styles header button: ask for the pairing on this sheet
+function twinsAsk() {
+  if (!state.result) return;
+  setStatus("checking this sheet for walls drawn as two lines…", "busy");
+  twinsLoad(state.gen, true);
 }
 function onceToggle(sid) {
   if (!onceFamily(sid)) return;
@@ -9053,6 +9447,9 @@ function onceApplySaved() {
   const s = state.calcSaved && state.calcSaved.once;
   state.once = new Set(Array.isArray(s) ? s.filter(v => Number.isInteger(v)) : []);
   state.onceRev++;
+  // a saved choice needs the pairing to bill one run: ask for it now (the
+  // sheet was a foundation plan when the operator chose it)
+  if (state.once.size && !state.twins) twinsLoad(state.gen);
 }
 function onceButton(s) {
   const fam = onceFamily(s.style_id);
@@ -9104,7 +9501,7 @@ let _styleLen = null, _styleLenKey = null;
 // st.length_pt and st.n are the ENGINE's totals. They are written once at
 // detection and cannot know that a reviewer erased a line, so every readout
 // built on them goes stale the moment somebody uses the trash tool. Measured
-// on Kayden engine page index 38 = printed sheet C5.1: deleting chain 2151
+// on a subdivision set's engine page index 38 = printed sheet C5.1: deleting chain 2151
 // (107.7pt) moved the bid line 3,913.6 -> 3,838.8 ft and the count 79 -> 78,
 // while the style row went on reading "606 LF - 8 lines" with 764pt / 7 lines
 // remaining. The money was right; the panel the estimator reads while
@@ -9206,7 +9603,7 @@ function styleLenPt(st) {
 // knowable before 2026-08-27, so a quantity could never state its own
 // denominator - which the project's accuracy contract requires.
 //
-// Measured on Kayden sheet C5.1: 2.27% of the sheet is welded gap, and on its
+// Measured on a subdivision sheet C5.1: 2.27% of the sheet is welded gap, and on its
 // billable layers C-U2-PROP-LOT carries 1,923 ft of blank paper (6.10% of
 // 31,497 ft) and C-U2-ROAD-DRWY 848 ft (4.90%). That is footage an estimator
 // would price and which is not on the drawing.
@@ -9573,6 +9970,122 @@ function subCommitRecompute(groups) {
     + q1(f.s.recomputed.from) + " → " + q1(f.s.recomputed.to) + ")");
 }
 
+// ---------- the legend's own sample bars (audit 2026-09-26, D05) ----------
+// The engine boxes each legend row's swatch (`result.legend_samples`) and
+// re-classes the chains inside a box as annotation - but a style keeps its
+// own class, so every swatch chain stayed a ticked member of its family and
+// billed: 33.6 ft on the sewer, water, gas and electric lines of one civil
+// sheet, 41 ft in a contour row. This finds the sample chains from the
+// result alone and swatchExclude() unticks them at load; the trench panel
+// and the takeoff rows both read state.excluded, so neither sees them.
+//
+// Two rules, both bounded by the engine's own boxes:
+//   A. a chain the engine demoted (class "annotation" inside a style that
+//      is not) whose mean lies in a CLEAN box - a box holding at most
+//      SWATCH_BOX_MAX_CHAINS chains. A plan callout read as a legend row
+//      ("Remove Wire Fence" on the plan, with its leader) holds many chains
+//      of plan linework; a real legend row holds its one bar and, at most,
+//      the neighbouring rows' bars caught by the +-8 pt margin. Such a
+//      callout box is left alone, so plan linework the engine wrongly
+//      demoted is not unticked on top of that (the demotion itself is a
+//      line-detection defect, D23, not fixed here).
+//   B. a legend COLUMN: two or more clean boxes with a demoted bar in them
+//      stacked at one x-range. The rows the engine read no box for (the
+//      sewer and water rows of that civil sheet's legend) still draw their
+//      bars in the same column, so a short horizontal bar (no taller than a
+//      box, no longer than 1.5 box widths, inside the column's x-range)
+//      within one row pitch above or below the column's boxes is a sample
+//      too.
+// Both rules take BARS only (bbox height <= the box height): a tree symbol
+// or a hatch swatch the engine demoted keeps its tick, as before.
+// LEGEND-SWATCH-BEGIN (pure: no DOM, no state.*; tests/test_legend_swatch.js)
+const SWATCH_BOX_MAX_CHAINS = 5;
+function legendSwatchIds(result) {
+  const boxes = (result && result.legend_samples) || [];
+  const chains = (result && result.chains) || [];
+  if (!boxes.length || !chains.length) return [];
+  const styleClass = new Map(((result && result.styles) || []).map((s) => [s.style_id, s.class]));
+  const info = chains.map((c) => {
+    const pts = c.points || [];
+    if (pts.length < 2) return null;
+    let sx = 0, sy = 0, x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of pts) {
+      sx += p[0]; sy += p[1];
+      if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0];
+      if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1];
+    }
+    return { mx: sx / pts.length, my: sy / pts.length, x0, x1, y0, y1,
+             len: typeof c.length_pt === "number" ? c.length_pt : 0,
+             demoted: c.class === "annotation" && styleClass.get(c.style_id) !== "annotation" };
+  });
+  const inBox = (b, i) => !!i && b[0] - 6 <= i.mx && i.mx <= b[2] + 6 && b[1] - 8 <= i.my && i.my <= b[3] + 8;
+  const barLike = (b, i) => (i.y1 - i.y0) <= (b[3] - b[1]);
+  const out = new Set();
+  // rule A
+  const clean = [];
+  for (const b of boxes) {
+    let n = 0, demotedBars = 0;
+    info.forEach((i, k) => {
+      if (!inBox(b, i)) return;
+      n += 1;
+      if (i.demoted && barLike(b, i)) demotedBars += 1;
+    });
+    if (n === 0 || n > SWATCH_BOX_MAX_CHAINS) continue;
+    clean.push({ box: b, demotedBars });
+    info.forEach((i, k) => {
+      if (inBox(b, i) && i.demoted && barLike(b, i)) out.add(chains[k].chain_id);
+    });
+  }
+  // rule B: columns of clean boxes with a demoted bar in them
+  const cols = [];
+  for (const c of clean) {
+    if (!c.demotedBars) continue;
+    const b = c.box;
+    const col = cols.find((x) => Math.abs(x.x0 - b[0]) <= 20 && Math.abs(x.x1 - b[2]) <= 20);
+    if (col) col.boxes.push(b); else cols.push({ x0: b[0], x1: b[2], boxes: [b] });
+  }
+  for (const col of cols) {
+    if (col.boxes.length < 2) continue;
+    const ys = col.boxes.map((b) => (b[1] + b[3]) / 2).sort((a, b) => a - b);
+    const gaps = [];
+    for (let k = 1; k < ys.length; k++) gaps.push(ys[k] - ys[k - 1]);
+    gaps.sort((a, b) => a - b);
+    const h = Math.max(...col.boxes.map((b) => b[3] - b[1]));
+    const pitch = Math.max(gaps[Math.floor(gaps.length / 2)], 2 * h);
+    const top = Math.min(...col.boxes.map((b) => b[1])) - pitch;
+    const bot = Math.max(...col.boxes.map((b) => b[3])) + pitch;
+    const w = col.x1 - col.x0;
+    info.forEach((i, k) => {
+      if (!i) return;
+      if (i.x0 < col.x0 - 6 || i.x1 > col.x1 + 6) return;
+      if (i.my < top || i.my > bot) return;
+      if ((i.y1 - i.y0) > h) return;
+      if (i.len > 1.5 * w) return;
+      out.add(chains[k].chain_id);
+    });
+  }
+  return [...out];
+}
+// LEGEND-SWATCH-END
+// Unticks the sample bars on the loaded result, once per result (the ids
+// are cached on the result object; a fresh result computes afresh).
+function swatchExclude() {
+  if (!state.result) return 0;
+  if (!state.result._swatchIds) state.result._swatchIds = legendSwatchIds(state.result);
+  for (const id of state.result._swatchIds) state.excluded.add(id);
+  return state.result._swatchIds.length;
+}
+function swatchCount() {
+  if (!state.result || !state.result._swatchIds) return 0;
+  let n = 0;
+  for (const id of state.result._swatchIds) if (state.excluded.has(id)) n += 1;
+  return n;
+}
+function swatchFactsText() {
+  const n = swatchCount();
+  return n ? ` · ${n} legend sample line${n === 1 ? "" : "s"} left out` : "";
+}
+
 function computeTakeoffRows() {
   if (!state.result) return null;
   const sc = state.result.scale;
@@ -9592,8 +10105,11 @@ function computeTakeoffRows() {
     const label = state.chainLabels.get(ch.chain_id) ||
       state.labels.get(ch.style_id) || "unlabeled";
     const t = totals.get(label) ||
-      { count: 0, pt: 0, objects: 0, objSids: new Set(), chains: [] };
+      { count: 0, pt: 0, objects: 0, objSids: new Set(), chains: [], bySid: new Map() };
     t.count += 1; t.pt += chainBilledPt(ch); t.chains.push(ch);
+    // the same footage per style id: the bid view subtracts the styles a
+    // trench run was calculated over (bidRunReplacement), never the family
+    t.bySid.set(ch.style_id, (t.bySid.get(ch.style_id) || 0) + chainBilledPt(ch));
     sheetChains.push(ch);
     if (state.measureMode.get(ch.style_id) === "object")
       t.objSids.add(ch.style_id);
@@ -9634,10 +10150,23 @@ function computeTakeoffRows() {
         dupQty: pt2q(t.dup.excessPt),
         dupLegs: t.dup.sharedLegs,
         sids: [...new Set(t.chains.map(c => c.style_id))],
+        bySid: Object.fromEntries([...t.bySid].map(([k, v]) => [k, pt2q(v)])),
         qtyText: null, priced: !!ftPerIn });
   for (const it of state.extraItems)
     items.push({ label: it.label, cnt: it.unit, unit: it.unit, qty: it.qty,
-                 qtyText: it.qty.toLocaleString(), priced: true, isCalc: true });
+                 qtyText: it.qty.toLocaleString(), priced: true, isCalc: true,
+                 // the trench tool's provenance (which family, which style,
+                 // which utility) and the cut/fill hand-off's row kind, read
+                 // by the bid view and sent with the approve
+                 run: Number.isInteger(it.run) ? it.run : undefined,
+                 runOf: it.runOf || undefined, kind: it.kind || undefined,
+                 utility: it.utility || undefined,
+                 // where the row came from ("cutfill": the Cut / fill engine's)
+                 src: it.src || undefined,
+                 // the parts behind a calculator row (the rooms under a
+                 // flooring row): shown under it, listed in the CSV and the
+                 // report, never added into any figure
+                 details: Array.isArray(it.details) ? it.details : null });
   const byTrade = new Map();
   const trLayers = tradeLayerMap();
   for (const it of items) {
@@ -9691,6 +10220,16 @@ function computeTakeoffRows() {
   // every sheet with no sub-items (rowExt === ext || 0, and `if (it.ext) sub
   // += it.ext` and `sub += it.rowExt` agree on a null/0 ext), so a takeoff
   // that has never used the feature reports the same numbers it always did.
+  // A trench run REPLACES the feet of the family it was calculated over (the bid sheet's rule,
+  // bidRunReplacement): the family row keeps its measured qty and carries `counted`, the feet
+  // that still count beside its runs. Every sum here reads `counted`; the row says the rest.
+  const rep = typeof bidRunReplacement === "function" ? bidRunReplacement(groups.flatMap(g => g.items)) : new Map();
+  for (const g of groups) for (const it of g.items) {
+    const r = rep.get(it);
+    it.counted = r ? r.counted : it.qty;
+    it.replacedQty = r ? r.replaced : 0;
+    it.replacedN = r ? r.n : 0;
+  }
   for (const g of groups) {
     let sub = 0, subQty = 0, subEa = 0;
     const subByUnit = new Map();
@@ -9702,9 +10241,20 @@ function computeTakeoffRows() {
       // is typed - so the heading keeps counting only what the sheet
       // measured, and the components show up in its money, which is the one
       // figure they legitimately belong in.
-      subByUnit.set(it.unit, (subByUnit.get(it.unit) || 0) + it.qty);
-      if (it.unit === "EA") subEa += it.qty;
-      else if (it.unit === "ft" || it.unit === "pt") subQty += it.qty;
+      // cut, fill and the net row are three different things: a heading that adds them
+      // ("99.3k CY" over a 40k cut / 50k fill / 9k import) is a number that exists nowhere
+      const cfk = it.unit === "CY" && typeof bidCfKind === "function" ? bidCfKind(it.label) : null;
+      // the trench tool's dig, bedding and backfill are three quantities too
+      const trk = it.unit === "CY" && !cfk ? ({ trench_dig: "dig", trench_bed: "bedding", trench_backfill: "backfill" })[it.kind] : null;
+      // strip, rough place, export and import topsoil: each its own figure
+      const tpk = it.unit === "CY" && !cfk && !trk && /topsoil/i.test(it.label) ? String(it.label).toLowerCase() : null;
+      const ukey = cfk ? "CY " + (cfk === "export" || cfk === "import" ? "net" : cfk) : trk ? "CY " + trk : tpk ? "CY " + tpk : it.unit;
+      const q = it.counted != null ? it.counted : it.qty;
+      // a family's feet and a run's LF are the same feet: one chip, not an `ft` and an `LF`
+      const ukey2 = ukey === "LF" && ftPerIn ? "ft" : ukey;
+      subByUnit.set(ukey2, (subByUnit.get(ukey2) || 0) + q);
+      if (it.unit === "EA") subEa += q;
+      else if (it.unit === "ft" || it.unit === "pt") subQty += q;
     }
     g.sub = sub; g.subQty = subQty; g.subEa = subEa; g.subByUnit = subByUnit;
     grand += sub;
@@ -9725,6 +10275,19 @@ function computeTakeoffRows() {
 // figure - "2.4k vs 1.5k" hides the 898.4 ft it exists to disclose.
 const q1 = (v) => v.toLocaleString(undefined,
   { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+// The disclosure line under a family row whose feet a trench run replaced: the row keeps its
+// measured feet; the heading, the tiles, the summary and the bid sheet count what is left.
+function runReplacedNote(it, u) {
+  const n = document.createElement("div");
+  n.className = "dup-note run-note";
+  const left = Math.max(0, it.counted != null ? it.counted : 0);
+  n.innerHTML = `<b>${q1(it.replacedQty)}</b> ${u} replaced by ${it.replacedN} trench run row${it.replacedN === 1 ? "" : "s"}`
+    + (left > 0.05 ? ` &mdash; <b>${q1(left)}</b> ${u} not run still counts` : " &mdash; nothing of this row is counted twice");
+  n.title = "The trench tool's run rows carry this family's feet (by depth band). A family and its "
+    + "runs are one footage: the heading, the Plans tiles, the Summary and the bid sheet count the "
+    + "run rows plus whatever of the family no run covers.";
+  return n;
+}
 function dupNote(it, u) {
   const n = document.createElement("div");
   n.className = "dup-note";
@@ -9862,14 +10425,14 @@ function panelRefocus(root, f) {
 // excavator bid families (cut/fill CY, topsoil strip, trench by depth band,
 // pipe by size and material, structures EA, erosion control LF/EA,
 // aggregate/base) crossed with the line families the one estimate on disk
-// actually bills - Beaumont Estimate #853: nine per-LF utility lines
+// actually bills - one client's estimate: nine per-LF utility lines
 // $224,200 (section 15 item 2), the topsoil family $88,815 (item 10),
-// Clear & Grub 224,058 SF (item 9), Perimeter Drain 3,395 LF (item 14),
+// Clear & Grub by the SF (item 9), Perimeter Drain 3,395 LF (item 14),
 // Paths To Subgrade / Slab Prep by the SF (quoted at arData() above) - and
-// the Pierce transcript conventions (section 13: pipe separated by size,
+// a site contractor's stated conventions (section 13: pipe separated by size,
 // sewer priced in 2-ft depth bands). Structures (manholes, inlets,
-// hydrants) ride their SYSTEM's bucket, which is how #853 bills them.
-// Dry utilities have their own two buckets since 2026-09-16: Beaumont bids
+// hydrants) ride their SYSTEM's bucket, which is how the estimate bills them.
+// Dry utilities have their own two buckets since 2026-09-16: the client bids
 // "Gas Trench only" and "Elec/Phone/TV Trench" as their own lines (bid
 // sheet items 17-18; call 2026-09-15, 11:12-11:32 and 58:44: every
 // utility's trench LF, per utility). Before that they fell to UNASSIGNED
@@ -9916,7 +10479,7 @@ const BID_RULES = [
     tokens: ["MASS EXCAVATION", "STRUCTURE EXCAVATION",
              "STRUCTURE BACKFILL"] },
   //    Slab Prep is billed as hardscape by the SF ("Slab Prep 9,237 SF",
-  //    Estimate #853, quoted at arData() above), not as dirt.
+  //    the estimate, quoted at arData() above), not as dirt.
   { bucket: "Site Concrete/Paving", tokens: ["SLAB PREP"] },
   // 2. Erosion & sediment control - section 0's "erosion control LF/EA"
   //    family. BEFORE Clearing/Limits and Landscape so SILT FENCE and TREE
@@ -9926,7 +10489,7 @@ const BID_RULES = [
     tokens: ["SILT", "EROSION", "SWPPP", "SEDIMENT", "WATTLE",
              "FIBER ROLL", "INLET PROTECTION", "CONSTRUCTION ENTRANCE",
              "TREE PROTECTION", "RIPRAP", "ESC"] },
-  // 3. Clearing / limits - #853's own "Clear & Grub 224,058 SF" and Barn
+  // 3. Clearing / limits - the estimate's own "Clear & Grub" SF line and a
   //    C3.0's "BG-Limit of disturbance" layer (section 15 item 9).
   { bucket: "Clearing/Limits",
     tokens: ["LIMIT OF DISTURBANCE", "LIMITS OF DISTURBANCE",
@@ -9937,17 +10500,17 @@ const BID_RULES = [
   //    Landscape/Other (the named-but-not-excavation catch-all) BEFORE the
   //    system rules so a SEWER EASEMENT or a ROAD R.O.W. line reads as the
   //    reference line it is, not as pipe or pavement. ESMT / BNDY /
-  //    PROP LOT are the Kayden p39 drafter's own abbreviations
+  //    PROP LOT are a subdivision p39 drafter's own abbreviations
   //    (C-U2-ESMT-UTIL, C-U2-BNDY, C-U2-PROP-LOT).
   { bucket: "Landscape/Other",
     tokens: ["PROPERTY", "EASEMENT", "ESMT", "SETBACK", "RIGHT OF WAY",
              "R O W", "ROW", "BOUNDARY", "BNDY", "LOT LINE", "PROP LOT",
              "CENTERLINE", "CENTER LINE"] },
   // 5. Earthwork keywords - contours are the grading surface source
-  //    (section 3); topsoil is #853's $88,815 family (section 15 item 10);
+  //    (section 3); topsoil is the estimate's $88,815 family (section 15 item 10);
   //    import/export/haul is section 0's haul-off family. "=CUT"/"=FILL"
   //    are word-bound so BACKFILL stays with its trench run; "=GRADE" so
-  //    "PATHS TO SUBGRADE" (#853 hardscape) never reads as grading;
+  //    "PATHS TO SUBGRADE" (estimate hardscape) never reads as grading;
   //    "=BERM" so BERMUDA sod never reads as a berm. EXCAVAT is
   //    deliberately ABSENT: the trench tool emits "Trench excavation
   //    (<run name>)" and that row must follow its run's system in rules
@@ -9957,12 +10520,12 @@ const BID_RULES = [
     tokens: ["CONTOUR", "GRADING", "=GRADE", "TOPO", "TOPSOIL",
              "EARTHWORK", "SLOPE", "SWALE", "DITCH", "=BERM", "=CUT",
              "=FILL", "IMPORT", "EXPORT", "HAUL"] },
-  // 6. Storm drainage - #853's Perimeter Drain 3,395 LF is drawn as
+  // 6. Storm drainage - the estimate's Perimeter Drain 3,395 LF is drawn as
   //    FOUNDATION DRAIN / FOOTER DRAIN and the drafter's own typo FOTER
   //    (section 15 item 14), so all three are tokens. BEFORE Sanitary so
   //    STORM SEWER stays storm; BEFORE Walls so a HEADWALL stays a storm
   //    structure. Bare DRAIN is the family's net and comes last. A bare
-  //    "CB" token was tried and WITHDRAWN: Barn's own xref namespace is
+  //    "CB" token was tried and WITHDRAWN: one set's own xref namespace is
   //    BG-SWCR-CB-MATERIALS / -CB-PLANTING, so one two-letter project code
   //    read a whole planting plan as catch basins (caught by the node
   //    test). Catch basins still arrive via CATCH BASIN and INLET.
@@ -9971,17 +10534,17 @@ const BID_RULES = [
              "INLET", "HEADWALL", "FES", "ROOF DRAIN", "DOWNSPOUT",
              "UNDERDRAIN", "PERIMETER DRAIN", "FOUNDATION DRAIN",
              "FOOTER DRAIN", "FOTER", "INFILTR", "DRAIN", "RADON"] },
-  // 7. Sanitary sewer - "sanitary + storm + water + force main" are #853's
+  // 7. Sanitary sewer - "sanitary + storm + water + force main" are the estimate's
   //    per-LF utility families (section 15 item 2); SSMH / MANHOLE per the
-  //    Kayden legend's SANITARY SEWER MANHOLE row (section 19); SSWR is
+  //    subdivision legend's SANITARY SEWER MANHOLE row (section 19); SSWR is
   //    that drafter's layer abbreviation (C-U2-SSWR-PIPE); OWTS is an
-  //    onsite wastewater treatment system (septic - Barn's
+  //    onsite wastewater treatment system (septic - one set's
   //    SE-P-OWTS-PDchmbr-trench sys). A storm MANHOLE already matched
   //    STORM above, so the bare word lands here.
   { bucket: "Sanitary Sewer",
     tokens: ["SANITARY", "SEWER", "SSWR", "SSMH", "SS", "FORCE MAIN",
              "FORCEMAIN", "OWTS", "CLEANOUT", "MANHOLE", "MH"] },
-  // 8. Water - hydrants and gate valves are the Kayden legend's own water
+  // 8. Water - hydrants and gate valves are the subdivision legend's own water
   //    rows (section 19); WATR is that drafter's layer abbreviation. "W"
   //    is the lettered-run code (the dash-text class prints W for
   //    waterline) and is tested against the LABEL only (BID_LABEL_ONLY),
@@ -9990,7 +10553,7 @@ const BID_RULES = [
     tokens: ["WATER", "WATR", "HYDRANT", "GATE VALVE", "DOMESTIC",
              "POTABLE", "FIRE LINE", "FIRELINE", "FIREWATER", "IRRIG",
              "WM", "W"] },
-  // 8b. Dry utilities - Beaumont's "Gas Trench only" and "Elec/Phone/TV
+  // 8b. Dry utilities - the client's "Gas Trench only" and "Elec/Phone/TV
   //     Trench" lines (bid sheet items 17-18). G and E are the lettered run
   //     codes ("the E is for electric", 2026-09-15 11:26), label-only like
   //     W. ELEC is whole-word so SELECTED never reads as electric; TELE and
@@ -10012,10 +10575,10 @@ const BID_RULES = [
   //    stays with its trench (a named run's bedding already matched its
   //    system in rules 6-8, because the run name is inside the label).
   { bucket: "Earthwork", tokens: ["BEDDING GRAVEL"] },
-  // 10. Site concrete / paving - #853 bills hardscape by the SF ("Paths To
+  // 10. Site concrete / paving - the estimate bills hardscape by the SF ("Paths To
   //     Subgrade 22,796 SF", quoted at arData()); aggregate/base is
   //     section 0's own family. GUT / FOC / BOC / SWLK / DRWY are the
-  //     Kayden road-layer abbreviations (gutter, face/back of curb,
+  //     subdivision road-layer abbreviations (gutter, face/back of curb,
   //     sidewalk, driveway).
   { bucket: "Site Concrete/Paving",
     tokens: ["CURB", "GUTTER", "=GUT", "FOC", "BOC", "SIDEWALK", "SWLK",
@@ -10026,7 +10589,7 @@ const BID_RULES = [
   // 11. Landscape / other named families. FENCE and RAIL sit here so a
   //     PIPE RAIL never reads as pipe (the generic-pipe rule is below);
   //     "=TREE" is word-bound so STREET never reads as a tree; PLNT /
-  //     EDGER / BOULDER are Barn's own planting-plan layer names.
+  //     EDGER / BOULDER are one set's own planting-plan layer names.
   { bucket: "Landscape/Other",
     tokens: ["LANDSCAP", "=TREE", "TREES", "SHRUB", "PLNT", "PLANT",
              "SOD", "SEED", "MULCH", "EDGER", "BOULDER", "POOL", "FENCE",
@@ -10072,48 +10635,217 @@ async function bsLoad(force) {
   return bsSheet;
 }
 function bsMode() { return store.getItem("bid.sheetMode") === "1"; }
-function bsLineFor(label, layer, lines) {
-  const raw = String(label == null ? "" : label);
-  const passes = [bidNormText(raw), bidNormText(raw + " " + String(layer == null ? "" : layer))];
-  for (let p = 0; p < passes.length; p++)
+// ---- net rows, trench runs and the utility pass (audit 2026-09-26: D02, D03, D17, plan 7.4) ----
+// Mirrors takeoff_engine/bidsheet.py (NET_ROW_RE / NET_WORDS / UTILITY_WORDS /
+// RUN_SUFFIX / family_replacement) so the screen and the CSV file every row
+// the same way; tests/fixtures/bidsheet_rows.json pins both to one answer.
+const BS_NET_RE = /^(Export|Import)\b/i;
+const BS_NET_WORDS = ["EXPORT", "IMPORT", "HAUL", "NET"];
+const BS_UTILITY_WORDS = { water: "WATER", sewer: "SANITARY SEWER", storm: "STORM DRAIN",
+                           gas: "GAS", electric: "ELECTRIC" };
+const BS_RUN_SUFFIX = " (run)";
+// Which cut/fill figure a row is. The heading chips keep these apart: cut,
+// fill and the net are three different quantities and adding them into one
+// CY figure (2,000 CY for a 1,000 cut / 400 fill / 600 export sheet) was
+// the D17 defect.
+function bidCfKind(label) {
+  const s = String(label == null ? "" : label);
+  if (/^(Site Cut|Cut \(earthwork\))( – .+)?$/.test(s)) return "cut";
+  if (/^(Site Fill|Fill \(earthwork\))( – .+)?$/.test(s)) return "fill";
+  // topsoil hauled off or brought in is its own dirt and its own bid line (28 / 29): never
+  // the cut / fill net
+  if (/topsoil/i.test(s)) return null;
+  // a layer's own row (Export Asphalt) is that layer's dirt, not the cut / fill net
+  if (typeof bsForeignLayer === "function" && bsForeignLayer(s)) return null;
+  if (/^Export\b/i.test(s)) return "export";
+  if (/^Import\b/i.test(s)) return "import";
+  return null;
+}
+const BS_CF_ORDER = ["cut", "fill", "export", "import"];
+// Only a token that itself says export / import / haul / net may file a net
+// row - never CUT, FILL or a seat's own edit of them (the D02 doubling).
+function bidNamesNet(tok) {
+  const t = String(tok).replace(/^=/, "");
+  return BS_NET_WORDS.some((w) => t.indexOf(w) >= 0);
+}
+// Three passes: the label alone; the label plus the utility the trench run
+// was calculated as (a pattern-named family's run lands on the utility's
+// line); the label with its CAD layer (one-letter tokens on the label
+// passes only). A net row is filed only by a token that names the net or
+// by a line's own regex.
+// A grading zone's own row files exactly as Site Cut / Site Fill: the zone's name never reaches the
+// matcher, so a zone called "export pad" cannot veto it off its line (bidsheet.py CF_PART_RE)
+const BS_CF_PART_RE = /^(Site (?:Cut|Fill)) – .+$/;
+// A LAYER'S OWN ROW from the live product's earthwork calculator (Export / Rough Place / Remove
+// <layer>): when the layer is not cut or topsoil, no default line names it, so it files only on a
+// line whose token names the layer (and the row's verb) - else "Not on the bid sheet" with its
+// quantity, never Export Cut ("Export Asphalt" went there through the bare EXPORT token). A line's
+// `re` never files it. Mirrors bidsheet.py foreign_layer / _names_layer.
+// "Removal of <x>" is "Remove <x>"; a layer whose first word is cut (after an optional "surplus")
+// is cut, so "Export cut (net)" / "Export Cut - Zone A" keep line 26 (critic RISK-1)
+const BS_CG_ROW_RE = /\bcurb\s*(?:and|&|n|\/|\+)?\s*gutters?\b|\bc\s*&\s*g\b/i;
+const BS_CG_CURB_RE = /\bcurb|\bc\s*&\s*g\b/i;
+const BS_CG_GUTTER_RE = /\bgutter/i;
+const BS_LAYER_ROW_RE = /^(Export|Rough Place|Remove|Removal(?:\s+of)?)\s+(\S.*)$/i;
+const BS_DIRT_LAYER_RE = /^(surplus\s+)?cut\b|^surplus\b|\btopsoil\b/i;
+const BS_LAYER_VERB = { "export": null, "rough place": ["PLACE"], "remove": ["REMOVE", "REMOVAL"] };
+function bsForeignLayer(label) {
+  const m = BS_LAYER_ROW_RE.exec(String(label == null ? "" : label).trim());
+  if (!m || BS_DIRT_LAYER_RE.test(m[2].trim())) return null;
+  const name = bidNormText(m[2]).trim();
+  const v = m[1].toLowerCase().split(/\s+/).join(" ");
+  return name ? { verb: v.indexOf("remov") === 0 ? "remove" : v, name } : null;
+}
+function bsNamesLayer(tok, fl) {
+  const t = bidNormText(String(tok).replace(/^=/, ""));
+  if (t.indexOf(" " + fl.name + " ") < 0) return false;
+  const ws = BS_LAYER_VERB[fl.verb];
+  return !ws || ws.some((w) => t.indexOf(" " + w + " ") >= 0);
+}
+function bsLineFor(label, layer, lines, utility, kind) {
+  let raw = String(label == null ? "" : label);
+  const part = BS_CF_PART_RE.exec(raw); if (part) raw = part[1];
+  // curb and gutter files only on a line whose NAME says curb (first) or gutter - never on Site
+  // Drains through GUTTER (bidsheet.py CG_ROW_RE; an inference from line 21's note, critic RISK-7)
+  if (BS_CG_ROW_RE.test(raw)) {
+    for (const want of [BS_CG_CURB_RE, BS_CG_GUTTER_RE])
+      for (let i = 0; i < lines.length; i++)
+        if (want.test(String(lines[i].name || ""))) return { index: i, how: "name" };
+    return { index: -1, how: null };
+  }
+  const net = kind === "net" || BS_NET_RE.test(raw);
+  const fl = kind !== "net" ? bsForeignLayer(raw) : null;
+  const uw = BS_UTILITY_WORDS[String(utility || "").trim().toLowerCase()];
+  const passes = [[0, bidNormText(raw)]];
+  if (uw) passes.push([1, bidNormText(raw + " " + uw)]);
+  passes.push([2, bidNormText(raw + " " + String(layer == null ? "" : layer))]);
+  for (const [p, norm] of passes)
     for (let i = 0; i < lines.length; i++) {
       const ln = lines[i];
-      if ((ln.not || []).some((t) => bidTokenHit(passes[p], t))) continue;
-      if (ln.re && p === 0) {
+      if ((ln.not || []).some((t) => bidTokenHit(norm, t))) continue;
+      if (ln.re && p === 0 && !fl) {
         let rx = null;
         try { rx = new RegExp(ln.re); } catch (e) { rx = null; }
         if (rx && rx.test(raw)) return { index: i, how: "re" };
       }
       for (const tok of (ln.match || [])) {
-        if (p === 1 && BS_LABEL_ONLY.indexOf(tok) >= 0) continue;
-        if (bidTokenHit(passes[p], tok)) return { index: i, how: tok };
+        if (p === 2 && BS_LABEL_ONLY.indexOf(tok) >= 0) continue;
+        if (net && !bidNamesNet(tok)) continue;
+        // a layer row files on a token naming its layer and verb, whichever spelling of the verb
+        if (fl) { if (bsNamesLayer(tok, fl)) return { index: i, how: tok }; continue; }
+        if (bidTokenHit(norm, tok)) return { index: i, how: tok };
       }
     }
   return { index: -1, how: null };
+}
+// A TRENCH RUN REPLACES ITS FAMILY (D03). The "(run)" row is the same
+// footage as the line family it was calculated over, so both on a bid line
+// counted the sewer twice (563.2 LF against 270 on the client's estimate).
+// A run row carries `run` (the style id) and `runOf` (the family label);
+// a measured family row carries `bySid` (its quantity per style id). The
+// family counts only the styles no run covers; the runs count in full.
+// Without ids (a row saved before 2026-09-26) the whole family is replaced.
+// Returns Map(family row -> {counted, replaced, n, utility}).
+function bidRunReplacement(rows) {
+  const runs = [];
+  for (const r of rows || []) {
+    const lab = String(r.label == null ? "" : r.label);
+    const legacy = lab.endsWith(BS_RUN_SUFFIX);
+    if (r.kind !== "trench_run" && !legacy) continue;
+    runs.push({ of: r.runOf || (legacy ? lab.slice(0, -BS_RUN_SUFFIX.length) : ""),
+                sid: Number.isInteger(r.run) ? r.run : null, utility: r.utility || "",
+                tagged: r.kind === "trench_run" && !!r.runOf,
+                lf: typeof r.qty === "number" && isFinite(r.qty) ? r.qty : 0 });
+  }
+  const out = new Map();
+  if (!runs.length) return out;
+  for (const r of rows || []) {
+    if (r.isCalc || !(r.unit === "ft" || r.unit === "pt" || r.unit === "LF")) continue;
+    const mine = runs.filter((x) => x.of === r.label);
+    if (!mine.length) continue;
+    const qty = typeof r.qty === "number" && isFinite(r.qty) ? r.qty : 0;
+    let covered = qty;
+    // tagged runs (kind trench_run) are parts of the family: subtract their own feet, so a
+    // family with one of three runs added keeps its other two runs' feet on the line; a
+    // legacy "(run)" row with no tags stands for the whole family, as before
+    if (mine.every((x) => x.tagged)) covered = Math.min(qty, mine.reduce((a, x) => a + x.lf, 0));
+    else if (r.bySid && mine.every((x) => x.sid !== null)) {
+      covered = 0;
+      for (const sid of new Set(mine.map((x) => x.sid))) covered += +(r.bySid[sid] || 0);
+      covered = Math.min(covered, qty);
+    }
+    out.set(r, { counted: Math.max(0, qty - covered), replaced: covered, n: mine.length,
+                 utility: r.utility || (mine.find((x) => x.utility) || {}).utility || "" });
+  }
+  return out;
+}
+// One adder for both groupings: a cut / fill / net row goes to its own
+// chip (B.cf[kind][unit]); everything else sums per unit in B.byUnit.
+function bidAddQty(B, unit, qty, cf) {
+  if (cf) {
+    B.cf[cf] = B.cf[cf] || {};
+    B.cf[cf][unit] = (B.cf[cf][unit] || 0) + qty;
+  } else B.byUnit[unit] = (B.byUnit[unit] || 0) + qty;
 }
 // The bid view's rows regrouped onto the sheet's lines: every line in
 // order, blanks included (the sheet's empty lines are what the takeoff has
 // not produced yet), then the rows no line names. Same shape bidGroupRows
 // returns, so renderBidView draws both the same way. A row adds into a
 // line only in the line's unit; anything else is listed and kept out.
-function bsGroupRows(rows, lines) {
-  const out = lines.map((ln, i) => ({ bucket: `${ln.n || i + 1}. ${ln.name}`, line: ln, n: 0, byUnit: {}, members: [], other: {} }));
-  const un = { bucket: "Not on the bid sheet", line: null, n: 0, byUnit: {}, members: [], other: {} };
+// The unit a row files in, exactly as bidsheet.item_unit reads the export: upper-cased, feet of any
+// spelling are LF. ("pt" stays PT: a length with no scale is in no unit the sheet has.)
+function bsRowUnit(u) {
+  const s = String(u == null ? "" : u).trim().toUpperCase();
+  return s === "FT" || s === "FEET" || s === "LF" ? "LF" : s;
+}
+// A DECLARED SUB-ITEM is exported by Approve as its own priced row, named by subExportLabel
+// ("Removal of existing sidewalk (sub-item of P1-WALK)", subExportRows), and the CSV / report file
+// it by that name like any row. The sheet view therefore files it the same way, as its own member
+// - never riding inside its parent's line (live proof 2026-10-01: the screen put it on line 18 with
+// its parent, the CSV under "Not on the bid sheet"). The bucket view (by trade) keeps the parent.
+function bsExpandSubs(rows) {
+  const out = [];
   for (const r of rows || []) {
+    const subs = r.subs || [];
+    out.push(subs.length ? Object.assign({}, r, { subs: [], subExt: 0 }) : r);
+    for (const s of subs) {
+      if (!Number.isFinite(s.qty) || s.qty <= 0) continue;     // subExportRows exports none of these
+      out.push({ label: subExportLabel(r.label, s.rec.name, 80), unit: s.rec.unit, qty: s.qty,
+                 cnt: 1, sids: [], isCalc: true, declared: true, subOf: r.label, subs: [] });
+    }
+  }
+  return out;
+}
+function bsGroupRows(rows0, lines) {
+  const out = lines.map((ln, i) => ({ bucket: `${ln.n || i + 1}. ${ln.name}`, line: ln, n: 0, byUnit: {}, cf: {}, members: [], other: {} }));
+  const un = { bucket: "Not on the bid sheet", line: null, n: 0, byUnit: {}, cf: {}, members: [], other: {} };
+  const rows = bsExpandSubs(rows0);
+  const rep = bidRunReplacement(rows);
+  for (const r of rows) {
     // by the row's NAME only: the approved export the CSV and the report
     // are built from carries no CAD layer, so the screen must file the
     // same way or the two would disagree (the layer pass is the bucket
-    // view's; measured on Barn C3.0 it put 27k ft of contour on Boulder walls)
-    const hit = bsLineFor(r.label, null, lines);
-    const unit = r.unit === "pt" || r.unit === "ft" ? "LF" : String(r.unit || "").toUpperCase();
+    // view's; measured on a civil sheet C3.0 it put 27k ft of contour on Boulder walls)
+    const rp = rep.get(r) || null;
+    const utility = r.utility || (rp && rp.utility) || null;
+    const hit = bsLineFor(r.label, null, lines, utility, r.kind);
+    // feet are the sheet's LF; points (no scale on the sheet) are not a
+    // length in any unit the sheet has, so they are listed, never summed
+    const unit = bsRowUnit(r.unit);
     const B = hit.index >= 0 ? out[hit.index] : un;
     const ok = B.line ? (B.line.unit !== "LS" && unit === B.line.unit) : true;
+    const counted = rp ? rp.counted : (typeof r.qty === "number" && isFinite(r.qty) ? r.qty : null);
     const m = Object.assign({}, r, { bucket: B.bucket, ruleBucket: "", token: hit.how, via: "sheet",
-                                     size: bidSizeToken(r.label), sheetUnit: unit, sheetOk: ok });
+                                     size: bidSizeToken(r.label), sheetUnit: unit, sheetOk: ok,
+                                     counted, replaced: rp ? rp.replaced : 0, runs: rp ? rp.n : 0,
+                                     utility, cf: bidCfKind(r.label) });
     B.n += 1;
-    if (typeof m.qty === "number" && isFinite(m.qty)) {
-      if (ok) B.byUnit[r.unit] = (B.byUnit[r.unit] || 0) + m.qty;
-      else B.other[unit] = (B.other[unit] || 0) + m.qty;
+    if (typeof counted === "number" && isFinite(counted)) {
+      // in the LINE's unit (a measured family's ft and a trench run's LF are
+      // one LF sum here, as in the CSV) - the screen used to print
+      // "298.4 ft · 264.8 LF" as two chips the reader had to add (D03)
+      if (ok) bidAddQty(B, unit, counted, m.cf);
+      else B.other[unit] = (B.other[unit] || 0) + counted;
     }
     B.members.push(m);
   }
@@ -10123,17 +10855,58 @@ function bsGroupRows(rows, lines) {
 }
 // the job's bid-sheet CSV, carrying the cross-sheet panel's unticks so the
 // file agrees with the screen (page:label, one per unticked contribution)
-function bsCsvUrl() {
+// Only the OPEN document's unticks (xsKey: "<doc> p<page> :: <label>"): the set is session-wide, and
+// another document's "p1 :: WATER MAIN" sent with this job's request unticked this job's page 1 row of
+// the same name (live proof 2026-10-01, B4).
+function bsIgnoreQuery() {
   const q = [];
+  const pre = (state.docName || "?") + " p";
   for (const k of (state.xsIgnore || [])) {
-    const m = /^.* p(\d+) :: ([\s\S]+)$/.exec(k);
+    const s = String(k);
+    if (s.indexOf(pre) !== 0) continue;
+    const m = /^(\d+) :: ([\s\S]+)$/.exec(s.slice(pre.length));
     if (m) q.push("ignore=" + encodeURIComponent(m[1] + ":" + m[2]));
   }
-  return url(`/api/job/${state.job}/bidsheet.csv` + (q.length ? "?" + q.join("&") : ""));
+  return q.length ? "?" + q.join("&") : "";
+}
+function bsCsvUrl() {
+  return url(`/api/job/${state.job}/bidsheet.csv` + bsIgnoreQuery());
+}
+// the report's bid page takes the same unticks (server.py _bid_build), so the PDF and the CSV agree
+function bsReportUrl() {
+  return url(`/api/job/${state.job}/report.pdf` + bsIgnoreQuery());
 }
 function bsLinkSync() {
   const bl = $("bidsheetLink");
   if (bl && !bl.hidden) bl.href = bsCsvUrl();
+  const rl = $("reportLink");
+  if (rl && !rl.hidden) rl.href = bsReportUrl();
+}
+// THE DOWNLOAD LINKS BELONG TO THE JOB ON SCREEN (live proof 2026-10-01, B3). Approve points
+// #dlLink / #reportLink / #bidsheetLink at its job; opening another job in the same tab left them
+// there, and "Bid sheet CSV" downloaded the previous job's bid sheet. applyOpened hides them and drops
+// their href on every open, then shows them again only from the server's answer for the job now
+// open (its approved pages); an answer for a job no longer open changes nothing.
+const JOB_LINK_IDS = ["dlLink", "reportLink", "bidsheetLink"];
+function jobLinksReset() {
+  for (const id of JOB_LINK_IDS) {
+    const a = $(id);
+    if (a) { a.hidden = true; a.removeAttribute("href"); }
+  }
+}
+async function jobLinksSync(job) {
+  let j = null;
+  try { const r = await fetch(`/api/job/${job}/approved`); if (r.ok) j = await r.json(); } catch (e) { return; }
+  if (!j || job !== state.job) return;
+  const pages = (j.pages || []).map(Number).filter(Number.isInteger);
+  if (!pages.length) return;
+  const pg = pages.indexOf(state.page) >= 0 ? state.page : pages[0];
+  const a = $("dlLink");
+  if (a) { a.href = url(`/api/job/${job}/page/${pg}/elements`); a.hidden = false; }
+  const rl = $("reportLink");
+  if (rl) { rl.href = bsReportUrl(); rl.hidden = false; }
+  const bl = $("bidsheetLink");
+  if (bl) { bl.href = bsCsvUrl(); bl.hidden = false; }
 }
 
 function bidNormText(s) {
@@ -10141,15 +10914,18 @@ function bidNormText(s) {
     .replace(/[^A-Z0-9]+/g, " ").trim() + " ");
 }
 function bidTokenHit(norm, tok) {
-  const word = tok.charAt(0) === "=";
-  const t = word ? tok.slice(1) : tok;
+  // the typed word gets the SAME cleaning as the row name ("O-PIPE" meets " O PIPE ";
+  // UI verify 2026-10-02 #2) - mirrors bidsheet.py token_hit
+  const word = String(tok).charAt(0) === "=";
+  const t = bidNormText(word ? String(tok).slice(1) : tok).trim();
+  if (!t) return false;
   if (word || t.length <= 3) return norm.indexOf(" " + t + " ") >= 0;
   return norm.indexOf(t) >= 0;
 }
 // Two passes: the name the legend or the operator gave the row outranks
 // the CAD layer path (a FIRE HYDRANT filed on a PROP-LOT layer is a
 // hydrant). The layer is the tie-breaker for rows whose label matches
-// nothing (Kayden's garbled "$nWonLo (legend)" label on the
+// nothing (the subdivision's garbled "$nWonLo (legend)" label on the
 // C-U2-ESMT-SSWR layer is an easement).
 function bidBucketFor(label, layer) {
   const rawLabel = String(label == null ? "" : label);
@@ -10172,7 +10948,7 @@ function bidBucketFor(label, layer) {
   return { bucket: BID_UNASSIGNED, token: null };
 }
 // A size token the LABEL itself carries - 8", 10'', 8IN, 12-INCH. Display
-// grouping only (Pierce, section 13: "Combined the 8\" and 12\" sewer line
+// grouping only (site contractor, section 13: "Combined the 8\" and 12\" sewer line
 // into one item. It would be preferable if it was separated"). Nothing is
 // inferred: no token in the name, no size on the row. A bare "8 PVC" is
 // deliberately NOT read as a size - a number with no inch mark could be a
@@ -10191,22 +10967,30 @@ function bidSizeToken(label) {
 function bidGroupRows(rows, ovFor) {
   const byB = {};
   for (const b of BID_BUCKETS)
-    byB[b] = { bucket: b, n: 0, byUnit: {}, members: [] };
+    byB[b] = { bucket: b, n: 0, byUnit: {}, cf: {}, members: [] };
+  // the same replacement and the same chips as the sheet view (bsGroupRows):
+  // a family a trench run replaced counts only what no run covers, and cut /
+  // fill / net rows never share a chip
+  const rep = bidRunReplacement(rows);
   for (const r of rows || []) {
     const ruled = bidBucketFor(r.label, r.layer);
     const ovRaw = ovFor ? ovFor(r.label) : null;
     const ov = ovRaw && BID_BUCKETS.indexOf(ovRaw) >= 0 ? ovRaw : null;
+    const rp = rep.get(r) || null;
+    const counted = rp ? rp.counted : (typeof r.qty === "number" && isFinite(r.qty) ? r.qty : null);
     const m = Object.assign({}, r, {
       bucket: ov || ruled.bucket,
       ruleBucket: ruled.bucket,
       token: ruled.token,
       via: ov ? "override" : "rule",
       size: bidSizeToken(r.label),
+      counted, replaced: rp ? rp.replaced : 0, runs: rp ? rp.n : 0,
+      utility: r.utility || (rp && rp.utility) || null, cf: bidCfKind(r.label),
     });
     const B = byB[m.bucket];
     B.n += 1;
-    if (typeof m.qty === "number" && isFinite(m.qty))
-      B.byUnit[m.unit] = (B.byUnit[m.unit] || 0) + m.qty;
+    if (typeof counted === "number" && isFinite(counted))
+      bidAddQty(B, m.unit, counted, m.cf);
     B.members.push(m);
   }
   for (const b of BID_BUCKETS)
@@ -10214,7 +10998,7 @@ function bidGroupRows(rows, ovFor) {
   return BID_BUCKETS.map((b) => byB[b]);
 }
 // Footage per size token within one bucket's members, for the Storm
-// Drainage sub-line (Pierce, section 13). Rows with no size token in their
+// Drainage sub-line (site contractor, section 13). Rows with no size token in their
 // own name are reported as such - never guessed into a size.
 function bidBySize(members, unit) {
   const out = {};
@@ -10300,6 +11084,11 @@ function renderBidView(groups, ftPerIn) {
                   unit: it.unit === "pt" || it.unit === "ft" ? u : it.unit,
                   qty: it.qty, cnt: it.cnt, sids: it.sids || [],
                   isCalc: !!it.isCalc, ov: !!it.ov,
+                  // per-style footage of a family and the trench tool's
+                  // provenance on a run row: what lets a run replace exactly
+                  // the styles it was calculated over (bidRunReplacement)
+                  bySid: it.bySid || null, run: it.run, runOf: it.runOf,
+                  kind: it.kind, utility: it.utility,
                   // Components ride WITH their parent row into whichever bid
                   // line the rule table (or the operator) files it under.
                   // They are deliberately not run through bidBucketFor: a
@@ -10321,11 +11110,33 @@ function renderBidView(groups, ftPerIn) {
   const abbr = (v) => v >= 1000 ? (v / 1000).toFixed(1) + "k"
     : String(Math.round(v * 10) / 10);
   const unitOrder = (x) => x === "ft" || x === "pt" ? 0 : x === "EA" ? 1 : 2;
-  const chipText = (byUnit) => {
+  // Cut, fill and the net (export / import) are three quantities, each on
+  // its own chip: "1.0k CY cut · 400 CY fill · 600 CY export", never one
+  // 2,000 CY figure (D17). Everything else sums per unit as before.
+  const chipText = (B) => {
     const parts = [];
+    const members = B.members || [];
+    for (const k of BS_CF_ORDER) {
+      const m = B.cf && B.cf[k];
+      if (!m) continue;
+      for (const un2 of Object.keys(m).sort()) if (m[un2]) parts.push(abbr(m[un2]) + " " + un2 + " " + k);
+    }
+    const byUnit = B.byUnit || {};
     for (const k of Object.keys(byUnit).sort(
-           (a, b) => unitOrder(a) - unitOrder(b) || a.localeCompare(b)))
-      if (byUnit[k]) parts.push(abbr(byUnit[k]) + " " + k);
+           (a, b) => unitOrder(a) - unitOrder(b) || a.localeCompare(b))) {
+      if (!byUnit[k]) continue;
+      // CUBIC YARDS ARE NEVER ONE NUMBER: cut, fill and the net are different dirt (the net is a
+      // part of one of them), so a bucket holding them shows each CY row by name instead of a
+      // sum (a 1,000 cut / 1,600 fill site read "3.2k CY" here)
+      // (cut, fill and the net rows already have their own chips above: these are the others)
+      const cy = members.filter((m) => m.unit === "CY" && typeof m.qty === "number" && isFinite(m.qty) && !bidCfKind(m.label));
+      if (k === "CY" && cy.length > 1) {
+        const short = (l) => String(l || "").replace(/^Site /, "").replace(/ Topsoil$/, " topsoil").toLowerCase();
+        parts.push(cy.length <= 4 ? cy.map((m) => short(m.label) + " " + abbr(m.qty)).join(" · ") + " CY" : cy.length + " CY rows");
+        continue;
+      }
+      parts.push(abbr(byUnit[k]) + " " + k);
+    }
     return parts.join(" · ");
   };
   let any = false;
@@ -10350,23 +11161,23 @@ function renderBidView(groups, ftPerIn) {
     // what the sheet measured, and a typed component must never arrive
     // inside one of them.
     let bDecl = 0;
-    for (const m of B.members) bDecl += (m.subs || []).length;
+    for (const m of B.members) bDecl += (m.subs || []).length + (m.declared ? 1 : 0);
     const declTxt = bDecl
       ? " · " + bDecl + " declared sub-item" + (bDecl === 1 ? "" : "s") : "";
     const otherTxt = sheetMode && B.line
       ? Object.keys(B.other || {}).map((k) => abbr(B.other[k]) + " " + k).join(" · ") : "";
     if (sheetMode) sub.textContent = !B.line
-      ? B.n + " row" + (B.n === 1 ? "" : "s") + " no line names / " + (chipText(B.byUnit) || "0 " + u)
+      ? B.n + " row" + (B.n === 1 ? "" : "s") + " no line names / " + (chipText(B) || "0 " + u)
         + " — add a word to a line in Settings, or leave them out on purpose" + declTxt
       : !B.n ? "— nothing on this line yet (" + B.line.unit + ")"
-      : (B.line.unit === "LS" ? "lump sum" : (chipText(B.byUnit) || "0 " + B.line.unit))
+      : (B.line.unit === "LS" ? "lump sum" : (chipText(B) || "0 " + B.line.unit))
         + " · " + B.n + " row" + (B.n === 1 ? "" : "s")
         + (otherTxt ? " · " + otherTxt + " not summed (other unit)" : "") + declTxt;
     else sub.textContent = un
       ? B.n + " row" + (B.n === 1 ? "" : "s") + " / "
-        + (chipText(B.byUnit) || "0 " + u)
+        + (chipText(B) || "0 " + u)
         + " not yet assigned — open the style list" + declTxt
-      : (chipText(B.byUnit) || "0") + " · " + B.n
+      : (chipText(B) || "0") + " · " + B.n
         + " row" + (B.n === 1 ? "" : "s") + declTxt;
     sum.append(nm, sub);
     sum.title = un
@@ -10381,7 +11192,7 @@ function renderBidView(groups, ftPerIn) {
         + "its linework.";
     d.appendChild(sum);
     // Storm by size, when any member's own label carries a size token
-    // (Pierce: pipe separated by size).
+    // (site contractor: pipe separated by size).
     // by size: the storm bucket always; in sheet mode every LF line (his "storm LF per size")
     if (B.bucket === "Storm Drainage" || (sheetMode && B.line && B.line.unit === "LF")) {
       const bs = bidBySize(B.members, u);
@@ -10417,7 +11228,7 @@ function renderBidView(groups, ftPerIn) {
       const q = document.createElement("span");
       q.className = "bm-qty";
       q.textContent = abbr(m.qty) + " " + m.unit
-        + (m.isCalc || m.unit === "EA" ? "" : " · " + m.cnt + " lines");
+        + (m.isCalc || m.unit === "EA" ? "" : " · " + nWord(m.cnt, "line"));
       q.title = m.qty.toLocaleString(undefined,
         { maximumFractionDigits: 1 }) + " " + m.unit
         + (m.ov ? " (your override; the itemized row discloses the "
@@ -10449,11 +11260,40 @@ function renderBidView(groups, ftPerIn) {
       };
       row.appendChild(pick);
       }
+      // a declared sub-item filed by its own exported name (bsExpandSubs): tagged as typed, not measured
+      if (m.declared) {
+        row.appendChild(subTagEl());
+        lab.title = m.label + "\n\nA sub-item of " + (m.subOf || "") + " - operator-declared, not measured. "
+          + "Filed by its own name, as the bid-sheet CSV and the report file it. Edit it in the itemized takeoff.";
+      }
       if (sheetMode && m.sheetOk === false) {
         const nu = document.createElement("span");
         nu.className = "bm-nounit";
         nu.textContent = "not summed: " + m.sheetUnit + " on a " + (B.line ? B.line.unit : "") + " line";
         row.appendChild(nu);
+      }
+      // a family a trench run replaced: the run row carries its footage, so
+      // the family counts only what no run covers (D03) - said on the row
+      if (m.runs) {
+        const rp = document.createElement("span");
+        rp.className = "bm-nounit bm-note";
+        rp.textContent = m.counted > 0.05
+          ? abbr(m.replaced) + " " + m.unit + " replaced by " + m.runs + " run row" + (m.runs === 1 ? "" : "s")
+            + "; " + abbr(m.counted) + " " + m.unit + " not run counts"
+          : "replaced by its run row" + (m.runs === 1 ? "" : "s");
+        rp.title = "The trench tool's run row is this family's own footage measured "
+          + "for the trench, so the family is not added to the bid line a second "
+          + "time. Styles of the family no run was calculated over still count.";
+        row.appendChild(rp);
+      }
+      // the utility a trench row was calculated as: what files a
+      // pattern-named run on the utility's line (plan 7.4)
+      if (m.utility && (m.kind || "").indexOf("trench") === 0) {
+        const ut = document.createElement("span");
+        ut.className = "bm-size";
+        ut.textContent = m.utility;
+        ut.title = "the utility picked in the trench panel for this run; a run whose family name matches no line files by this word";
+        row.appendChild(ut);
       }
       if (m.sids.length) {
         row.onclick = () => bidIsolate(m, row);
@@ -10895,6 +11735,23 @@ function subPaint(box, it, u) {
   box.appendChild(subAddEl(it, u));
 }
 
+// One line under a calculator row naming what it is made of: "3 rooms:
+// BED #2 135.5 SF · BED #3 123.3 SF · FOYER 147.9 SF". Nothing here is a
+// figure of its own; it is how a client checks the row against the plan.
+function detailNote(it) {
+  const d = document.createElement("div");
+  d.className = "detail-note";
+  const parts = it.details.map(x => {
+    const q = +x.qty;
+    const qs = isFinite(q) ? q.toLocaleString(undefined, { maximumFractionDigits: 1 }) : "?";
+    // a part may carry its own unit, or none at all (a count of faces)
+    const un = x.unit !== undefined && x.unit !== null ? x.unit : it.unit;
+    return `${x.name} ${qs}${un ? " " + un : ""}` + (x.note ? ` (${x.note})` : "");
+  });
+  d.textContent = `${it.details.length} part${it.details.length === 1 ? "" : "s"}: ${parts.join(" · ")}`;
+  d.title = "Reference for checking the row against the plan. These are listed under the row in the CSV and on the report; they are not added into any figure.";
+  return d;
+}
 function renderItemized() {
   const box = $("itemized");
   const keepFocus = panelFocus(box);
@@ -11029,7 +11886,9 @@ function renderItemized() {
       // Under the column's own "$/ft" head the cell now says what to do.
       // Same empty state, same key, same write - only the invitation is new.
       pin.type = "number"; pin.step = "0.01"; pin.placeholder = "set";
-      pin.title = "Unit price for this row, in $/" + (it.unit === "pt" ? "pt" : it.unit)
+      pin.title = (priceLabel(it.label) !== it.label
+          ? `Priced as ${priceLabel(it.label)}: one unit price for every zone's ${priceLabel(it.label).toLowerCase()} row and for a plain ${priceLabel(it.label)} row, in $/`
+          : "Unit price for this row, in $/") + (it.unit === "pt" ? "pt" : it.unit)
         + ". Empty means no rate is set, so this row carries no dollars.";
       pin.name = "price-" + it.label;
       if (it.price) pin.value = it.price;
@@ -11069,6 +11928,11 @@ function renderItemized() {
       // a screenshot review, a theme swap, or a colour-blind reader.
       if (it.ov) box.appendChild(ovNote(it, u));
       if (it.dupQty > 0.05) box.appendChild(dupNote(it, u));
+      if (it.replacedQty > 0.05) box.appendChild(runReplacedNote(it, u));
+      // THE PARTS BEHIND A CALCULATOR ROW - the rooms under a flooring
+      // row - one line each, so the row can be checked against the plan.
+      // Reference only: the row's quantity is the row's quantity.
+      if (it.details && it.details.length) box.appendChild(detailNote(it));
       // SUB-ITEMS: the components this line item carries, nested under it,
       // each tagged declared, each rolled into the ext cell above.
       subPaint(box, it, u);
@@ -11197,8 +12061,8 @@ function renderItemized() {
       + `crossing an edge counts exactly its inside piece. Nothing is `
       + `deleted: clear the work area and every number returns. Welded-gap `
       + `footage inside a chain is apportioned by that chain's inside `
-      + `fraction. The earthwork and trench calculators keep their own `
-      + `boundary (the limit of work) and are NOT masked by the work area.\n\n`
+      + `fraction. Cut / fill and Trench keep their own boundary (the limit `
+      + `of work) and are NOT masked by the work area.\n\n`
     : "";
   const subPrefix = subN
     ? `${subN} SUB-ITEM(S) are declared on this sheet - components an `
@@ -11263,9 +12127,9 @@ Both are included in every `
 // Appended to every CSV. Set from /api/beta-notice so it cannot drift from
 // the banner and the report stamp; the fallback matters because a CSV with no
 // caveat is the version that ends up pasted into a bid.
-let BETA_CSV_TAIL = "\n\nBETA SOFTWARE - quantities are produced by "
-  + "automated detection and can be wrong. Check every figure against the "
-  + "source drawings before relying on it.\n";
+let BETA_CSV_TAIL = "\n\nAutomated detection can be wrong. Double-check every "
+  + "quantity against the drawings. Line and scale readings can also be "
+  + "incomplete.\n";
 
 async function loadBetaNotice() {
   let n = null;
@@ -11274,7 +12138,7 @@ async function loadBetaNotice() {
     if (r.ok) n = await r.json();
   } catch (e) { /* keep the built-in wording */ }
   if (n && n.long) BETA_CSV_TAIL = "\n\n" + n.long.replace(/"/g, '""') + "\n";
-  // #betaBanner is now the header's amber BETA chip rather than the
+  // #betaBanner is now the header's amber flag chip rather than the
   // full-width strip (UI FIX 1, approved by sight on the mocks). The
   // server's sentence still lands on it verbatim - as the title, which is
   // what the chip exists to point at - so the wording on screen, in the CSV
@@ -11283,6 +12147,7 @@ async function loadBetaNotice() {
   // continues to carry the sheet-specific warning in full.
   const el = $("betaBanner");
   if (el && n && n.short) el.title = n.short;
+  if (el && n && n.chip) el.textContent = n.chip;
 }
 loadBetaNotice();
 
@@ -11300,6 +12165,8 @@ let svMe = null;
 // never be left saying "asking the server…" forever.
 function svMeSet(me) {
   svMe = me;
+  // the Projects page reads the role (pvViewOnly): repaint it once the answer is in
+  try { if (pvTab) pvPaint(); } catch (e) { /* the Projects code not set up yet: its first paint reads svMe */ }
   if (typeof renderSvAccount === "function" && !$("settingsView").hidden)
     renderSvAccount();
   if (typeof renderSvUsers === "function" && !$("settingsView").hidden)
@@ -11518,6 +12385,12 @@ function takeoffCsv() {
       ]);
       for (const s of (it.subs || []))
         rows.push(subCsvCells(it.label, g.trade, s, ftPerIn ? "ft" : "pt"));
+      // the rooms (parts) behind a calculator row: one line each, named
+      // as a part of the row above, engine-measured, no cost of their own
+      for (const dt of (it.details || []))
+        rows.push([`  part: ${dt.name}`, g.trade,
+                   `${dt.qty} ${dt.unit !== undefined && dt.unit !== null ? dt.unit : it.unit}`.trim(),
+                   "", "", "", "", "", "engine", `part of ${it.label}`]);
     }
   }
   if (subN)
@@ -11557,7 +12430,9 @@ $("csvBtn").onclick = () => {
   if (csv === null) return;
   const stem = (state.docName || "takeoff").replace(/\.pdf$/i, "");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv + BETA_CSV_TAIL], { type: "text/csv" }));
+  // the byte-order mark makes Excel read the file as UTF-8 (a zone's row "Site Cut – Island" printed
+  // "Site Cut â€“ Island" without it)
+  a.href = URL.createObjectURL(new Blob([String.fromCharCode(0xfeff) + csv + BETA_CSV_TAIL], { type: "text/csv" }));
   a.download = `${stem}_p${state.page + 1}_takeoff.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
@@ -11615,10 +12490,7 @@ function syncAutoCard() {
 // rows, and an empty filter bar under it. On open we call the renderer and
 // let it decide, which is the same answer the page would give on any other
 // path.
-const FOLD_RENDERED = {
-  ewCoverage: () => renderEwCoverage(),
-  ewFilters: () => renderEwFilters(),
-};
+const FOLD_RENDERED = {};
 for (const [headId, contentIds] of SECTIONS) {
   const head = document.getElementById(headId);
   if (!head) continue;
@@ -11745,14 +12617,6 @@ const CARD_COUNTS = [
   ["stylesCount", "#styleList .style-row",
    () => (state.result && state.result.styles) ? state.result.styles.length : 0],
   ["takeoffCount", ".itemized .item-row:not(.head):not(.total)", null],
-  // The earthwork rows are FILTERABLE and capped, so the total is the
-  // sheet's whole contour list - rows plus the lines that carry no
-  // elevation - and the label reads "23 of 368" whenever either is hiding
-  // something. Reporting the filtered number as the total is exactly the
-  // silent cap this card's own comment forbids.
-  ["ewRowsCount", "#ewRows .ew-row",
-   () => (state.ew && state.ew.rows)
-     ? state.ew.rows.length + ewStubs().length : 0],
   ["legendCount", "#legendBox .legend-chip", null],
   ["areasCount", "#arList .ar-row", null],
   ["bidCount", "#bidBox .bid-bucket", null],
@@ -11784,1051 +12648,8 @@ function syncCardCounts() {
   syncCardCounts();
 })();
 
-// ---------- earthwork calculator ----------
-
-// THE ONE PLACE THE UI PROMISES A DURATION.
-// MEASURED cold on this machine, 2026-08-31, against an empty job store:
-// 94.1 s on Belle Farms Upper Parcel ROAD GRADING 1 of 2 p0 (printed sheet
-// "1 OF 2") and 204.1 s on Oncor Cloudcrest engine page index 3 = printed
-// C-04. Warm (the p{page}_elevgaps2.json sidecar already on disk) is ~2 s.
-// 99% of the cold time is one pytesseract loop inside
-// takeoff_engine.earthwork.gap_label_elevations, sized by its OCR budget.
-// If that budget moves, or the read is warmed at Detect time, RE-MEASURE
-// and change this string - nothing else in the UI quotes a wait.
-// (2026-09-17) "can take a minute": the label reader now reads a sheet in
-// batches, contour lines first - Barn C3.0 10 s, Oncor C-04 34 s on this
-// box - where it used to be "a minute or more" (FINDINGS 38)
-const EW_SUGGEST_WAIT = "the first read of a page can take a minute";
-const EW_SUGGEST_HEAD = "reading this sheet's elevation labels";
-const EW_SUGGEST_BUSY = EW_SUGGEST_HEAD + " — " + EW_SUGGEST_WAIT;
-const EW_SUGGEST_FAIL = "could not read this sheet's elevations — press EARTHWORK to try again";
-// A READ THAT NEVER ANSWERS IS A FAILURE, AND IT HAS TO SAY SO.
-//
-// Reported on the same screen share: the panel sat on the busy line "for
-// minutes" and the client asked "Is it not working? Is it dead? Is it
-// hung?" - there was no way to tell, because the sentence never changed and
-// nothing was ever going to change it. Every failure path here needs the
-// request to SETTLE, and a fetch with no deadline can decline to. So there
-// is a deadline, and past it the read is reported as failed rather than
-// left claiming to work.
-//
-// TWELVE MINUTES is deliberately far above any measured real read - 217.2 s
-// cold on Oncor Cloudcrest engine page index 3 = printed C-04, 94 s on
-// Belle Farms Upper Parcel ROAD GRADING 1 of 2 p0, 1.4 s warm - so it fires
-// on a dead socket, not on a slow sheet.
-//
-// The retry really is quick, and the sentence says so because it is true:
-// this is a sync endpoint, so the server thread keeps reading after the
-// browser gives up and writes p<N>_elevgaps2.json when it finishes.
-const ELEV_READ_CEILING_MS = 12 * 60 * 1000;
-const EW_SUGGEST_TIMEOUT = "the elevation read got no answer in 12 minutes "
-  + "— press EARTHWORK to try again; the server keeps reading in the "
-  + "background and caches the result, so the retry is usually quick";
-// ...and the one failure that is NOT retryable. The endpoint answers
-// 404 {"detail":"run detect first"} on a page that has never been detected,
-// and pressing EARTHWORK again can never change that.
-const EW_NEED_DETECT = "run Detect on this sheet first — its elevations "
-  + "cannot be read until its lines are detected";
-// WHY THE READ FAILED, NOT JUST THAT IT DID.
-//
-// state.ewFailed was a bare boolean, so every failure printed the retry
-// sentence - including the one failure that can never succeed on a retry.
-// Live on job e183a0d44d89 page 6 (never detected): EARTHWORK fetched, the
-// server answered 404 "run detect first", suggestOnce threw the body away,
-// and all three surfaces (status bar, #ewRows, #ewBusy) told the operator
-// to "press EARTHWORK to try again". The button's own branch already HAD
-// the right sentence - `state.ewFailed ? FAIL : "run Detect first"` - but
-// ewFailed was set for every failure, so the arm naming the real cause was
-// dead on exactly the case it names. Same F2 shape as state.elev's
-// three-valued null, one panel over. It now holds {status, detail}.
-function ewFailMsg() {
-  const f = state.ewFailed;
-  if (!f) return "";
-  if (f.status === 404 || !state.result) return EW_NEED_DETECT;
-  // ...and the failure that looks like no failure at all: nothing came
-  // back. Retryable, like a dropped connection, but it needs its own words
-  // - "could not read" describes a read that answered badly, and the
-  // operator watching a frozen panel is asking a different question.
-  if (f.timeout) return EW_SUGGEST_TIMEOUT;
-  return EW_SUGGEST_FAIL;
-}
-// The fifth state: rows are loaded, but they were read off a DIFFERENT sheet
-// (see ewIsThisPage). Never "not ready yet" - ready, and about the wrong
-// drawing, which is worse.
-const EW_SUGGEST_STALE = "these earthwork rows were read off another sheet";
-
-// ---- WHAT THE READ CAN HONESTLY REPORT ------------------------------------
-//
-// It cannot report a percentage. /earthwork/suggest OCRs the whole page in
-// one pytesseract loop inside takeoff_engine.earthwork.gap_label_elevations
-// and sends nothing until it is done, so any bar or fraction here would be
-// invented. What is genuinely known on this side is two things: WHAT stage
-// is running, and HOW LONG it has been running. Both are reported; nothing
-// else is.
-function fmtElapsed(ms) {
-  const s = Math.max(0, Math.round(ms / 1000));
-  if (s < 60) return s + "s";
-  return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
-}
-// ms the read in flight has been running, or null when none is.
-function elevReadElapsed() {
-  const req = state.suggestReq;
-  return req && req.t0 ? Date.now() - req.t0 : null;
-}
-// The busy sentence, with the clock in it. Same words as EW_SUGGEST_BUSY
-// when nothing is in flight yet, so the existing callers read the same.
-//
-// AND, SINCE 2026-09-09, THE SERVER'S OWN PROGRESS when it has reported
-// any: gap_label_elevations tells the suggest route every ten regions
-// where it is, the route keeps that in a sidecar, /earthwork/progress
-// serves it, and elevProgressPoll (below) fetches it once a second while
-// the read is in flight. With a report the line says "N of M places
-// looked at, R read" and the bar under it is real; without one (the
-// first second, a cached page, a server that predates this) it is the
-// clock-only sentence it always was, byte for byte.
-function elevBusyLine() {
-  const ms = elevReadElapsed();
-  if (ms === null) return EW_SUGGEST_BUSY;
-  // (typeof-guarded: tests compile this function alone, without the poller)
-  const p = (typeof elevProgressNow === "function") ? elevProgressNow() : null;
-  if (p && p.phase === "render")
-    return EW_SUGGEST_HEAD + " — rendering the sheet, " + fmtElapsed(ms)
-      + " so far; " + EW_SUGGEST_WAIT;
-  if (p && p.phase === "ocr" && p.planned > 0)
-    return EW_SUGGEST_HEAD + " — looked at " + p.pos + " of " + p.planned
-      + " places, " + p.reads + " label" + (p.reads === 1 ? "" : "s")
-      + " read by OCR, " + fmtElapsed(ms) + " so far";
-  return EW_SUGGEST_HEAD + " — " + fmtElapsed(ms) + " so far; "
-    + EW_SUGGEST_WAIT;
-}
-// the fraction the bar shows, or null when there is nothing honest to show
-function elevProgressFrac() {
-  const p = (typeof elevProgressNow === "function") ? elevProgressNow() : null;
-  if (!p || p.phase !== "ocr" || !(p.planned > 0)) return null;
-  return Math.max(0, Math.min(1, p.pos / p.planned));
-}
-// The last progress report for THE READ IN FLIGHT, or null. It rides on
-// the request record like t0 does, so a report from a request that has
-// settled or been dropped can never paint a later one.
-function elevProgressNow() {
-  const req = (typeof state !== "undefined") ? state.suggestReq : null;
-  return req && req.progress ? req.progress : null;
-}
-// One poll a second, one in flight at a time, for the request that owns
-// the clock; the answer is parked on that request record.
-function elevProgressPoll() {
-  const req = state.suggestReq;
-  if (!req || req.polling || typeof fetch !== "function") return;
-  const job = state.job, page = state.page;
-  req.polling = true;
-  fetch(`/api/job/${job}/page/${page}/earthwork/progress`)
-    .then(r => r.ok ? r.json() : null)
-    .then(j => { if (j && state.suggestReq === req) req.progress = j; })
-    .catch(() => {})
-    .then(() => { req.polling = false; });
-}
-
-// ONE TICK, THREE SURFACES, AND IT ONLY REWRITES WHAT IT OWNS.
-//
-// The elevation readout is ours outright. The panel's busy line and the
-// status bar are shared, so each is rewritten only while it is still
-// showing THIS sentence - otherwise a tick a second would stamp on
-// "removed 12 lines" or whatever the operator did next.
-let _elevTicker = null;
-function elevTickStart() {
-  if (_elevTicker === null && typeof setInterval === "function")
-    _elevTicker = setInterval(elevTickPaint, 1000);
-}
-function elevTickStop() {
-  if (_elevTicker !== null) { clearInterval(_elevTicker); _elevTicker = null; }
-}
-function elevTickPaint() {
-  if (elevReadElapsed() === null) { elevTickStop(); return; }
-  if (typeof elevProgressPoll === "function") elevProgressPoll();
-  const line = elevBusyLine();
-  const eb = $("ewBusy");
-  if (eb && !eb.hidden && eb.textContent.indexOf(EW_SUGGEST_HEAD) === 0)
-    ewBusyPut(line + "\u2026", "",
-              typeof elevProgressFrac === "function" ? elevProgressFrac() : null);
-  const rows = $("ewRows");
-  if (rows) {
-    const hint = rows.querySelector(".ew-hint");
-    if (hint && hint.textContent.indexOf("reading elevation labels") === 0)
-      hint.textContent = "reading elevation labels\u2026 "
-        + fmtElapsed(elevReadElapsed());
-  }
-  const sb = $("status");
-  if (sb && sb.textContent.indexOf(EW_SUGGEST_HEAD) === 0)
-    setStatus(line, "busy");
-  if (state.selected !== null && typeof chainById === "function")
-    repaintSelElev(chainById(state.selected));
-}
-
-
-// THE FIFTH STATE. state.ew can be non-null and still be the WRONG SHEET's:
-// it is stamped with the job and page it was read from, and this is the one
-// place that question is answered, so the guard and ewEnsure cannot drift.
-function ewIsThisPage() {
-  return !!state.ew && state.ew.page === state.page
-                    && state.ew.job === state.job;
-}
-
-// EARTHWORK BELONGS TO ONE SHEET, AND SO DOES ITS PANEL.
-// loadResult cleared all of this - but loadResult only runs when the new
-// page HAS a loadable result. Switch to an UNDETECTED page and nothing
-// cleared anything: the panel stayed open, still listing the previous
-// sheet's 150 contour rows, over a canvas showing a different drawing. The
-// server refused the resulting Calculate, so the operator learned it was
-// wrong only after a round trip - and stale numbers on the wrong sheet are
-// the worst of the five states, not the least. Page switch is the reliable
-// chokepoint (the same rule the work area and the grading zones already
-// follow); the guard below is the second line, not the first.
-function ewPageReset() {
-  state.ew = null; state.ewLoading = null; state.ewFailed = null;
-  state.suggestReq = null;
-  // THE LIMIT OF WORK IS A PAGE FACT LIKE THE ROWS, AND IT LIVES HERE NOW.
-  // It used to be cleared in loadResult only - and loadResult runs only
-  // when the new page HAS a result. Reproduced live on job e183a0d44d89:
-  // set the limit on C-04 ("57 lines stitched (style 15) - 3,930 points -
-  // 180,597 SF"), switch to page 6 (never detected), press EARTHWORK - the
-  // panel opened with 0 rows and the box still read the OTHER sheet's ring,
-  // .on, "clear" showing. The SF silently vanished because that figure
-  // needs state.result, so the one number that would have exposed the
-  // staleness is the one that drops out. Same sibling gap a0a71cc closed
-  // for state.ew, left open for its neighbour.
-  state.ewBound = null;
-  state.ewBoundDraft = []; state.ewBoundHover = null; state.polySnap = false;
-  renderEwBound();
-  $("ewPanel").hidden = true; $("ewBtn").hidden = false;
-  $("ewMap").checked = false;
-  // the ROWS as well as the flag: hiding the panel leaves the previous
-  // sheet's 150 <div class="ew-row"> in the DOM, and anything that unhides
-  // the panel before renderEw runs would show them again
-  $("ewRows").innerHTML = "";
-  // ...and the coverage statement and the filter chips, for the same
-  // reason: they are the PREVIOUS sheet's contour counts, and a count for
-  // another drawing is the worst thing this panel can leave on screen.
-  $("ewCoverage").innerHTML = ""; $("ewCoverage").hidden = true;
-  $("ewFilters").innerHTML = ""; $("ewFilters").hidden = true;
-  ewBusyPut("");
-  $("ewResult").textContent = "";   // stale numbers must not survive a switch
-  // ...and neither must the basis line or the consent button that belonged
-  // to them: state.ew is null above, so "Remove from takeoff" on the new
-  // sheet would be a button with nothing behind it
-  $("ewBasis").innerHTML = ""; $("ewBasis").classList.add("off");
-  $("ewTake").classList.add("off"); $("ewAdd").classList.remove("on");
-}
-
-// THE THIRD-STATE GUARD. Replaces `if (!state.ew) return setStatus("run
-// Detect first")` at every site the operator can reach by clicking. state.ew
-// null means one of FOUR things and the old guard reported only the first:
-// no detect, panel never opened, fetch in flight (94-204 s), fetch failed.
-// A FIFTH: state.ew loaded, but read off another sheet.
-// Returns true when the caller should give up, having said why.
-// Pure render functions deliberately do NOT call this - they run on every
-// repaint and have nothing to tell anyone.
-function ewNotReady(what) {
-  if (state.ew && !ewIsThisPage()) {
-    setStatus(EW_SUGGEST_STALE + " — " + what + " would come from page "
-      + (state.ew.page + 1) + "'s contours, not this sheet's. Press "
-      + "EARTHWORK to read the sheet you are looking at.", "err");
-    return true;
-  }
-  if (state.ew) return false;
-  if (state.ewLoading)
-    setStatus(EW_SUGGEST_BUSY + " — " + what + " will be ready in a moment", "busy");
-  // "not detected" is checked FIRST. It used to sit behind the ewFailed
-  // arm, and one press of EARTHWORK on an undetected page set ewFailed -
-  // so from then on this branch could never be reached on the one page it
-  // describes.
-  else if (!state.result) setStatus(EW_NEED_DETECT, "err");
-  else if (state.ewFailed) setStatus(ewFailMsg(), "err");
-  else setStatus("open the EARTHWORK panel first (press EARTHWORK)", "err");
-  return true;
-}
-
-// What the read produced, in one line, for the spot the busy line held:
-// row count, how many the reader could not put on a side, and the time.
-function ewDoneLine(ms) {
-  const rows = (state.ew && state.ew.rows) || [];
-  const n = rows.length;
-  const un = rows.filter(r => r.surface == null && r.surfaceBy !== "operator").length;
-  if (!n) return "read done in " + fmtElapsed(ms) + " — no contour heights found on this sheet (see below)";
-  return "read done in " + fmtElapsed(ms) + " — " + n + " contour" + (n === 1 ? "" : "s")
-    + " with a height" + (un ? ", " + un + " still need a side" : "")
-    + " — go through them below ↓";
-}
-// the in-panel half of the same sentence, in #ewBusy under the panel head.
-// `frac` (0..1) draws the progress bar under the sentence; null draws none,
-// so a line with no honest fraction behind it shows no bar.
-function ewBusyPut(txt, cls, frac) {
-  if (typeof gzGate === "function") gzGate();   // the zone section greys with it
-  const el = $("ewBusy");
-  if (!el) return;
-  el.hidden = !txt;
-  el.textContent = txt || "";
-  if (txt && typeof frac === "number" && typeof document !== "undefined") {
-    const bar = document.createElement("div");
-    bar.className = "ew-prog";
-    const fill = document.createElement("i");
-    fill.style.width = Math.round(frac * 100) + "%";
-    bar.appendChild(fill);
-    el.appendChild(bar);
-  }
-  el.className = "ew-busy" + (cls ? " " + cls : "");
-}
-
-$("ewClose").onclick = () => { $("ewPanel").hidden = true; state.hotChain = null; ewDisarmPick(); draw(); };
-// the disclosure block's fold (index.html #ewLimit): the claim and the cost
-// are always on the face of the panel; the two paragraphs between them open
-// on demand. Session-only, deliberately - the next open starts folded.
-if ($("ewLimitToggle")) $("ewLimitToggle").onclick = () => {
-  const more = $("ewLimitMore"), b = $("ewLimitToggle");
-  more.hidden = !more.hidden;
-  b.setAttribute("aria-expanded", more.hidden ? "false" : "true");
-  b.textContent = more.hidden
-    ? "where it applies, and what it does not have ▸"
-    : "hide where it applies, and what it does not have ▴";
-};
-$("ewBtn").onclick = async () => {
-  const panel = $("ewPanel");
-  // Open panel: the press means CLOSE - unless the last read failed, in
-  // which case the panel is showing a retry sentence and the press means
-  // what the sentence says. (Without this, "press EARTHWORK to try again"
-  // would take two presses: one to close, one to reopen.)
-  if (!panel.hidden && !(state.ewFailed && !state.ew && !state.ewLoading)) {
-    panel.hidden = true; ewDisarmPick(); return;
-  }
-  panel.hidden = false;
-  panel.scrollIntoView({ block: "start", behavior: "smooth" });
-  // a page switch nulls state.tool without touching this button's class
-  $("ewAddRow").classList.remove("active");
-  $("ewBoundPick").classList.remove("active");
-  renderEwBound();
-  // DO NOT ASK A QUESTION THE SERVER HAS ALREADY REFUSED. Every other
-  // earthwork control on this page goes through ewNotReady; this button was
-  // the one that did not, so on an undetected page it fetched, collected a
-  // 404 and then told the operator to retry a read that can never succeed.
-  // The panel still OPENS - the operator pressed the button - it just says
-  // what is actually missing and issues no request.
-  if (!state.result) {
-    $("ewRows").textContent = EW_NEED_DETECT;
-    ewBusyPut(EW_NEED_DETECT, "err");
-    setStatus(EW_NEED_DETECT, "err");
-    renderEwTake();
-    return;
-  }
-  if (!state.ew) {
-    // Put the busy line WHERE THE EYE IS. Every other long operation in this
-    // file writes one to the status bar - "detecting…" , "opening…",
-    // "uploading…", "Reading the sheet with AI…" - and EARTHWORK was the
-    // only one that did not, while its own in-panel hint rendered 53 px
-    // below the bottom of #sideScroll (measured, Belle Farms p0, T+2 s).
-    // Both halves now, and both cleared when the data lands: the stale red
-    // line used to still be on the bar 102 s later with the panel loaded.
-    const gen = state.gen;
-    const tRead = Date.now();
-    $("ewRows").innerHTML = '<div class="ew-hint">reading elevation labels…</div>';
-    ewBusyPut(EW_SUGGEST_BUSY + "…");
-    setStatus(EW_SUGGEST_BUSY, "busy");
-    const ok = await ewEnsure();
-    // a page switch during the wait: selectPage owns the bar now, and this
-    // fetch belongs to a sheet nobody is looking at
-    if (gen !== state.gen) return;
-    if (!ok) {
-      const msg = ewFailMsg() || EW_NEED_DETECT;
-      $("ewRows").textContent = msg;
-      ewBusyPut(msg, "err");
-      setStatus(msg, "err");
-      return;
-    }
-    // THE READ FINISHED - say so where the busy line was. Measured on Belle
-    // Farms ROAD GRADING p0: with the busy line simply cleared, the first
-    // screen of the panel looked identical before and after a 100 s read
-    // (the rows land below the fold), so the operator had no cue that
-    // anything had happened. One line, same place, counts from the rows.
-    ewBusyPut(ewDoneLine(Date.now() - tRead));
-    setStatus("");
-  }
-  renderEw();
-  renderEwLayers();
-  renderEwSpots();
-  renderEwArea();
-  renderEwTake();
-  renderGz();
-  // Re-anchor AFTER the async suggest + renders: the CHECK FIRST banner
-  // above this panel grows when the datum note lands, which shoved the
-  // panel head 58px above the fold on C3.1 (measured) - the smooth scroll
-  // that ran at open had already finished aiming at the old layout.
-  panel.scrollIntoView({ block: "start" });
-  // the suggest payload carries the datum + spot facts the review queue
-  // reports (items 3 and 5), and ewApplySaved just settled the drop count
-  renderCheckQueue();
-};
-
-// ONE /earthwork/suggest IN FLIGHT PER PAGE, WHOEVER ASKS.
-//
-// ewEnsure's single-flight token (state.ewLoading) only covered the
-// earthwork panel's own callers. ensureElev - the selection pill's
-// elevation chip - went straight to fetch() and bypassed it, so clicking a
-// contour and then pressing EARTHWORK fired the SAME endpoint twice: two
-// GETs for the same page, one click apart, proven in the server log. Cold
-// that endpoint is 94 s (Belle Farms Upper Parcel ROAD GRADING 1 of 2 p0)
-// to 204 s (Oncor Cloudcrest engine page index 3 = printed C-04), ~99% of
-// it one pytesseract loop in takeoff_engine.earthwork.gap_label_elevations.
-//
-// The token is keyed on gen|job|page, so a request started before a page
-// switch can never be handed to a caller on the new sheet (chain ids
-// collide numerically across pages - CLAUDE.md §5).
-//
-// NOT A RESULT CACHE. The entry is dropped as soon as the request settles,
-// success included. Re-running Detect replaces every chain object WITHOUT
-// bumping state.gen, so a kept payload would hand the new detection the old
-// detection's chain ids - a confident wrong number, which is the exact trap
-// this file exists to avoid. The second read is cheap anyway: the server
-// caches the OCR per page (p<N>_elevgaps2.json), measured 1.75 s warm
-// against 204 s cold on C-04.
-function suggestOnce() {
-  const gen = state.gen, job = state.job, page = state.page;
-  // THE INTERVAL IS PART OF THE REQUEST, so it is part of the key: typing a
-  // new one has to re-read the page rather than be handed the answer that
-  // was counted at the old one.
-  const ivq = state.ewIntervalFt ? String(state.ewIntervalFt) : "";
-  const key = gen + "|" + job + "|" + page + "|" + ivq;
-  const cur = state.suggestReq;
-  if (cur && cur.key === key) return cur.promise;
-  // KEEP READING (ewKeepReading): this one request asks the server to carry
-  // a stopped label read on instead of serving the short list again
-  const more = !!state.ewMore;
-  state.ewMore = false;
-  // THE DEADLINE. Without it the promise can simply never settle, and every
-  // failure surface downstream is reached by a rejection - so a socket that
-  // goes quiet leaves the panel claiming to be working, forever. See
-  // ELEV_READ_CEILING_MS.
-  const ctl = typeof AbortController === "function" ? new AbortController() : null;
-  const timer = ctl ? setTimeout(() => ctl.abort(), ELEV_READ_CEILING_MS) : null;
-  const promise = (async () => {
-    let r;
-    try {
-      // a plain read stays exactly the request it always was - no query
-      // at all - because test_keep_reading_ui pins that shape to prove the
-      // follow-up after a keep-reading is not another more=1
-      const qs = [];
-      if (more) qs.push("more=1");
-      if (ivq) qs.push("interval_ft=" + encodeURIComponent(ivq));
-      r = await fetch(`/api/job/${job}/page/${page}/earthwork/suggest`
-                      + (qs.length ? "?" + qs.join("&") : ""),
-                      ctl ? { signal: ctl.signal } : undefined);
-    } catch (e) {
-      if (ctl && ctl.signal.aborted) {
-        const err = new Error("no answer in " + fmtElapsed(ELEV_READ_CEILING_MS));
-        err.status = 0;
-        err.timeout = true;
-        throw err;
-      }
-      throw e;
-    }
-    if (!r.ok) {
-      // KEEP THE SERVER'S REASON. Throwing the body away is what left the
-      // UI unable to tell "this page was never detected" (404, permanent)
-      // from "the read fell over" (retryable), so it offered a retry for
-      // both. See ewFailMsg.
-      const body = await r.json().catch(() => ({}));
-      const err = new Error("HTTP " + r.status);
-      err.status = r.status;
-      err.detail = (body && body.detail) || "";
-      throw err;
-    }
-    return await r.json();
-  })();
-  const done = () => {
-    if (timer !== null) clearTimeout(timer);
-    if (state.suggestReq && state.suggestReq.promise === promise)
-      state.suggestReq = null;
-    // repaint every surface once the clock has stopped, so none is left
-    // holding the last tick's elapsed time
-    elevTickStop();
-    if (state.selected !== null) repaintSelElev(chainById(state.selected));
-  };
-  promise.then(done, done);
-  // t0 rides ON the request record, not in a field of its own: when the
-  // record goes - settled, or dropped by elevReset on a page switch - the
-  // clock goes with it, and no orphaned flight can leave a stale one behind.
-  state.suggestReq = { key, promise, t0: Date.now() };
-  elevTickStart();
-  return promise;
-}
-
-// Build state.ew from /earthwork/suggest. Extracted from the EARTHWORK
-// button so the grading-zone restore path can load the same rows without
-// the panel being open - a restored zone recomputes through the endpoint
-// and the endpoint takes the suggest-derived existing surface as input.
-// Returns false when the suggest fetch fails or the page changed under it.
-// SINGLE FLIGHT. Two callers reach this - the EARTHWORK button and
-// gzRestoreCompute(), which runs unprompted on any page with saved zones -
-// and the fetch is 94-204 s cold, so they overlapped routinely. Both used to
-// issue their own suggest; the LOSER then hit `state.ew` already set,
-// returned false, and its caller printed "run Detect first" over the
-// winner's freshly rendered 40 rows. Returning the one in-flight promise
-// makes every caller a winner and deletes that whole class of lie.
-async function ewEnsure() {
-  // ...and it has to be THIS sheet's rows. state.ew survives a switch to a
-  // page with no detection, and "already loaded" for another drawing is not
-  // loaded (ewIsThisPage).
-  if (ewIsThisPage()) return true;
-  if (state.ewLoading) return state.ewLoading;
-  state.ewFailed = null;
-  const p = ewFetchSuggest(state.gen);
-  state.ewLoading = p;
-  // the grading-zone section reads this flag for the reason it shows: it is
-  // re-gated the moment the flag moves, not only on the next progress tick
-  // (measured live 2026-09-16 - the section greyed but still said "press
-  // EARTHWORK" right through a read, because ewBusyPut's first call lands
-  // BEFORE this line)
-  if (typeof gzGate === "function") gzGate();
-  try { return await p; }
-  finally {
-    if (state.ewLoading === p) state.ewLoading = null;
-    if (typeof gzGate === "function") gzGate();
-  }
-}
-async function ewFetchSuggest(gen) {
-  let j;
-  // No try/catch here before: a dropped connection rejected out of the
-  // handler uncaught, so the panel sat on "reading elevation labels…"
-  // forever - pixel-identical to the busy state, with a silent status bar.
-  // gzCompute's "server unreachable" branch already does this; copy it.
-  // The request itself lives in suggestOnce so the elevation chip and this
-  // panel share one flight instead of racing two.
-  try {
-    j = await suggestOnce();
-  } catch (err) {
-    if (gen === state.gen)
-      state.ewFailed = { status: (err && err.status) || 0,
-                         detail: (err && err.detail) || "",
-                         timeout: !!(err && err.timeout) };
-    return false;
-  }
-  {
-    if (gen !== state.gen || state.ew) return false;
-    const ws = j.suggestions.map(s => s.width || 0).sort((a, b) => a - b);
-    const wmed = ws.length ? ws[Math.floor(ws.length / 2)] : 0;
-    state.ew = {
-      // WHICH SHEET THESE ROWS ARE. Without this stamp there is no way to
-      // tell "loaded" from "loaded, for another drawing" - see ewIsThisPage.
-      job: state.job, page: state.page,
-      rows: j.suggestions.map(s => ({
-        chain_id: s.chain_id, z: s.z, width: s.width || 0, dist: s.dist,
-        // WHERE THE NUMBER CAME FROM, on the row itself. Without this the
-        // panel had only `dist` and the server's `inferred` flag, and
-        // printed the 999 "no label at all" sentinel as "label 999pt away"
-        // while the selection chip called the same row inferred.
-        how: s.how || null, tag: s.label_tag || null,
-        // WHICH SIDE THIS CONTOUR IS ON, and WHO SAID SO.
-        //
-        // The server already decided this with a real precedence - the
-        // sheet's own legend, then colour screening, then the same width
-        // median as a last resort (earthwork.split_rows_surface) - and
-        // shipped it on every row as `surface` + `split_by`. This panel
-        // used to throw both away and recompute the BOTTOM tier only.
-        //
-        // Measured 2026-09-03 on Oncor C-04 (engine page index 3): 115
-        // labelled rows, 82 decided by the legend and 33 by ink, ZERO by
-        // width - and the width median disagreed with the sheet on 67 of
-        // them. The stated premise of the old rule ("existing plots
-        // lighter") is inverted on that drawing: EXISTING CONTOUR is drawn
-        // at 0.2 pt AND 1.1 pt across three families while PROPOSED sits
-        // between them at 0.4-0.7, so `w > wmed` selected the 1.1 pt
-        // chains - which are EXISTING. The panel was reporting the heavy
-        // existing contours as the proposed surface. Cut read 22,032.7 CY
-        // against the offline analyst's ~2,002 for that sheet; on the
-        // server's split it reads 2,158.4, and the proposed population
-        // goes from spanning the whole drawing to a compact band (hull 21%
-        // of existing's) - which is what a designed pad looks like and
-        // what a width-sorted half of natural topo does not.
-        //
-        // The width median stays as the fallback for a sheet that carries
-        // no legend and no screening, where it is all there is - and where
-        // the server, having the same rule, returns the same answer.
-        // `splitBy` rides along so the panel can say WHICH of the three
-        // decided, because "the sheet's legend says so" and "we guessed
-        // from stroke weight" are not the same claim (see ewSplitNote).
-        // An interval-infill row is EXPLICITLY excluded from the fallback,
-        // not merely nulled afterwards. The `.map` below does set
-        // row.surface = null for every inferred row and would cover this -
-        // but only while it runs second. Naming the case here means a
-        // reorder cannot silently start feeding counted-not-printed
-        // elevations into a surface through the back door.
-        // A split_by of "none" is the server SAYING it could not split
-        // this sheet - no legend, no second ink, one stroke weight. That
-        // is a verdict, not a missing field, and the row must NOT fall
-        // through to the width median below: that median is exactly the
-        // rule that filed all 40 of Belle Farms' contours as EXISTING with
-        // nothing on the sheet to say so. The row starts on skip and the
-        // panel says why (ewSplitNote, ewUnsplitHint).
-        surface: (s.split_by === "interval-infill" || s.split_by === "none")
-          ? null
-          : (s.surface === "existing" || s.surface === "proposed")
-          ? s.surface
-          : ((s.width || 0) <= wmed ? "existing" : "proposed"),
-        splitBy: s.split_by || null,
-      })).map((row, i) => {
-        // INTERVAL-INFILL rows: an elevation nobody printed, worked out by
-        // counting the contours between two anchors - anchors that are
-        // themselves often unlabelled (13 of C-04's 35, measured). It
-        // arrives on SKIP - it contributes no volume until the operator
-        // reads the sentence and clicks EXIST or PROP - and it carries
-        // that sentence so the check can be made without leaving the row.
-        const s = j.suggestions[i];
-        if (!s || !s.inferred) return row;
-        row.inferred = true;
-        row.inferredWhy = s.src || "";
-        row.inferredFor = s.for_surface || null;
-        row.surface = null;
-        return row;
-      }),
-      result: null,
-      // suggest-seeded rows the operator deleted, BY chain id - persisted
-      // so a fresh suggest on the next visit cannot resurrect them
-      removed: [],
-      // layer stacks (Beaumont workflow): what comes OFF the existing
-      // ground before cut/fill starts (topsoil strip, old asphalt, road
-      // base) and what gets BUILT on the proposed side (base, paving).
-      // Session-only like the rest of this panel. {name, thickness_in}
-      layers: { existing: [], proposed: [] },
-      // Spot grades: the FG/TS/TW elevations the sheet prints as "FG: 15.96".
-      // On a detailed grading sheet these outnumber labelled contours many to
-      // one, and they are POINT elevations, not lines. Ground tags default ON;
-      // structure tops (RIM, wall, step) are not ground and stay off.
-      spots: j.spot_grades || [],
-      // How the truncated spot values were anchored, and whether the sheet's
-      // two sources disagreed: {declared, band_base, band_n, chosen,
-      // conflict}. On Barn C3.3 the legend note says 7600 while four printed
-      // contours say 7700 - the engine now resolves by band strength, but a
-      // disagreement like that must reach the operator's eyes either way.
-      datum: j.spot_datum || null,
-      spotOn: { FG: true, ME: true, EG: true, PE: true },  // PE = pad elevation, proposed ground.
-      // WSE deliberately NOT here: water surface, not ground (basin contours sit
-      // BELOW it) - its checkbox appears when the sheet prints one, default off.
-      // A SIDE PER TAG, not one side for the sheet. Seeded from the
-      // engine's own reading of each tag (ME/EG name the ground now,
-      // every other tag names something built), overridable per tag.
-      // spotSide survives as the last bulk choice and for old sidecars.
-      spotSide: "proposed",
-      spotTagSide: {},
-      spotDatum: null,
-      areaSf: null,
-      placeDepthIn: null,   // Rough Place Topsoil: depth over the green area (Beaumont)
-      placeLessSf: null,    // footprints + paving taken off the strip area
-      map: null,   // {img, bbox} once "Show cut/fill map" is on
-      // Consent, not a cache. Calculating is LOOKING at the number;
-      // putting it in the priced takeoff is a decision the estimator makes
-      // by pressing "Add to takeoff". Until then nothing earthwork reaches
-      // state.extraItems, so an approve produces no earthwork line at all.
-      // Session-only and per detection result, like the rest of this panel.
-      added: false,
-      // what renderEwBasis last painted the basis block from, so a row edit
-      // can repaint it with the coverage the panel head is showing (R1)
-      basis: null,
-      // What the reader DROPPED getting to those rows, and why - see
-      // renderEwDropped. Held on the panel state so a re-render keeps it.
-      dropped: j.suggestions_dropped || 0,
-      ladder: j.ocr_ladder || null,
-      // what the label-reading OCR pass did - patches planned / read,
-      // seconds, and whether the server's wall clock stopped it (see
-      // OCR_BUDGET_S in server.py). A cut-short read is reported on the
-      // panel as cut short, never left to read as "no labels here".
-      ocr: j.elevation_ocr || null,
-      // numbers the sheet prints as BUILT points (a wall top, a finish
-      // grade) that were refused as line heights - {n, tags} or null
-      spotRefused: j.spot_tag_refused || null,
-      // which way round the ink rule ran on this sheet, and on whose word
-      // (split_rows_surface): "legend-confirmed", "legend-flipped" or
-      // "convention". Read by ewSplitNote for every colour-decided row.
-      polarity: (j.split_counts && j.split_counts.polarity) || "convention",
-      // HOW MUCH OF THIS SHEET'S CONTOUR LINEWORK THESE ROWS ARE.
-      // takeoff_engine.earthwork.contour_coverage, computed on the route:
-      // the denominator nothing in the app stated before 2026-09-02, plus
-      // the sheet's own contour interval and the chain ids of every contour
-      // line that carries no elevation at all.
-      cov: j.contour_coverage || null,
-      unelev: (j.contour_coverage && j.contour_coverage.unelevated) || [],
-      // ...and the OTHER half of that denominator, line by line. The two
-      // lists together are the sheet's contour lines, and holding both is
-      // what lets ewCovNow() restate the coverage from the rows on screen
-      // now rather than from the counts the route took once - see
-      // ewCoverageLive. Without it a deleted row falls out of every list.
-      elev: (j.contour_coverage && j.contour_coverage.elevated) || [],
-      // review surface: which class of evidence is showing, in what order,
-      // and whether the disclosed cap is open. View state only - no row,
-      // no elevation and no volume depends on any of the three.
-      filter: null, sort: "z", showAll: false,
-    };
-    // the durable inputs for this page (server sidecar), applied before
-    // the panel's first paint; chain-keyed values only where the chain
-    // still exists - ewApplySaved counts and reports the rest
-    if (state.calcSavedLoaded) ewApplySaved();
-    else if (state.calcSaveBroken)
-      calcNotePut("ewHint", "This page's saved calculator inputs could not be read when it loaded, and edits here are NOT being saved. Reload to retry.");
-  }
-  return true;
-}
-
-// ---- manual contour rows (F57 OPEN item: C3.4 prints no elevations) ----
-// The estimator clicks a contour line and types the elevation they read
-// off the overview sheet. Session-only, like every other row here.
-// ---------- limit of work ------------------------------------------------
-// state.ewBound = { pts: [[x,y],...], src: "chain 412" | "outline", closed }
-// Page points, the same space the chains live in, which is what the server
-// integrates over. Held OUTSIDE state.ew so re-running the calculator does
-// not silently drop it. Cleared by ewPageReset(), which selectPage always
-// calls - the only chokepoint a page change reliably passes through. It used
-// to be cleared in loadResult instead, and an UNDETECTED page skips that
-// entirely, so the previous sheet's ring stayed on screen and in state.
-function ewBoundSet(pts, src) {
-  const p = (pts || []).filter(q => Array.isArray(q) && q.length >= 2)
-                       .map(q => [+q[0], +q[1]]);
-  if (p.length < 3) {
-    setStatus("that line has fewer than 3 points " + '—' + " it cannot bound an area", "err");
-    return false;
-  }
-  // A limit-of-work line is usually drawn closed, but a traced one often is
-  // not. The polygon test treats the last point as joined to the first
-  // anyway, so an open line is USABLE - say so rather than refusing, and say
-  // how far apart the ends are so the operator can judge it.
-  const dx = p[0][0] - p[p.length - 1][0], dy = p[0][1] - p[p.length - 1][1];
-  const gap = Math.hypot(dx, dy);
-  state.ewBound = { pts: p, src: src || "picked", gap };
-  renderEwBound();
-  // the area note reads the limit too ("Blank = the limit of work you set")
-  if (state.ew && typeof renderEwArea === "function") renderEwArea();
-  calcStateDirty();
-  return true;
-}
-// A limit-of-work line is almost never ONE chain. Measured on Barn C3.0
-// (the audit's own example): the BG-Limit of disturbance layer is 10 open
-// chains across three styles - dash runs broken at labels and corners -
-// and picking the longest one alone gave 4,730 SF against the estimator's
-// own 224,058 SF Clear & Grub, a 47x under-read returned as a success.
-// Stitching the layer family end-to-end reads 312,044 SF, the right order
-// of magnitude, with every join on the record.
-//
-// Joins are tiered from the same measurement: real label/dash breaks on
-// C3.0 run 0-124 pt, the two genuine long bridges are 368 and 125 pt, and
-// nothing legitimate exceeded that - so joins up to EW_STITCH_MAX = 500 pt
-// are taken but every join >= 12 pt is REPORTED (count + the largest, in
-// feet when the scale is known), the closure gap is reported the same way,
-// and family chains further than the cap are left out LOUDLY. The operator
-// sees the ring and its SF on the panel and judges; nothing is silent.
-const EW_STITCH_MAX = 500;  // pt; > the largest genuine bridge measured (368)
-function ewBoundStitch(start) {
-  const fam = (start.layer
-    ? state.result.chains.filter(c => c.layer === start.layer)
-    : state.result.chains.filter(c => c.style_id === start.style_id))
-    .filter(c => !state.excluded.has(c.chain_id));
-  const own = Math.hypot(
-    start.points[0][0] - start.points[start.points.length-1][0],
-    start.points[0][1] - start.points[start.points.length-1][1]);
-  // already a ring, or nothing to stitch with: the chain speaks for itself
-  if (own < 2 || fam.length < 2)
-    return { pts: start.points.slice(), n: 1, joins: [], leftover: 0 };
-  const dist = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
-  const used = new Set([start.chain_id]);
-  let poly = start.points.slice();
-  const joins = [];
-  for (;;) {
-    let best = null;
-    for (const endIdx of [0, 1]) {
-      const e = endIdx === 0 ? poly[poly.length-1] : poly[0];
-      for (const c of fam) {
-        if (used.has(c.chain_id)) continue;
-        const q = c.points;
-        for (const rev of [false, true]) {
-          const d = dist(e, rev ? q[q.length-1] : q[0]);
-          if (!best || d < best.d) best = { d, c, rev, endIdx };
-        }
-      }
-    }
-    if (!best || best.d > EW_STITCH_MAX) break;
-    let q = best.c.points.slice();
-    if (best.rev) q.reverse();
-    if (best.endIdx === 0) poly = poly.concat(q);
-    else poly = q.slice().reverse().concat(poly);
-    used.add(best.c.chain_id);
-    joins.push(best.d);
-  }
-  return { pts: poly, n: used.size, joins,
-           leftover: fam.length - used.size };
-}
-// One message covering what the stitcher did, in the operator's units.
-function ewStitchStatus(st) {
-  const ftPerPt = (state.result && state.result.scale
-    && state.result.scale.ft_per_paper_inch)
-    ? state.result.scale.ft_per_paper_inch / 72 : null;
-  const fmt = pt => ftPerPt ? Math.round(pt * ftPerPt) + " ft" : Math.round(pt) + " pt";
-  const big = st.joins.filter(j => j >= 12);
-  let m = st.n > 1 ? `limit of work stitched from ${st.n} lines` : "limit of work set";
-  if (big.length) m += ` ${'—'} ${big.length} gap${big.length>1?"s":""} bridged, largest ${fmt(Math.max(...big))}`;
-  if (st.leftover) m += ` ${'—'} ${st.leftover} line${st.leftover>1?"s":""} of this layer left OUT (further than ${fmt(EW_STITCH_MAX)})`;
-  return m + ` ${'—'} recalculate to apply`;
-}
-function ewBoundClear() {
-  state.ewBound = null;
-  renderEwBound();
-  calcStateDirty();
-}
-// The one work-area box as a limit-of-work polygon, or null when there is
-// no work area, more than one box, or a limit of work already set.
-function ewWorkAreaBoundary() {
-  if (typeof wzActive !== "function" || !wzActive()) return null;
-  if (state.ewBound) return null;
-  const z = wzNorm(state.workZones);
-  if (z.length !== 1) return null;
-  const [x0, y0, x1, y1] = z[0];
-  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-}
-
-function renderEwBound() {
-  const box = $("ewBound"), st = $("ewBoundState"), clr = $("ewBoundClear");
-  if (!box) return;
-  const b = state.ewBound
-    || (function () {
-         const p = ewWorkAreaBoundary();
-         return p ? { pts: p, src: "work area box", gap: 0, fromWz: true } : null;
-       })();
-  box.classList.toggle("on", !!b);
-  renderEwBoundAuto();
-  // a limit that IS the work-area box is cleared with the work area, not here
-  if (clr) clr.hidden = !b || !!b.fromWz;
-  const ftPerPt = (state.result && state.result.scale
-    && state.result.scale.ft_per_paper_inch)
-    ? state.result.scale.ft_per_paper_inch / 72 : null;
-  if (st) {
-    if (!b) {
-      st.textContent = "not set " + '—' + " the whole overlap of both surfaces";
-      st.title = "Cut and fill are integrated wherever BOTH surfaces are "
-        + "defined, which is the intersection of their convex hulls. That "
-        + "reaches into ground nobody is grading.";
-    } else {
-      const a = Math.abs(polyAreaPt(b.pts));
-      const sf = ftPerPt ? a * ftPerPt * ftPerPt : null;
-      const lf = ftPerPt ? stPolyPerim(b.pts) * ftPerPt : null;
-      st.textContent = `${b.src} ${'—'} ${b.pts.length} points`
-        + (sf ? ` ${'—'} ${Math.round(sf).toLocaleString()} SF inside` : "")
-        + (lf && !b.fromWz ? `, ${Math.round(lf).toLocaleString()} LF around` : "");
-      st.title = (b.gap > 1
-        ? `The line does not close: its ends are ${b.gap.toFixed(1)} pt apart. `
-          + `They are joined for the area test, so check the shape is what you meant. `
-        : "") + "Volume outside this outline is not counted.";
-    }
-  }
-  // the standing caveat is no longer true once a boundary is in force
-  const w = $("ewWhere");
-  if (w) w.innerHTML = b
-    ? "<b>Where it applies.</b> Inside the limit of work you set "
-      + "(" + b.pts.length + " points" + (b.src ? ", " + b.src : "") + "). "
-      + "Ground outside it is not counted at all."
-    : "<b>Where it applies.</b> Each surface reaches only as far as its own "
-      + "lines, and the volume is counted where the two overlap. That shape is "
-      + "a box round the lines, <b>not the real graded area</b>. Set a limit of "
-      + "work below and it will be.";
-}
-// shoelace, page pt^2
-function polyAreaPt(pts) {
-  let a = 0;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++)
-    a += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]);
-  return a / 2;
-}
-
-// THE SHEET'S OWN LIMIT LINE, OFFERED FIRST. Beaumont's step one on every
-// site plan is the limits-of-disturbance line (2026-09-15, 05:48): the
-// fence LF, the Clear & Grub SF and the strip area all come off it. When a
-// family's name or CAD layer says it is that line, offer it as a one-click
-// limit; the ring and its numbers are on the panel before anything counts.
-const EW_LOD_RE = /LIMITS? OF (DISTURB|GRAD|WORK|CONSTR)|\bLOD\b|DISTURBANCE|GRADING LIMIT/i;
-function ewLodFamily() {
-  if (!state.result || !state.result.styles) return null;
-  let best = null;
-  for (const s of state.result.styles) {
-    const name = state.labels.get(s.style_id) || s.suggested_label || "";
-    const layer = s.layer || "";
-    if (!(EW_LOD_RE.test(name) || EW_LOD_RE.test(layer))) continue;
-    const len = state.result.chains
-      .filter(c => c.style_id === s.style_id && !state.excluded.has(c.chain_id))
-      .reduce((t, c) => t + (c.length_pt || 0), 0);
-    if (len > 0 && (!best || len > best.len))
-      best = { style_id: s.style_id, name: name || layer, len };
-  }
-  return best;
-}
-function renderEwBoundAuto() {
-  const btn = $("ewBoundAuto");
-  if (!btn) return;
-  // decided from the DETECTION, not the panel's own state: the panel is
-  // rendered before its rows exist, and the offer must survive that
-  const fam = state.ewBound ? null : ewLodFamily();
-  btn.hidden = !fam;
-  if (fam) btn.textContent = `use the sheet's ${fam.name.slice(0, 40)}`;
-}
-$("ewBoundAuto").onclick = () => {
-  const fam = ewLodFamily();
-  if (!fam) return;
-  const seed = state.result.chains
-    .filter(c => c.style_id === fam.style_id && !state.excluded.has(c.chain_id))
-    .sort((a, b) => (b.length_pt || 0) - (a.length_pt || 0))[0];
-  if (!seed) return setStatus("that family has no lines left on the sheet", "err");
-  const st = ewBoundStitch(seed);
-  if (ewBoundSet(st.pts, st.n > 1 ? `${st.n} lines stitched (${fam.name})` : fam.name)) {
-    state.ewBound.seed = seed.chain_id;
-    calcStateDirty();
-    setStatus(ewStitchStatus(st));
-  }
-};
-$("ewBoundClear").onclick = () => {
-  ewBoundClear();
-  setStatus("limit of work cleared " + '—' + " volumes cover the whole overlap again");
-};
-$("ewBoundPick").onclick = () => {
-  if (!state.result) return setStatus("run Detect first", "err");
-  if (state.tool === "ew-bound") { ewDisarmBound("limit of work cancelled"); return; }
-  if (state.selected !== null) {
-    const ch = chainById(state.selected);
-    if (ch) {
-      const st = ewBoundStitch(ch);
-      if (ewBoundSet(st.pts, st.n > 1
-            ? `${st.n} lines stitched (${(ch.layer || "style " + ch.style_id).split("|").pop()})`
-            : "chain " + ch.chain_id)) {
-        state.ewBound.seed = ch.chain_id;
-        calcStateDirty();
-        setStatus(ewStitchStatus(st));
-        return;
-      }
-    }
-  }
-  state.tool = "ew-bound";
-  $("ewBoundPick").classList.add("active");
-  setStatus("limit of work: click the grading-limit line on the sheet "
-    + '—' + " Esc cancels", "busy");
-};
-// Hand-drawn limit of work (Jason Knudson's requirement, verbatim: "an
-// automatic boundary would be cool, but it would have to be editable" -
-// F145). A picked chain only works when the sheet draws ONE clean limit
-// line; Stice's Coral Mountain sheet fragments its GRADING LIMITS line and
-// the tract ring over-includes interior no-work areas. Drawing follows the
-// odd cuts a real site has. Same interaction grammar as the structure
-// outline (st-draw): click corners, Enter/double-click closes, Esc backs
-// up one corner then cancels.
-$("ewBoundDraw").onclick = () => {
-  if (!state.result) return setStatus("run Detect first", "err");
-  if (state.tool === "ew-bound-draw") { ewBoundDrawCancel("limit of work: drawing cancelled"); return; }
-  state.tool = "ew-bound-draw";
-  state.ewBoundDraft = [];
-  polySnapClear();
-  $("ewBoundDraw").classList.add("active");
-  syncCursor();
-  setStatus("limit of work: click the corners of the graded area"
-    + POLY_CLOSE_HINT, "busy");
-};
-function ewBoundDrawClick(px, py) {
-  const d = state.ewBoundDraft;
-  // SNAP TO CLOSE. A click inside POLY_CLOSE_PX of the first corner IS the
-  // close, not a new corner - the fifth point the partner kept getting.
-  if (polyCloseHit(d, px, py, polyCloseTolPt())) { polySnapClear(); return ewBoundDrawFinish(); }
-  const last = d[d.length - 1];
-  if (last && Math.hypot(px - last[0], py - last[1]) < 0.5) return;  // dblclick echo
-  d.push([px, py]);
-  const ftPerPt = (state.result && state.result.scale
-    && state.result.scale.ft_per_paper_inch)
-    ? state.result.scale.ft_per_paper_inch / 72 : null;
-  let live = "";
-  if (d.length >= 3 && ftPerPt) {
-    const sf = Math.abs(polyAreaPt(d)) * ftPerPt * ftPerPt;
-    live = ` ${'·'} ${Math.round(sf).toLocaleString()} SF so far`;
-  }
-  setStatus(`limit of work: ${d.length} corner(s)${live}` + POLY_CLOSE_HINT, "busy");
-  draw();
-}
-function ewBoundDrawFinish() {
-  const pts = [];
-  for (const q of state.ewBoundDraft)
-    if (!pts.length || Math.hypot(q[0] - pts[pts.length-1][0], q[1] - pts[pts.length-1][1]) > 0.5)
-      pts.push(q);
-  if (pts.length < 3) {
-    return ewBoundDrawCancel("limit of work: a boundary needs at least 3 corners "
-      + '—' + " drawing cancelled");
-  }
-  state.tool = null;
-  state.ewBoundDraft = [];
-  polySnapClear();
-  $("ewBoundDraw").classList.remove("active");
-  syncCursor();
-  if (ewBoundSet(pts, "drawn outline")) {
-    state.ewBound.seed = null;        // persisted by its points, not a chain
-    calcStateDirty();
-    setStatus(`limit of work drawn ${'—'} ${pts.length} corners ${'—'} recalculate to apply`);
-  }
-  draw();
-}
-function ewBoundDrawCancel(msg) {
-  state.tool = null;
-  state.ewBoundDraft = [];
-  polySnapClear();
-  $("ewBoundDraw").classList.remove("active");
-  syncCursor();
-  if (msg) setStatus(msg);
-  draw();
-}
-
-function ewDisarmBound(msg) {
-  if (state.tool !== "ew-bound") return;
-  state.tool = null;
-  $("ewBoundPick").classList.remove("active");
-  if (msg !== undefined) setStatus(msg);
-}
-function ewBoundAt(px, py) {
-  const { k } = state.view;
-  const f = IMG_DPI / 72;
-  const tolPt = 6 / k / f * 4 + 1.5;
-  let best = null, bestD = tolPt;
-  for (const ch of state.result.chains) {
-    if (state.excluded.has(ch.chain_id)) continue;
-    for (let i = 1; i < ch.points.length; i++) {
-      const d = distToSeg(px, py, ch.points[i-1], ch.points[i]);
-      if (d < bestD) { bestD = d; best = ch; }
-    }
-  }
-  if (!best)
-    return setStatus("no line there " + '—' + " click closer to the grading-limit line, or Esc", "err");
-  ewDisarmBound(undefined);
-  const st = ewBoundStitch(best);
-  if (ewBoundSet(st.pts, st.n > 1
-        ? `${st.n} lines stitched (${(best.layer || "style " + best.style_id).split("|").pop()})`
-        : "chain " + best.chain_id)) {
-    state.ewBound.seed = best.chain_id;
-    calcStateDirty();
-    setStatus(ewStitchStatus(st));
-  }
-}
-const _ewBoundClickBefore = handleCanvasClick;
-handleCanvasClick = function (e) {
-  if (state.tool === "ew-bound") {
-    const [px, py] = ptFromEvent(e);
-    return ewBoundAt(px, py);
-  }
-  return _ewBoundClickBefore(e);
-};
-addEventListener("keydown", (e) => {
-  if (typing() || state.tool !== "ew-bound") return;
-  if (e.key === "Escape") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    ewDisarmBound("limit of work cancelled");
-  }
-}, true);
-
-
 // ============== TRIM AT A MATCH LINE (T) ====================================
-// Pierce Site Work call, 2026-09-03: Jacob trims every run at the sheet's
+// Site-contractor call, 2026-09-03: their estimator trims every run at the sheet's
 // match line so a pipe that carries on to the next sheet is not counted
 // twice. Before this the operator split each crossing line by hand (S,
 // then Delete the far piece) - one line at a time.
@@ -12994,2557 +12815,6 @@ addEventListener("keydown", (e) => {
   }
 }, true);
 
-function ewDisarmPick(msg) {
-  if (state.tool !== "ew-pick") return;
-  state.tool = null;
-  $("ewAddRow").classList.remove("active");
-  setStatus(msg || "");
-}
-function ewAppendRow(cid) {
-  const ch = chainById(cid);
-  if (!ch) return setStatus(`chain ${cid} not found`, "err");
-  if (ch.custom) {
-    // volumes are computed server-side from the DETECTED result file;
-    // locally drawn/edited copies don't exist there and would be
-    // silently ignored - refuse loudly instead
-    return setStatus("that line is a local edit — pick an original detected line", "err");
-  }
-  if (state.ew.rows.some(r => r.chain_id === cid)) {
-    state.hotChain = cid; draw();
-    return setStatus(`chain ${cid} is already in the list`, "err");
-  }
-  state.ew.rows.push({ chain_id: cid, z: NaN, width: ch.width || 0, dist: null,
-                       surface: null, manual: true });
-  if (state.ew.removed) state.ew.removed = state.ew.removed.filter(id => id !== cid);
-  state.hotChain = cid;
-  renderEw();
-  draw();
-  const inp = $("ewRows").querySelector(`input[name="ew-z-${cid}"]`);
-  if (inp) inp.focus();
-  setStatus(`chain ${cid} added — type its elevation, then EXIST or PROP`);
-  calcStateDirty();
-}
-$("ewAddRow").onclick = () => {
-  if (ewNotReady("the contour list")) return;
-  if (state.tool === "ew-pick") { ewDisarmPick("add contour cancelled"); return; }
-  // a line already selected on the canvas is what the user means - take it
-  if (state.selected !== null && chainById(state.selected) !== null) {
-    ewAppendRow(state.selected);
-    return;
-  }
-  state.tool = "ew-pick";
-  $("ewAddRow").classList.add("active");
-  setStatus("add contour: click the contour line on the sheet — Esc cancels", "busy");
-};
-// nearest VISIBLE chain, same eligibility + zoom-scaled tolerance as a
-// plain canvas click (handleCanvasClick)
-function ewPickAt(px, py) {
-  const { k } = state.view;
-  const f = IMG_DPI / 72;
-  const tolPt = 6 / k / f * 4 + 1.5;
-  let best = null, bestD = tolPt;
-  for (const ch of state.result.chains) {
-    if (state.excluded.has(ch.chain_id)) continue;
-    // WHAT YOU CANNOT SEE, YOU CANNOT PICK. famShown() is the canvas's own
-    // answer, so a family hidden by the eye is unpickable and one shown by it
-    // is pickable - before FAM-VIS this expression WAS famShown, inlined.
-    if (!famShown(ch.style_id)) continue;
-    for (let i = 1; i < ch.points.length; i++) {
-      const d = distToSeg(px, py, ch.points[i-1], ch.points[i]);
-      if (d < bestD) { bestD = d; best = ch; }
-    }
-  }
-  if (!best) return setStatus("no line there — click closer to the contour, or Esc to cancel", "err");
-  ewDisarmPick();
-  ewAppendRow(best.chain_id);
-}
-// clicks land in the contour picker while it is armed; declared before the
-// structure tool's wrapper, which chains onto this one at load time
-const _ewClickBefore = handleCanvasClick;
-handleCanvasClick = function (e) {
-  if (state.tool === "ew-pick") {
-    const [px, py] = ptFromEvent(e);
-    return ewPickAt(px, py);
-  }
-  return _ewClickBefore(e);
-};
-// capture phase so the generic Esc (clear selection) never fires while the
-// picker owns the key - same pattern as the structure tool
-addEventListener("keydown", (e) => {
-  if (typing() || state.tool !== "ew-pick") return;
-  if (e.key === "Escape") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    ewDisarmPick("add contour cancelled");
-  }
-}, true);
-
-function renderEwLayers() {
-  if (!state.ew) return;
-  for (const [side, boxId] of [["existing", "ewExLayers"], ["proposed", "ewPrLayers"]]) {
-    const box = $(boxId);
-    box.innerHTML = "";
-    state.ew.layers[side].forEach((lay, i) => {
-      const row = document.createElement("div");
-      row.className = "ew-layer-row";
-      const name = document.createElement("input");
-      name.type = "text"; name.value = lay.name; name.placeholder = "layer name";
-      name.name = `ew-layer-${side}-${i}-name`;
-      name.oninput = () => { lay.name = name.value; };
-      const th = document.createElement("input");
-      th.type = "number"; th.step = "0.5"; th.min = "0"; th.value = lay.thickness_in;
-      th.name = `ew-layer-${side}-${i}-in`;
-      th.oninput = () => { lay.thickness_in = parseFloat(th.value); };
-      const unit = document.createElement("span");
-      unit.className = "unit"; unit.textContent = "in";
-      const x = document.createElement("button");
-      x.className = "mini x"; x.textContent = "×"; x.title = "remove layer";
-      x.onclick = () => { state.ew.layers[side].splice(i, 1); renderEwLayers(); };
-      row.append(name, th, unit, x);
-      box.appendChild(row);
-      // material balance: only a REMOVAL has anywhere to go. A proposed
-      // layer is purchased material sitting above subgrade, not site dirt,
-      // so it gets no disposition and never enters the reuse pool.
-      if (side === "existing") box.appendChild(ewDispRow(lay, i));
-    });
-  }
-  ewPlaceSync();
-}
-
-// ---- Rough Place Topsoil by area x depth (Wave 2 item 6; Beaumont's bid sheet line 12) ----
-// Topsoil goes back 6-8 in deep over the GREEN AREA - the limit of work
-// less the building footprints and the paving. With a depth typed the
-// server's material balance places by area (Rough Place Topsoil), exports
-// what was stripped and not placed, imports a shortfall; blank = the
-// percent-based respread as before. The subtraction is typed; the
-// structures drawn on this sheet and the zones named like paving are
-// offered as the number, never assumed.
-function ewPlaceLessSuggest() {
-  let fp = 0, pav = 0;
-  try {
-    for (const it of ((state.st && state.st.items) || [])) fp += Number(stCalc(it).area_sf) || 0;
-  } catch (e) { fp = 0; }
-  for (const z of (state.gzones || [])) {
-    if (!/DRIVE|PAV|PATIO|WALK|PARK|SLAB|GRAVEL/i.test(z.name || "")) continue;
-    const j = z.result;
-    pav += Number((j && (j.zone_area_sf || j.area_sf)) || 0);
-  }
-  return { fp: Math.round(fp), pav: Math.round(pav) };
-}
-function ewPlaceSync() {
-  const dIn = $("ewPlaceDepth"), lIn = $("ewPlaceLess"), use = $("ewPlaceUse"), note = $("ewPlaceNote");
-  if (!dIn || !state.ew) return;
-  if (document.activeElement !== dIn)
-    dIn.value = isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0 ? state.ew.placeDepthIn : "";
-  if (document.activeElement !== lIn)
-    lIn.value = isFinite(state.ew.placeLessSf) && state.ew.placeLessSf > 0 ? state.ew.placeLessSf : "";
-  dIn.oninput = () => { const v = parseFloat(dIn.value); state.ew.placeDepthIn = isFinite(v) && v > 0 ? v : null; calcStateDirty(); ewPlaceSync(); };
-  lIn.oninput = () => { const v = parseFloat(lIn.value); state.ew.placeLessSf = isFinite(v) && v >= 0 ? v : null; calcStateDirty(); ewPlaceSync(); };
-  const s = ewPlaceLessSuggest();
-  const tot = s.fp + s.pav;
-  use.hidden = !(tot > 0);
-  use.textContent = `use ${tot.toLocaleString()} SF`;
-  use.title = `${s.fp.toLocaleString()} SF of structure outlines on this sheet + ${s.pav.toLocaleString()} SF of zones named like paving`;
-  use.onclick = () => { state.ew.placeLessSf = tot; calcStateDirty(); ewPlaceSync(); };
-  const on = isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0;
-  note.textContent = on
-    ? "Topsoil back = (strip area \u2212 this SF) \u00d7 depth. What came off and is not put back is exported; putting back more than came off imports the difference. Press Calculate."
-    : "Blank: the topsoil layer's percent rule is used instead.";
-}
-
-// ---------- material balance: where each removal goes ----------
-// Defaults to 100% export. Beaumont Estimate #853 shows the stripped topsoil
-// is NOT structural reuse: their Import Structural reads 11,581 CY, and had
-// the 5,730 CY strip counted as reuse it would read 5,842. The respread /
-// export split is the estimator's judgement (soils report, landscape area),
-// so nothing is seeded - #853's exact 50/50 is a fact about that job, not a
-// rule.
-const EW_DISP_DEFAULT = { reuse_pct: null, respread_pct: null, destination: "on site" };
-
-function ewDispRow(lay, i) {
-  const d = document.createElement("div");
-  d.className = "ew-layer-disp";
-  const pctIn = (key) => {
-    const el = document.createElement("input");
-    el.type = "number"; el.min = "0"; el.max = "100"; el.step = "5";
-    el.placeholder = "0";
-    el.name = `ew-disp-${i}-${key}`;
-    el.value = isFinite(lay[key]) ? lay[key] : "";
-    el.oninput = () => {
-      const v = parseFloat(el.value);
-      lay[key] = isFinite(v) ? Math.min(Math.max(v, 0), 100) : null;
-      paint();
-    };
-    return el;
-  };
-  const reuse = pctIn("reuse_pct"), resp = pctIn("respread_pct");
-  const exp = document.createElement("span");
-  exp.className = "exp";
-  const dest = document.createElement("input");
-  dest.type = "text"; dest.placeholder = "on site";
-  dest.name = `ew-disp-${i}-dest`;
-  dest.value = lay.destination === undefined ? "on site" : lay.destination;
-  // Bid-sheet exclusion 6: "Topsoil and fill material required fro the job
-  // will be stockpiled onsite" - their export often never leaves the
-  // property, and exclusion 23 says import/export carries its own fee.
-  dest.title = 'Where it goes. "On site" means moved, not hauled away.';
-  dest.oninput = () => { lay.destination = dest.value; };
-  function paint() {
-    const r = isFinite(lay.reuse_pct) ? lay.reuse_pct : 0;
-    const s = isFinite(lay.respread_pct) ? lay.respread_pct : 0;
-    exp.textContent = `${Math.max(100 - r - s, 0)}% export`;
-    exp.style.color = (r + s > 100) ? "var(--t-stop)" : "";
-  }
-  paint();
-  const span = (cls, txt) => {
-    const e = document.createElement("span");
-    e.className = cls; e.textContent = txt;
-    return e;
-  };
-  d.append(span("", "reuse"), reuse, span("", "%"),
-           span("", "respread"), resp, span("", "%"),
-           span("sep", "\u2192"), exp, span("sep", "\u00b7"), dest);
-  return d;
-}
-
-$("ewStrip").onclick = () => {
-  if (ewNotReady("the layer stack")) return;
-  // Topsoil comes off first on every job. Default thickness is the LOCAL
-  // prior: Beaumont Estimate #853's own arithmetic is 8.29 in (5,730 CY
-  // strip x 27 / 224,058 SF clear-and-grub), inside the national 4-8 in
-  // band (NRCS IL Urban Manual spec 752; MS DEQ) - see
-  // webui/ew_defaults.js and docs/earthwork-defaults-research.json.
-  // Editable like any other row; the soils report outranks every default.
-  if (!state.ew.layers.existing.some(l => /topsoil/i.test(l.name)))
-    state.ew.layers.existing.unshift({ name: "Topsoil",
-      thickness_in: (typeof EW_RESEARCH !== "undefined"
-                     ? EW_RESEARCH.strip_depth_in.value : 8),
-      ...EW_DISP_DEFAULT });
-  renderEwLayers();
-};
-$("ewAddEx").onclick = () => {
-  if (ewNotReady("the layer stack")) return;
-  state.ew.layers.existing.push({ name: "", thickness_in: 4, ...EW_DISP_DEFAULT });
-  renderEwLayers();
-  const rows = $("ewExLayers").querySelectorAll("input[type=text]");
-  if (rows.length) rows[rows.length - 1].focus();
-};
-$("ewAddPr").onclick = () => {
-  if (ewNotReady("the layer stack")) return;
-  state.ew.layers.proposed.push({ name: "", thickness_in: 8 });
-  renderEwLayers();
-  const rows = $("ewPrLayers").querySelectorAll("input[type=text]");
-  if (rows.length) rows[rows.length - 1].focus();
-};
-
-// the request body the volumes AND the map endpoints both take
-function ewBody() {
-  const lay = side => state.ew.layers[side]
-    .filter(l => isFinite(l.thickness_in) && l.thickness_in > 0)
-    .map(l => {
-      const o = { name: (l.name || "").trim() || "layer", thickness_in: l.thickness_in };
-      // the balance rides on removals only; blank means 0, i.e. 100% export
-      if (side === "existing") {
-        o.reuse_pct = isFinite(l.reuse_pct) ? l.reuse_pct : 0;
-        o.respread_pct = isFinite(l.respread_pct) ? l.respread_pct : 0;
-        o.destination = l.destination === undefined ? "on site" : l.destination;
-      }
-      return o;
-    });
-  return {
-    // rows outside the work area never reach a surface (ewInWorkArea)
-    existing: state.ew.rows.filter(r => r.surface === "existing" && isFinite(r.z) && ewInWorkArea(r))
-      .map(r => ({ chain_id: r.chain_id, z: r.z })),
-    proposed: state.ew.rows.filter(r => r.surface === "proposed" && isFinite(r.z) && ewInWorkArea(r))
-      .map(r => ({ chain_id: r.chain_id, z: r.z })),
-    cell_ft: 2.0,
-    // Which surface runs between the contours. Sent every time so the
-    // request records the choice; the answer names the model it used.
-    surface_model: ($("ewModelSel") && $("ewModelSel").value) || "auto",
-    // The limit of work, if the operator set one. Omitted when they have not,
-    // so the server takes the original path and every existing number stands.
-    // ...a limit of work you set wins; else ONE work-area box is the limit
-    // (several boxes are not one outline - then the rows filter alone
-    // shrinks the surfaces, and the panel says which)
-    boundary: state.ewBound ? state.ewBound.pts : ewWorkAreaBoundary(),
-    // a picked or drawn limit is the DISTURBED AREA (fence, clear & grub,
-    // strip all come off it); a work-area box is only a crop
-    boundary_is_limit: !!state.ewBound,
-    existing_layers: lay("existing"),
-    proposed_layers: lay("proposed"),
-    // #853 reuses site cut against site fill 1:1 (import 11,581 against
-    // fill - cut 11,572, a 0.08% residual), so this is on by default - the
-    // only defaulted assumption in the balance.
-    cut_reuse_pct: ($("ewCutReuse") && $("ewCutReuse").checked) ? 100 : 0,
-    // WHAT THE ESTIMATOR HAS CONFIRMED (earthwork.bid_readiness). Not a
-    // preference: it is how "there is no topsoil to strip on this job"
-    // gets said, so a software default stops being an assumption and
-    // starts being his answer. Sent every time, so the ledger records the
-    // state the number was signed off in.
-    confirmed: (state.ewConfirmed || []).slice(),
-    export_factor: ewFactor("ewFacExp"),
-    import_factor: ewFactor("ewFacImp"),
-    ...(function () {
-      const sides = ewSpotsSplit(g => typeof wzActive !== "function" || !wzActive()
-                                      || wzPtIn(g.x, g.y, state.workZones));
-      const o = {};
-      if (sides.existing.length) o.existing_points = sides.existing;
-      if (sides.proposed.length) o.proposed_points = sides.proposed;
-      if (isFinite(state.ew.areaSf) && state.ew.areaSf > 0) o.strip_area_sf = state.ew.areaSf;
-      if (isFinite(state.ew.placeDepthIn) && state.ew.placeDepthIn > 0) {
-        o.place_depth_in = state.ew.placeDepthIn;
-        o.place_less_sf = isFinite(state.ew.placeLessSf) && state.ew.placeLessSf > 0 ? state.ew.placeLessSf : 0;
-      }
-      return o;
-    })(),
-  };
-}
-
-// A factor left blank, zeroed or nonsense means NO factor. Volumes are
-// in-place yards between the two surfaces, and #853 applies no swell,
-// shrink or compaction factor anywhere, so 1.0 is the evidenced default;
-// these fields exist only for a job that needs one.
-// Material presets fill the two factor boxes from the researched table in
-// webui/ew_defaults.js - export rides bank->loose (dug yards swell into the
-// truck), import rides 1/bank->compacted (buying enough bank yards that the
-// compacted fill measures out). Defaults stay 1.0 until the operator picks
-// one - #853 applies no factor anywhere and that evidence stands - and the
-// boxes remain editable after; picking a preset is a suggestion accepted,
-// not a lock. The title carries the citation so the operator can see WHERE
-// the number came from before pricing on it.
-(function ewWireMatPresets() {
-  const sel = $("ewMatPreset");
-  if (!sel || typeof EW_RESEARCH === "undefined") return;
-  for (const name of Object.keys(EW_RESEARCH.materials)) {
-    const o = document.createElement("option");
-    o.value = name; o.textContent = name;
-    sel.append(o);
-  }
-  sel.onchange = () => {
-    const m = EW_RESEARCH.materials[sel.value];
-    if (!m) { sel.title = ""; return; }
-    $("ewFacExp").value = m.b2l.toFixed(2);
-    $("ewFacImp").value = (1 / m.b2c).toFixed(2);
-    sel.title = m.src;
-    $("ewFacExp").dispatchEvent(new Event("input", { bubbles: true }));
-    $("ewFacImp").dispatchEvent(new Event("input", { bubbles: true }));
-  };
-})();
-
-function ewFactor(id) {
-  const el = $(id);
-  const v = el ? parseFloat(el.value) : NaN;
-  return (isFinite(v) && v > 0) ? v : 1;
-}
-
-// spot grades the estimator switched on, with the datum applied when the
-// sheet gave us no contour label to anchor them against
-function ewActiveSpots() {
-  if (!state.ew || !state.ew.spots) return [];
-  // Number.isFinite, NEVER bare isFinite: isFinite(null) is TRUE in JS
-  // (null coerces to 0), so the fresh-open default spotDatum: null acted
-  // as a TYPED DATUM OF ZERO and every truncated spot served raw 29-49 ft
-  // values - resolved 7,7xx elevations destroyed until the operator
-  // touched the box. The "0.0 is not None" trap (CLAUDE.md section 5),
-  // JavaScript edition. Caught live 2026-08-30 during the joint UI pass.
-  const base = Number.isFinite(state.ew.spotDatum) ? state.ew.spotDatum : NaN;
-  return state.ew.spots
-    .filter(g => state.ew.spotOn[g.tag])
-    .map(g => {
-      // A typed datum outranks the engine's resolution for every TRUNCATED
-      // value - resolved ones included. The old order (resolved wins, datum
-      // only fills the unresolved) made the override useless on the sheet
-      // that needs it most: a bogus legend note resolves everything, so a
-      // correct typed 7700 changed nothing. Authority is human > sheet note
-      // > consensus band. Values printed in full (>= 1000) keep their
-      // printed elevation - the datum is the hundreds the sheet OMITTED,
-      // and nothing was omitted from those.
-      if (Number.isFinite(base) && g.value < 100.0)
-        return { ...g, z: base + g.value };
-      if (g.resolved && isFinite(g.z)) return g;
-      if (!Number.isFinite(base)) return null;
-      return { ...g, z: base + g.value };   // datum = the hundreds the sheet omitted
-    })
-    .filter(g => g && isFinite(g.z));
-}
-
-// Which surface a tag's grades belong to. The engine ships `side` on every
-// spot (earthwork._SPOT_EXISTING); a tag the operator has switched keeps the
-// operator's answer. Never guesses past the tag: an unknown tag is proposed,
-// which is what the sheet's built elevations are.
-function ewSpotSideOf(tag) {
-  if (!state.ew) return "proposed";
-  const pick = state.ew.spotTagSide && state.ew.spotTagSide[tag];
-  if (pick === "existing" || pick === "proposed") return pick;
-  const g = (state.ew.spots || []).find(s => s.tag === tag && s.side);
-  return g && g.side === "existing" ? "existing" : "proposed";
-}
-
-// The switched-on spot grades split by their tag's side, as {existing: [],
-// proposed: []} of {x, y, z}. `keep` filters a point (the work-zone crop).
-function ewSpotsSplit(keep) {
-  const out = { existing: [], proposed: [] };
-  for (const g of ewActiveSpots()) {
-    if (keep && !keep(g)) continue;
-    out[ewSpotSideOf(g.tag)].push({ x: g.x, y: g.y, z: g.z });
-  }
-  return out;
-}
-
-function renderEwSpots() {
-  const box = $("ewSpots");
-  const sp = state.ew && state.ew.spots;
-  if (!sp || !sp.length) { if (box) box.hidden = true; return; }
-  box.hidden = false;
-  box.innerHTML = "";
-  const counts = {};
-  for (const g of sp) counts[g.tag] = (counts[g.tag] || 0) + 1;
-  const head = document.createElement("div");
-  head.className = "sp-head";
-  head.innerHTML = `<span>Spot grades on this sheet</span><b>${sp.length}</b>`;
-  const seg = document.createElement("div");
-  seg.className = "seg";
-  // Bulk, not the setting: each tag below carries its own side. These move
-  // every tag at once for the sheet that really is all one side.
-  for (const [key, lab] of [["existing", "all EXIST"], ["proposed", "all PROP"]]) {
-    const b = document.createElement("button");
-    b.textContent = lab;
-    b.title = "put every tag on this side";
-    if (Object.keys(counts).every(t => ewSpotSideOf(t) === key))
-      b.className = key === "existing" ? "on-ex" : "on-pr";
-    b.onclick = () => {
-      state.ew.spotSide = key;
-      for (const t of Object.keys(counts)) state.ew.spotTagSide[t] = key;
-      calcStateDirty(); renderEwSpots(); draw();
-    };
-    seg.appendChild(b);
-  }
-  head.appendChild(seg);
-  box.appendChild(head);
-  const tags = document.createElement("div");
-  tags.className = "sp-tags";
-  for (const t of Object.keys(counts).sort()) {
-    const l = document.createElement("label");
-    l.className = "sp-tag" + (state.ew.spotOn[t] ? " on" : "");
-    const cb = document.createElement("input");
-    cb.type = "checkbox"; cb.checked = !!state.ew.spotOn[t];
-    cb.onchange = () => { state.ew.spotOn[t] = cb.checked; calcStateDirty(); renderEwSpots(); draw(); };
-    l.append(cb, document.createTextNode(` ${t} ${counts[t]}`));
-    const side = ewSpotSideOf(t);
-    const sb = document.createElement("button");
-    sb.type = "button";
-    sb.className = "sp-side " + (side === "existing" ? "on-ex" : "on-pr");
-    sb.textContent = side === "existing" ? "EXIST" : "PROP";
-    sb.title = `${t} grades go on the ${side === "existing" ? "ground now" : "new ground"}`
-      + " \u2014 click to swap";
-    // inside the <label>: without both of these the click also flips the
-    // checkbox beside it, so swapping a side would switch the tag off
-    sb.onclick = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      state.ew.spotTagSide[t] = side === "existing" ? "proposed" : "existing";
-      calcStateDirty(); renderEwSpots(); draw();
-    };
-    l.appendChild(sb);
-    tags.appendChild(l);
-  }
-  box.appendChild(tags);
-  // The override box shows when nothing resolved (nothing to anchor to) OR
-  // when the sheet's two datum sources DISAGREE. The old gate was
-  // resolved-only, which is precisely how Barn C3.3 shipped 171 grades
-  // 100 ft low with the override hidden: a bogus legend note resolved
-  // everything, so the one control that could fix it never rendered.
-  // Wrong-and-visible is survivable; wrong-and-green-with-no-override is
-  // what loses a client.
-  const dat = state.ew.datum;
-  if (dat && dat.conflict) {
-    const d = document.createElement("div");
-    d.className = "sp-datum sp-conflict";
-    const chose = dat.chosen === "band" ? dat.band_base : dat.declared;
-    const msg = document.createElement("div");
-    msg.innerHTML = `<b>This sheet disagrees with itself about the datum.</b> `
-      + `Its legend note reads <b>${dat.declared}</b>; its own printed `
-      + `elevations (${dat.band_n} of them) sit in the <b>${dat.band_base}</b> `
-      + `band. Using <b>${chose}</b> — ${dat.chosen === "band"
-          ? `${dat.band_n} full elevations printed on the drawing outrank one `
-            + `boilerplate legend sentence`
-          : `a ${dat.band_n}-label band is the shape the legend's own sample `
-            + `text produces, so the note stands`}. `
-      + `If the sheet means the other one, type it:`;
-    d.appendChild(msg);
-    const i = document.createElement("input");
-    i.type = "number"; i.step = "100"; i.placeholder = String(chose);
-    i.value = Number.isFinite(state.ew.spotDatum) ? state.ew.spotDatum : "";
-    i.oninput = () => { state.ew.spotDatum = parseFloat(i.value); renderEwSpots(); };
-    d.appendChild(i);
-    box.appendChild(d);
-  } else if (!sp.some(g => g.resolved)) {
-    const d = document.createElement("div");
-    d.className = "sp-datum";
-    d.append(document.createTextNode("No contour label on this sheet to anchor them. Datum:"));
-    const i = document.createElement("input");
-    i.type = "number"; i.step = "100"; i.placeholder = "7700";
-    i.value = Number.isFinite(state.ew.spotDatum) ? state.ew.spotDatum : "";
-    i.oninput = () => { state.ew.spotDatum = parseFloat(i.value); renderEwSpots(); };
-    d.appendChild(i);
-    box.appendChild(d);
-  }
-  const n = ewActiveSpots().length;
-  const note = document.createElement("div");
-  note.className = "sp-note";
-  const bySide = ewSpotsSplit();
-  note.textContent = n
-    ? `${n} of ${sp.length} in use: ${bySide.existing.length} on the ground now, `
-      + `${bySide.proposed.length} on the new ground. TW, BW, RIM, TS and BS `
-      + `are tops of walls and pipes, not ground.`
-    : `None in use. FG is the new ground; ME and EG are the ground now.`;
-  box.appendChild(note);
-}
-
-function renderEwArea() {
-  const note = $("ewAreaNote"), inp = $("ewAreaIn");
-  if (!note || !inp || !state.ew) return;
-  inp.value = isFinite(state.ew.areaSf) ? state.ew.areaSf : "";
-  inp.oninput = () => {
-    const v = parseFloat(inp.value);
-    state.ew.areaSf = isFinite(v) && v > 0 ? v : null;
-    renderEwArea();
-  };
-  const auto = state.ew.result ? state.ew.result.area_sf : null;
-  const fpp = stFtPerPt();
-  const limitSf = state.ewBound && fpp ? Math.abs(polyAreaPt(state.ewBound.pts)) * fpp * fpp : null;
-  // ewBody sends the typed area only when it is > 0, so the note says
-  // "typed" only then (0 or blank is not a typed area)
-  note.textContent = isFinite(state.ew.areaSf) && state.ew.areaSf > 0
-    ? "Layer volumes use the area you typed."
-    : limitSf
-      ? `Blank = the limit of work you set (${Math.round(limitSf).toLocaleString()} SF): `
-        + "Clear & Grub and Strip Topsoil cover all of it. Type a number only to override."
-      : "Blank = where the two surfaces overlap"
-        + (auto ? ` (last run: ${Number(auto).toLocaleString()} SF)` : "")
-        + ". Topsoil is stripped over the whole disturbed area, which is usually larger — set the limit of work above, or type that here.";
-}
-
-// Bid-sheet names (Beaumont's 22-item sheet) for the itemized takeoff
-function ewItemLabel(layer) {
-  if (layer.side === "existing")
-    return /topsoil/i.test(layer.name) ? "Strip Topsoil" : `Remove ${layer.name}`;
-  return `Place ${layer.name}`;
-}
-// every earthwork row is replaced on each Calculate, so this has to match
-// the material-balance rows too. "Rough Place " does NOT start with
-// "Place ", so it needs its own alternative.
-const EW_ITEM_RE = /^(Site Cut|Site Fill|Strip Topsoil|Clear & Grub$|Silt \/ Construction Fence$|Remove |Rough Place |Place |Export |Import Structural$|Import Topsoil$|(Cut|Fill) \(earthwork\))/;
-
-// THE PANEL AND THE SELECTION CHIP MUST NOT CONTRADICT EACH OTHER.
-//
-// They did. The chip was taught `how` on 2026-08-31 and started reading
-// "EL 554 · inferred" for an `inherited` contour, while the panel one screen
-// away printed "chain 87 · w 0.2 · label 999pt away" for the SAME row at the
-// same moment - 26 of C-04's 150. Two lies in one line: 999 is
-// suggest_elevations' SENTINEL for "no label on this chain at all, the
-// value was welded across from another fragment" (earthwork.py `_put(m,
-// 999.0, ...)`, and a real radius match can never exceed max_d_pt = 16.0),
-// and the panel is the screen carrying the EXIST / PROP buttons that feed
-// the volume, so it is the one that must not be wrong.
-//
-// Both screens now read the SAME `how` through the SAME table (ELEV_PROV),
-// and the sentinel is never rendered as a measurement.
-const EW_DIST_INHERITED = 999;   // earthwork.py suggest_elevations pass 2
-
-// EW-REVIEW-BEGIN
-// ==========================================================================
-// THE CONTOUR REVIEW SURFACE, and the coverage statement that sizes it.
-//
-// WHAT WAS MISSING. The owner's business partner ran Calculate on a demo
-// sheet on 2026-09-02, saw by eye that two contours the sheet prints as 562
-// and 563 had been given 564 and 570, and asked for every contour line to be
-// named individually - "by the elevation the engine thinks it is, or marked
-// unknown" - so he could go down the list. Independently measured the same
-// day: nothing in the app stated how many of a sheet's contours carry an
-// elevation. Every fact was on the wire (each row's `how`, each excluded
-// family's chain count) and nothing added them up.
-//
-// WHY IT DECIDES THE NUMBER, not just the presentation. On the DEM-truth
-// sheets at a 1 ft interval the engine ran +22% cut / -22% fill and the
-// WHOLE error was label mis-pairing and chains welded across levels;
-// correcting four rows and dropping five welded chains took the same run
-// under 1%. So the accuracy fix is making the four wrong rows findable.
-//
-// This block is PURE - no DOM, no state, no fetch - so tests/test_ew_review.js
-// can eval it (the CHECK-QUEUE block is the same arrangement).
-// ==========================================================================
-
-// The sheet's own contour interval is EVIDENCE, and it is only usable as
-// evidence when enough of the sheet's labels agree on it.
-//
-// MEASURED, Oncor C-04 (engine page index 3 = printed sheet C-04, job
-// e183a0d44d89, fresh detect): interval 1.0 ft off 23 of 56 steps between
-// adjacent labelled elevations, and 18 of the 20 `radius` rows carry a
-// FRACTIONAL elevation - 551.2, 554.3, 557.2, 557.4, 557.6, 558.5, 558.8,
-// 566.8, 567.8, 569.9, 570.9, 582.5, 583.5, 583.6, 583.9, 584.4, 584.7,
-// 585.9. EIGHT of those eighteen carry a legend-keyed spot tag (4 BW, 2 EW,
-// 1 TW, 1 ME) - ten is the tag count over all twenty radius rows, and the
-// earlier note here said ten of the eighteen, which does not reproduce
-// (re-measured off the live suggest response 2026-09-03). BW bottom of wall, TW
-// top of wall, ME match existing, EW end of wall) which the sheet's own
-// legend defines as spot annotations, not contour labels. A number that is
-// not on the sheet's own step cannot be one of its contour elevations, so
-// these rank first - as a QUESTION on the row, never as a correction.
-//
-// TWO GUARDS, because an interval read wrong would condemn half the sheet:
-//  * MODAL SUPPORT. Fewer than EW_IV_MIN_STEPS steps agreeing is a sample,
-//    not a convention (CLAUDE.md s6), and the flag stays off.
-//  * SELF-CHECK. If more than EW_OFF_IV_MAX_SHARE of the elevations are off
-//    the step, the thing that is wrong is the interval, not the rows. The
-//    flag stays off and says so. On C-04 the off-step share is 23/150 =
-//    15%; on Stice p0 the interval reads 0.1 ft (decimal design labels) and
-//    flags nothing, which is the correct no-op rather than a false alarm.
-const EW_IV_MIN_STEPS = 5;         // modal steps behind a usable interval
-const EW_IV_TOL_FT = 0.02;         // a label is "on the step" within this
-const EW_OFF_IV_MAX_SHARE = 0.4;   // more off-step than this: distrust the step
-
-// Every class of evidence a contour row can carry, in the order an operator
-// should sweep them. `rank` is the sort key for "most doubtful first";
-// `chip` is the filter label, which has the whole bar to itself; `badge` is
-// the SHORT form for the row, where it shares a ~200 px column with the
-// elevation input, three surface buttons and the row's own sentence (the
-// first live pass rendered "Off the sheet's interval" as a two-line pill
-// that overflowed its own background and made every row five lines tall);
-// `why` is the sentence both of them carry as a tooltip.
-//
-// The five separations the review has to make are the four the brief names
-// plus one the measurement forced: `radius` ("the nearest printed number
-// BESIDE the line") is neither "read from the sheet's own text" nor
-// inferred - the number IS printed, but nothing says it belongs to this
-// contour, and on C-04 half of them are wall and match-existing spot
-// heights. Folding it into "printed" is what let 551.2 BW pass as a
-// contour elevation.
-const EW_REVIEW = {
-  "off-interval": { rank: 0, chip: "Off the sheet's interval",
-    badge: "off interval",
-    short: "not on this sheet's contour interval",
-    why: "This number is not a step on the contour interval this sheet's "
-       + "labels go by. So it is not a contour height. It is most often a "
-       + "spot height, like a wall top, that sat close to the line. Check "
-       + "the drawing. Fix the number or drop the row. We changed nothing." },
-  nearby: { rank: 1, chip: "Printed nearby", badge: "nearby",
-    short: "nearest printed number, not this line's own label",
-    why: "The number is printed on the sheet, but not in this line's own "
-       + "break. It is just the closest number. We think it belongs to this "
-       + "line. The sheet does not say so." },
-  machine: { rank: 2, chip: "Read by machine", badge: "machine-read",
-    short: "digits read by machine off a picture",
-    why: "The sheet has a label in this line's break, but it is drawn, not "
-       + "typed. A machine read the digits off a picture. It can get them "
-       + "wrong." },
-  inferred: { rank: 3, chip: "Inferred", badge: "inferred",
-    short: "nobody printed this - it was worked out",
-    why: "Nothing is printed on this line. We worked the number out. Either "
-       + "we carried it along the line from another piece, or we counted it "
-       + "between two other lines." },
-  unknown: { rank: 4, chip: "Source not recorded", badge: "source?",
-    short: "we did not record where this came from",
-    why: "We did not record where this number came from. We cannot say if "
-       + "the sheet prints it or if we worked it out." },
-  none: { rank: 5, chip: "No elevation", badge: "no elevation",
-    short: "no elevation at all",
-    why: "This line has no height yet. It counts for nothing. Read the "
-       + "number on the drawing and type it in." },
-  typed: { rank: 6, chip: "Typed by you", badge: "typed",
-    short: "typed in by you",
-    why: "You typed this number. We do not change it." },
-  // THE DIGITS ARE THE SHEET'S; THE PAIRING IS STILL OURS.
-  //
-  // This tooltip used to end "real text in the PDF, not a reading of ours",
-  // which promises more than the provenance can deliver (review finding R3,
-  // 2026-09-03). Reading a label out of a break says nothing about WHICH
-  // line the break belongs to, and the chainer can weld two contour levels
-  // into one chain - at which point one of the two printed elevations wins
-  // and the class still reads "from the sheet".
-  //
-  // MEASURED on the DEM 1 ft sheet (144 contour lines, 101 rows, 9 known
-  // wrong against the DEM): THREE of the nine are in this class - chains
-  // 429, 430 and 339 - and all three are welded, their true elevation
-  // spanning exactly 1.0 ft along one chain. Off-interval catches none of
-  // them, because every wrong value is a whole number on a 1 ft sheet.
-  //
-  // AND NO SIGNAL FOUND THEM. Three were measured over this sheet's rows
-  // before choosing to hedge rather than rank (98 of the 101 carry enough
-  // vertices for the geometry test; all 101 for the other two):
-  //   * SELF-APPROACH (a weld leaves a hairpin: the minimum distance
-  //     between two points more than 25% of the arc apart). The three rank
-  //     17th, 25th and 96th of 98 - no separation at any threshold.
-  //   * TWO PRINTED ELEVATIONS NEAR ONE CHAIN, 1 ft or more apart. At a
-  //     16 pt radius it flags 33 of the 101 rows and catches 1 of the 3;
-  //     at 30 pt it catches all 3 and flags 92 of the 101. There is no
-  //     radius that is a rank rather than a coin toss.
-  //   * LENGTH ("a chain long enough to span more than one interval").
-  //     Two of the three are SHORTER than this sheet's median contour
-  //     chain (290.5 and 396.5 pt against 550.8); the weld is short here,
-  //     not long.
-  // So the class keeps its rank - promoting 66 rows to catch 3 would bury
-  // the 25 the sweep actually needs - and the words stop over-claiming.
-  // Dropping all three moves no volume (+22.40% / -22.41% either way), so
-  // this is ranking honesty, not accuracy.
-  read: { rank: 7, chip: "Read from the sheet", badge: "from the sheet",
-    short: "label printed in this line's own break",
-    why: "The digits are the sheet's own text, read out of the label it "
-       + "prints in a break in this contour. WHICH contour they belong to "
-       + "is still ours: two contour levels can end up welded into one "
-       + "line, and then one of the two printed elevations is the one you "
-       + "see here. Measured on our 1 ft test sheet, 3 of its 10 known-wrong "
-       + "rows are in this class, each welded across 1.0 ft - and nothing "
-       + "on this surface can point them out, so a sweep of this class is "
-       + "a read of the drawing, not of the badge." },
-};
-const EW_REVIEW_ORDER = ["off-interval", "nearby", "machine", "inferred",
-                         "unknown", "none", "typed", "read"];
-
-// Is `z` a step on this sheet's contour interval? A null interval is
-// unknown, which is never "off": absence of evidence is not evidence.
-function ewOnInterval(z, ivFt) {
-  if (!(ivFt > 0) || !isFinite(z)) return true;
-  const r = Math.abs(z / ivFt - Math.round(z / ivFt)) * ivFt;
-  return r <= EW_IV_TOL_FT;
-}
-
-// The class of ONE row, before the interval self-check. `row` is a panel
-// row ({z, how, manual}) or an unelevated stub ({noElev: true}).
-function ewRowClassBase(row) {
-  if (!row) return "unknown";
-  if (row.noElev || !isFinite(row.z)) return "none";
-  if (row.manual) return "typed";
-  switch (row.how) {
-    case "inline": return "read";
-    case "radius": return "nearby";
-    case "gap-ocr": return "machine";
-    case "inherited": case "interval-infill": return "inferred";
-    default: return row.inferred ? "inferred" : "unknown";
-  }
-}
-
-// Whether this sheet's interval may be used to rank rows, and why not when
-// it may not. `rows` is every panel row; `ivRaw` is the server's
-// contour_coverage.interval.
-function ewIntervalUse(ivRaw, rows) {
-  const ft = ivRaw && ivRaw.interval_ft;
-  const modal = (ivRaw && ivRaw.modal_count) || 0;
-  if (!(ft > 0))
-    return { ft: null, ok: false, share: null, modal: modal,
-      why: "This sheet's labels do not step by a readable contour interval, "
-         + "so no row is ranked on one." };
-  // WHERE THE NUMBER CAME FROM DECIDES HOW IT IS JUDGED. The count gate
-  // below weighs a statistic over the labels; it has nothing to say about
-  // a sheet that states its interval in its own notes, or about a value
-  // the estimator typed. Applying it to those printed "Only 0 steps ...
-  // agree on 1 ft" directly above a control reading "sheet's
-  // contour-interval note" - the same number, contradicted in two lines.
-  const ivStated = !!(ivRaw && (ivRaw.typed_ft
-    || (ivRaw.note && ivRaw.note.interval_ft)));
-  if (!ivStated && modal < EW_IV_MIN_STEPS)
-    return { ft: ft, ok: false, share: null, modal: modal,
-      why: "Only " + modal + " step" + (modal === 1 ? "" : "s")
-         + " between labelled elevations agree on " + ft + " ft - too few "
-         + "to call it this sheet's interval, so no row is ranked on it." };
-  let n = 0, off = 0;
-  for (const r of (rows || [])) {
-    if (!r || r.noElev || !isFinite(r.z) || r.manual) continue;
-    n++;
-    if (!ewOnInterval(r.z, ft)) off++;
-  }
-  const share = n ? off / n : 0;
-  if (n && share > EW_OFF_IV_MAX_SHARE)
-    return { ft: ft, ok: false, share: share, modal: modal,
-      why: off + " of " + n + " elevations are off a " + ft + " ft step - "
-         + "more than the interval reading can carry, so the reading is "
-         + "what is in doubt and no row is ranked on it." };
-  return { ft: ft, ok: true, share: share, modal: modal,
-    why: ivStated
-      ? (ivRaw.typed_ft
-         ? "You set this sheet's contour interval to " + ft + " ft."
-         : "This sheet states a " + ft + " ft contour interval in its notes.")
-      : "This sheet's contours step by " + ft + " ft (" + modal
-        + " agreeing steps between labelled elevations)." };
-}
-
-// Every row's class, with the interval self-check applied. Returns
-// { cls: [class per row, same order], counts: {class: n}, iv }.
-// `noElevN` is how many contour lines carry no elevation at all - they are
-// not panel rows, and leaving them out of the counts would be the same
-// silent cap this whole change exists to end.
-function ewReviewClasses(rows, noElevN, ivRaw) {
-  const iv = ewIntervalUse(ivRaw, rows);
-  const cls = [];
-  const counts = {};
-  for (const k of EW_REVIEW_ORDER) counts[k] = 0;
-  for (const r of (rows || [])) {
-    let k = ewRowClassBase(r);
-    if (iv.ok && k !== "none" && k !== "typed" && isFinite(r.z)
-        && !ewOnInterval(r.z, iv.ft))
-      k = "off-interval";
-    cls.push(k);
-    counts[k] = (counts[k] || 0) + 1;
-  }
-  counts.none += Math.max(0, noElevN || 0);
-  return { cls: cls, counts: counts, iv: iv };
-}
-
-// ---- the coverage statement, RESTATED FROM THE LIVE ROWS -----------------
-//
-// THE DEFECT THIS CLOSES (found by review 2026-09-03). The server's
-// contour_coverage dict was captured once, in ewFetchSuggest, and every
-// surface read it verbatim: the panel block, the basis block beside the
-// volume, and the printed report. Only the CHIP counts came off the live
-// row set, so the two disagreed the moment an operator touched a row.
-// Measured on the DEM pad_1ft sheet: as served the block reads "144
-// contour lines. 101 carry an elevation ... 43 carry none at all"; delete
-// twenty rows with the rows' own x and the chips read "All 124 ... No
-// elevation 43" while the block one line above still says 144 / 101 / 43
-// - and the report's CONTOUR COVERAGE note, built from the same stale
-// dict, tells an estimator 101 are elevated when 81 are. Paper
-// OVERSTATED, which is the one direction CLAUDE.md s5 forbids.
-//
-// The fix is arithmetic, not a refresh: the served dict now names both
-// halves of the denominator line by line (earthwork.contour_coverage's
-// `elevated` and `unelevated`), so the count can be re-derived from
-// whatever rows are on screen at this instant. ewCoverageLive() is the ONE
-// source all three surfaces read, the way ewCautionText already is.
-//
-// AND THE ROWS THAT WERE DELETED COME BACK AS CONTOURS WITH NO ELEVATION.
-// A deleted row was not deleted from the sheet - the contour is still
-// drawn and now holds no height, which is exactly the fact this surface
-// exists to show. Before this, the twenty were rows no longer and had
-// never been in `unelevated`, so no chip could list them: the precise
-// unfindability the feature was built to end.
-function ewCoverageLive(cov, rows, denom) {
-  if (!cov) return null;
-  const den = denom || [];
-  if (!den.length) return cov;
-  const elev = new Set();
-  for (const r of (rows || []))
-    if (r && Number.isFinite(r.z)) elev.add(r.chain_id);
-  const inDen = new Set();
-  let n = 0, ln = 0, cn = 0, cl = 0;
-  for (const d of den) {
-    if (!d || inDen.has(d.chain_id)) continue;
-    inDen.add(d.chain_id);
-    n++; ln += d.length_pt || 0;
-    if (elev.has(d.chain_id)) { cn++; cl += d.length_pt || 0; }
-  }
-  // A row on a chain the denominator does not hold - one added by hand on
-  // a line outside every contour family, or one an exclusion removed.
-  // Counted and SAID, never folded in: it is why the "All" chip can read
-  // one more than the contour count.
-  let outside = 0;
-  for (const r of (rows || []))
-    if (r && !inDen.has(r.chain_id)) outside++;
-  // ...and the ACCEPTED rows split the same way. A row is accepted when it
-  // carries a finite elevation AND a surface, which is exactly what puts it
-  // in the TIN - and a hand-added contour on a line outside every contour
-  // family is accepted without being one of the N. ewCoverageText used to
-  // subtract the whole accepted count from N and could print a NEGATIVE
-  // remainder onto the panel, the basis block and the exported note.
-  let accIn = 0, accOut = 0;
-  for (const r of (rows || [])) {
-    if (!r || !Number.isFinite(r.z)) continue;
-    if (r.surface !== "existing" && r.surface !== "proposed") continue;
-    if (inDen.has(r.chain_id)) accIn++; else accOut++;
-  }
-  const r1 = v => Math.round(v * 10) / 10;
-  return Object.assign({}, cov, {
-    contour_chains: n, contour_len_pt: r1(ln),
-    with_elev: cn, with_elev_len_pt: r1(cl),
-    no_elev: n - cn, no_elev_len_pt: r1(ln - cl),
-    rows: (rows || []).length, rows_outside: outside,
-    accepted_in: accIn, accepted_outside: accOut,
-  });
-}
-
-// ---- the coverage statement ---------------------------------------------
-//
-// WHERE IT BELONGS, and the argument. Three surfaces, one wording:
-//
-//  1. THE PANEL, above the rows. This is where the operator is deciding
-//     which contours the volume is built from, and it is readable BEFORE
-//     Calculate - the only place the fact can change what they do rather
-//     than explain a number they already have.
-//  2. BESIDE THE NUMBER (the basis block). The basis block already says
-//     what the volume was interpolated from and what backs the elevations;
-//     a reader there must not have to assume the rows in front of them are
-//     all the sheet has. CLAUDE.md s5: a silent cap reports as full
-//     coverage.
-//  3. THE PRINTED REPORT, when the volume is added to the takeoff, in the
-//     same words from this one function - the arrangement ewBasisNote and
-//     ewCautionText already use, and for the same reason: an estimator
-//     reads the report, not the panel.
-//
-// NOT the CHECK FIRST list. That list is a ranked queue of ANOMALIES capped
-// at CK_CAP, and coverage is a property of EVERY sheet, not an anomaly - a
-// permanent entry there would push a real contradiction below the cap on
-// every page. (A LOW-coverage entry is a defensible follow-up; it is not
-// this change, which adds no threshold and no judgement.)
-//
-// EVERY SENTENCE STATES WHAT IS NOT COVERED, not only what is - counts on
-// both sides, never a bare percentage (CLAUDE.md s2).
-function ewPlural(n, one, many) { return n === 1 ? one : many; }
-// Paper points with thousands separators. Not toLocaleString: the number is
-// pinned in a test and a machine's locale must not decide whether it reads
-// 49,824 or 49 824.
-function ewPt(n) {
-  return Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-// ---- WHAT THE CONTOUR COUNT DOES NOT HOLD, class by class ----------------
-//
-// THE DEFECT (review finding R2, 2026-09-03). contour_coverage's four
-// filters each dropped their chains with no record, so the denominator
-// silently lost whole classes of linework and the sentence claimed a share
-// of a set it had quietly shrunk. Measured on the DEM outline sheet: 22
-// chains carrying 33,301.7 pt - 51% of the page, 16 of them a grey 0.4 pt
-// family the OCR'd legend called "GRADING NOTES" beside the identical
-// family it called EXISTING CONTOUR - were in neither count and in no
-// reported class. The panel read "57 contour lines, 21 carry an elevation
-// (58% of that contour footage)" where the elevated share of the sheet's
-// whole plan linework is 33.5%.
-//
-// THE CHOICE, AND THE ARGUMENT. Two ways out: state a narrower denominator
-// the sentence can stand behind, or count and name what was dropped. The
-// first cannot work here - a share of "the contour family" is exactly the
-// number that is wrong, because the family is what the legend read
-// decided, and on this sheet the legend read is the failure. So: name
-// every class, and print BOTH shares with the wider one labelled as the
-// FLOOR. The truth is between them and the reader can see why.
-//
-// `not_plan` is named but kept out of the wider denominator, for the
-// reason earthwork.contour_coverage's comment gives: two of those six
-// chains are the sheet BORDER, and a drawing frame in a contour
-// denominator misstates in the other direction. Its count is printed so
-// anyone who disagrees can add it back from the numbers on screen.
-function ewSetAside(cov) {
-  const sa = (cov && cov.set_aside) || null;
-  const out = [];
-  const add = (n, len, desc) => {
-    if (n > 0) out.push({ n: n, len: len || 0, desc: desc });
-  };
-  if (!sa) {
-    // an older payload names only the unclassed half - say that half
-    add(cov.unclassed_chains || 0, cov.unclassed_len_pt || 0,
-        "in no contour family at all");
-    return out;
-  }
-  // the legend's own words for those families. family_verdicts tags every
-  // label " (legend)" to say where it came from; inside a sentence that
-  // already says "this sheet's legend named", the tag is noise.
-  const L = ((sa.legend_noncontour && sa.legend_noncontour.labels) || [])
-    .map(s => String(s).replace(/\s*\(legend\)\s*$/, ""));
-  add((sa.legend_noncontour || {}).n, (sa.legend_noncontour || {}).len_pt,
-      "in " + ewPlural((sa.legend_noncontour || {}).n, "a family", "families")
-      + " this sheet's legend named something other than a contour"
-      + (L.length ? " (" + L.join(", ") + ")" : ""));
-  add((sa.excluded_other || {}).n, (sa.excluded_other || {}).len_pt,
-      "taken out of the seeding pool before the count");
-  add((sa.white || {}).n, (sa.white || {}).len_pt,
-      "drawn in near-white ink, invisible on paper");
-  add((sa.unclassed || {}).n, (sa.unclassed || {}).len_pt,
-      "in no contour family at all");
-  return out;
-}
-
-function ewCoverageText(cov, acc) {
-  if (!cov || !(cov.contour_chains > 0)) return [];
-  const N = cov.contour_chains, M = cov.with_elev, none = cov.no_elev;
-  const out = [];
-  const pct = cov.contour_len_pt > 0
-    ? Math.round(100 * cov.with_elev_len_pt / cov.contour_len_pt) : null;
-  // "THE ENGINE FOUND", not "this sheet draws". N is a count of chains the
-  // engine ASSEMBLED, and it is not the number of contour lines on the
-  // paper: measured 2026-09-03 against two independent counts of the
-  // DEM-truth sheets' own rendering, the engine finds 144 where the sheet
-  // draws 92-97 (pad_1ft), 73 vs ~48, 36 vs ~22, 68 vs ~43 - a line the
-  // engine broke in two is two chains. Stating it as a fact about the
-  // drawing is CLAUDE.md s5's fourth shape, and it is a number an operator
-  // will quote.
-  out.push("The engine found " + N + " contour "
-    + ewPlural(N, "line", "lines") + ". " + M + " carry an elevation"
-    + (pct === null ? "" : " (" + pct + "% of that contour footage)")
-    + "; " + none + " carry none at all"
-    + (none ? " and hold no height in any surface." : "."));
-  // THE FLOOR, in the same breath as the share it is the floor of. The
-  // percentage above is over the contour families only; this one is over
-  // every stroke of plan linework the engine found on the sheet, and it is
-  // the number that cannot overstate, and both are printed with the
-  // set-aside count that explains the gap between them - the truth is
-  // somewhere in between and the reader can see why (see ewSetAside).
-  const aside = ewSetAside(cov);
-  const K = aside.reduce((t, x) => t + x.n, 0);
-  const P = cov.plan_chains || (N + K);
-  const T = cov.plan_len_pt
-    || (cov.contour_len_pt + aside.reduce((t, x) => t + x.len, 0));
-  const floor = T > 0 ? Math.round(100 * cov.with_elev_len_pt / T) : null;
-  if (K > 0 && floor !== null && pct !== null)
-    out.push("Of all " + P + " lines of plan linework here (" + ewPt(T)
-      + " pt) the elevated share is " + floor + "% - the floor, since " + K
-      + " " + ewPlural(K, "line sits", "lines sit")
-      + " outside the contour count.");
-  if (acc && acc.total !== undefined) {
-    // A IS THE ACCEPTED ROWS THAT ARE IN THE N, not every accepted row.
-    // acc.total counts every row carrying a finite elevation and a surface,
-    // wherever its chain sits; N counts only the chains in a contour family.
-    // "+ Add contour" puts a row on any detected chain, so subtracting one
-    // from the other printed "25 of the 5 ... The other -20" onto the panel,
-    // the basis block and the exported note. ewCoverageLive walks the
-    // denominator already and now splits the accepted rows against it.
-    //
-    // WHEN IT COULD NOT (no denominator list served, so there is nothing to
-    // be inside of) the share is still stated, because in the ordinary case
-    // every accepted row IS one of the N and the sentence is the one an
-    // operator needs - but only while A fits inside N. Once A exceeds N we
-    // KNOW rows sit outside without knowing how many, and the claim is
-    // dropped rather than clamped: Math.min would print a share the code
-    // never checked, which reads as coverage it does not have (s5).
-    const split = cov.accepted_in !== undefined;
-    const A = split ? cov.accepted_in : acc.total;
-    const outA = split ? (cov.accepted_outside || 0) : 0;
-    const share = split || A <= N;
-    out.push(A + (share ? " of the " + N : "") + " "
-      + ewPlural(A, "is", "are")
-      + " assigned to a surface and behind this volume."
-      + (share
-         ? " The other " + (N - A) + " " + ewPlural(N - A, "is", "are")
-           + " not in it."
-         : "")
-      + (outA
-         ? " " + outA + " further assigned "
-           + ewPlural(outA, "row sits", "rows sit")
-           + " on linework outside that count and "
-           + ewPlural(outA, "is", "are") + " in the volume as well."
-         : ""));
-  }
-  // ...and WHICH lines those are, by the reason each was set aside, so the
-  // parts add up on screen and a reader can check the arithmetic: the
-  // contour count plus these is the plan-linework count in the sentence
-  // above.
-  if (K > 0)
-    out.push((K === 1
-              ? "That one line is "
-              : "The " + K + " outside that count: ")
-      + aside.map(x => (K === 1 ? "" : x.n + " ") + x.desc).join(", ")
-      + ". If " + (K === 1 ? "it is" : "any of them is")
-      + " a contour it is in neither count.");
-  // The annotation and title-block geometry, named and deliberately NOT in
-  // the plan-linework denominator (ewSetAside's comment argues why). Two of
-  // the outline sheet's six are the drawing frame.
-  {
-    const np = (cov.set_aside && cov.set_aside.not_plan) || null;
-    if (np && np.n > 0)
-      out.push(np.n + " further " + ewPlural(np.n, "line", "lines") + " ("
-        + ewPt(np.len_pt) + " pt) " + ewPlural(np.n, "is", "are")
-        + " annotation or title-block geometry - traced text, leaders, the "
-        + "sheet border - which cannot be a contour, so "
-        + ewPlural(np.n, "it is", "they are") + " in none of the counts "
-        + "above.");
-  }
-  // ...and the rows that are in the list but NOT in that count, so the
-  // "All" chip above the list reconciles with the sentence rather than
-  // reading one larger for no stated reason.
-  if (cov.rows_outside > 0)
-    out.push(cov.rows_outside + " " + ewPlural(cov.rows_outside, "row", "rows")
-      + " in the list " + ewPlural(cov.rows_outside, "sits", "sit")
-      + " on a line that is not one of those " + N
-      + " - added by hand, or in a family the exclusions took out - so the "
-      + "list runs to " + (N + cov.rows_outside) + ".");
-  return out;
-}
-
-// The report's copy: the same sentences, joined, headed so a reader of the
-// PDF who never saw the panel knows what the paragraph is about, and cut to
-// APPROVE_NOTE_MAX by dropping WHOLE sentences from the tail rather than
-// shipping half of one (the rule ewBasisNote and ewCautionText apply).
-const EW_COVERAGE_HEAD = "CONTOUR COVERAGE. ";
-function ewCoverageNote(cov, acc, cap) {
-  const parts = ewCoverageText(cov, acc);
-  if (!parts.length) return [];
-  const lim = cap || 400;
-  let s = EW_COVERAGE_HEAD + parts.join(" ");
-  while (s.length > lim && parts.length > 1) {
-    parts.pop();
-    s = EW_COVERAGE_HEAD + parts.join(" ");
-  }
-  return [s.length <= lim ? s : s.slice(0, lim)];
-}
-// EW-REVIEW-END
-
-// Is this row's elevation something nobody printed? Asked of `how`, not of
-// the server's `inferred` flag: the server sets that on interval-infill
-// rows ONLY, and `inherited` rows - equally unprinted - never carry it.
-// A row the operator typed is not inferred; they know what they typed.
-function ewRowInferred(row) {
-  if (!row || row.manual) return false;
-  if (row.inferred) return true;
-  return elevProvenance(row.how).kind === "inferred";
-}
-
-// One line saying where this row's number came from. Never the sentinel,
-// never "label Npt away" for a row with no label on it.
-function ewRowSource(row) {
-  if (!row) return "";
-  if (row.manual) return "typed in by you";
-  const how = row.how;
-  // Kept SHORT: this line sits in a ~200 px column beside 150 rows, and the
-  // panel had already been trimmed once for being too busy. Long enough to
-  // be true, short enough not to bury the EXIST/PROP buttons.
-  if (how === "inherited")
-    return "NO label on this line — carried along the contour from another piece";
-  if (how === "interval-infill" || (row.inferred && !how))
-    return "elevation INFERRED, not printed";
-  if (how === "gap-ocr")
-    return "label in its own break, read by OCR";
-  if (how === "inline") return "label printed in this line's own break";
-  if (how === "radius") {
-    const d = row.dist === EW_DIST_INHERITED ? null : row.dist;
-    const near = d === null ? "label nearby" : `label ${d} pt away`;
-    return (row.tag ? `“${row.tag}” ${near}` : near)
-      + " — may not be this line's";
-  }
-  // No `how` at all (an old saved row, or a reader we have not been taught):
-  // ABSTAIN. The distance alone used to be printed here, and that is what
-  // rendered the 999 sentinel as a measurement.
-  return "we did not record where this elevation came from";
-}
-
-// WHAT THE READER THREW AWAY, in the panel where the rows would have been.
-//
-// suggestions_dropped has been in the /earthwork/suggest payload since the
-// route was written and no screen has ever shown it (grep: two hits, both
-// server-side). That mattered most on the page it was invented for: with
-// the ladder gate live, an OCR-only sheet whose reads do not step like
-// contours now yields ZERO rows, and without this the panel would print
-// "We found no contour elevations on this sheet" - which is the one thing
-// the reader knows is false. Say what was found and why it was refused.
-function renderEwDropped() {
-  const box = $("ewDropped");
-  if (!box) return;
-  const n = (state.ew && state.ew.dropped) || 0;
-  const lad = (state.ew && state.ew.ladder) || null;
-  const laddered = lad && lad.applied && lad.verdict && !lad.verdict.laddered;
-  const ocr = (state.ew && state.ew.ocr) || null;
-  const cut = !!(ocr && ocr.stopped_early);
-  // SPOT GRADES ARE NOT CONTOUR LABELS, and the refusal is said out loud:
-  // before 2026-09-17 a number like "551.2 BW" (bottom of wall) became the
-  // nearest contour's height - twelve lines on Oncor C-04, four of them by
-  // inheritance, and the cut read 14% over the offline analyst's figure
-  // against 3% once refused (earthwork.is_built_spot_tag).
-  const sr = (state.ew && state.ew.spotRefused) || null;
-  const srLine = (sr && sr.n > 0)
-    ? `<div class="ew-ocr-cut">${sr.n} number${sr.n === 1 ? " beside these lines is a" : "s beside these lines are"} `
-      + `spot grade${sr.n === 1 ? "" : "s"} the sheet tags `
-      + `<b>${esc(Object.keys(sr.tags || {}).join(", "))}</b> — a point on what is `
-      + `being built, not a contour height. No line took its height from `
-      + `${sr.n === 1 ? "it" : "them"}.</div>`
-    : "";
-  box.hidden = !(n > 0 || cut || srLine);
-  if (box.hidden) { box.innerHTML = ""; return; }
-  // THE READ WAS CUT SHORT. Said first and on its own line: an operator
-  // looking at a short list needs to know the reader stopped before it
-  // looked at every label, which is a different fact from "the sheet has
-  // few labels" and calls for a different response (keep reading, or type
-  // the rest in by hand).
-  //
-  // "places checked" is regions_seen (2026-09-17). Before it the line put
-  // the reader's CALL count over its PLACE count - two different units -
-  // so a record without it says "reads" instead. `resumable`: the server
-  // kept the stopped read's place, so Keep reading carries it on.
-  let cutLine = "";
-  if (cut) {
-    const secs = Math.round(ocr.seconds || 0);
-    const took = secs >= 120 ? Math.round(secs / 60) + " min" : secs + " s";
-    const planned = ocr.patches_planned || 0;
-    cutLine = `<div class="ew-ocr-cut"><b>Label reading stopped early.</b> It `
-      + (ocr.regions_seen != null
-         ? `checked ${ocr.regions_seen} of ${planned} places`
-         : `made ${ocr.ocr_calls || 0} reads over ${planned} places`)
-      + ` in ${took} and `
-      + (ocr.stop_reason === "idle"
-         ? `had found no elevations by then, so it stopped. This sheet most `
-           + `likely has no contour labels. `
-         : ocr.stop_reason === "calls"
-         ? `hit its reading limit, so some elevations may be missing. `
-         : `hit its time limit, so some elevations may be missing. `)
-      + (ocr.resumable
-         ? `<button class="mini" id="ewMoreBtn" type="button">Keep reading</button> `
-           + `or add any you can read with <b>+ Add contour</b>.</div>`
-         : `Add any you can read with <b>+ Add contour</b>.</div>`);
-  }
-  const wireMore = () => {
-    const b = box.querySelector ? box.querySelector("#ewMoreBtn") : null;
-    if (b && typeof ewKeepReading === "function") b.onclick = () => ewKeepReading();
-  };
-  if (!(n > 0)) { box.innerHTML = cutLine + srLine; wireMore(); return; }
-  box.innerHTML = cutLine + srLine + `<b>${n} candidate row${n === 1 ? "" : "s"} `
-    + `${n === 1 ? "was" : "were"} read off this sheet and dropped.</b> `
-    + (laddered
-       ? esc(lad.verdict.why) + " Nothing on this page is glyph text, so "
-         + "that shape is the only evidence there is. Click <b>+ Add "
-         + "contour</b> and type an elevation you have read yourself if you "
-         + "disagree."
-       : "They were refused by the legend, white-mask, band or ladder "
-         + "filters. Add any the reader should have kept with <b>+ Add "
-         + "contour</b>.");
-  wireMore();
-}
-
-// KEEP READING (2026-09-17). A label read the clock or the reading limit
-// stopped carries on from where it stopped: the server keeps the stopped
-// pass's place and reads beside its cache, and suggestOnce asks for
-// ?more=1. The rows are rebuilt the way a page visit builds them - the
-// saved record is written FIRST and re-applied by ewApplySaved after, so
-// every choice made on the rows stays - and the volume on screen comes
-// down, because the rows under it are about to change. "Add to takeoff"
-// stays chosen and applies again on the next Calculate.
-async function ewKeepReading() {
-  if (!state.ew || !ewIsThisPage() || state.ewLoading || !state.result) return;
-  if (!state.calcSavedLoaded) {
-    setStatus("Can't keep reading: this page's saved choices could not be "
-      + "loaded, so they would be lost. Reload the page first.", "err");
-    return;
-  }
-  const gen = state.gen;
-  calcStateDirty();
-  await calcStatePush();
-  if (gen !== state.gen || !ewIsThisPage() || state.ewLoading) return;
-  if (state.ew.result || state.ew.map) {
-    state.ew.result = null;
-    state.ew.map = null;
-    ewClearItems();
-    if ($("ewMapLegend")) $("ewMapLegend").hidden = true;
-    if (typeof ewMapNote === "function") ewMapNote(null, null);
-    renderEwBasis(null, null);
-    renderEwBalance(null);
-    $("ewLayerOut").innerHTML = "";
-    $("ewResult").textContent = "The contour rows are being re-read. "
-      + "Press Calculate again when they are in.";
-    renderItemized();
-    draw();
-  }
-  state.ew = null;
-  state.ewMore = true;
-  // the "stopped early" line (and its button) belongs to the read that is
-  // being carried on - seen live 2026-09-17 still on screen, button and
-  // all, while the next round ran; renderEw repaints it from the new read
-  const dropBox = $("ewDropped");
-  if (dropBox) { dropBox.hidden = true; dropBox.innerHTML = ""; }
-  const tRead = Date.now();
-  $("ewRows").innerHTML = '<div class="ew-hint">reading elevation labels…</div>';
-  ewBusyPut(EW_SUGGEST_BUSY + "…");
-  setStatus(EW_SUGGEST_BUSY, "busy");
-  const ok = await ewEnsure();
-  if (gen !== state.gen) return;
-  if (!ok) {
-    const msg = ewFailMsg() || EW_NEED_DETECT;
-    $("ewRows").textContent = msg;
-    ewBusyPut(msg, "err");
-    setStatus(msg, "err");
-    return;
-  }
-  ewBusyPut(ewDoneLine(Date.now() - tRead));
-  setStatus("");
-  renderEw();
-  renderEwLayers();
-  renderEwSpots();
-  renderEwArea();
-  renderEwTake();
-  renderGz();
-  renderCheckQueue();
-  draw();
-}
-
-// ---- the review surface, rendered -----------------------------------------
-//
-// 368 contour lines on Oncor C-04 is not a list an operator reads. The chips
-// below cut it by CLASS OF EVIDENCE, each carrying its own count, so the
-// sweep the owner's partner asked for - "go through them all really quick" -
-// starts at the rows nobody printed rather than at 545.0.
-//
-// The cap is disclosed, never silent (CLAUDE.md s5): #ewRowsCount reads
-// "23 of 368" whenever a filter or the cap is hiding rows, and the opener
-// below says how many and offers them.
-const EW_ROW_CAP = 250;
-
-// The contour lines with NO elevation are not panel rows - a row with no
-// number would be handed to no surface and would move no volume. They are
-// listed as STUBS under their own chip, because "this contour holds no
-// height" is exactly the fact the operator asked to be able to see, and a
-// list that silently omitted 218 of a sheet's 368 contours would be the
-// defect this change exists to end. A stub becomes a real row the moment an
-// elevation is typed into it, through the same ewAppendRow the + Add contour
-// button uses.
-//
-// BUILT FROM THE WHOLE DENOMINATOR, not from the served `unelevated` half.
-// Until 2026-09-03 it was the latter minus `state.ew.removed`, and a row
-// the operator deleted therefore appeared in NO chip: it was not a row any
-// more and it had never been in `unelevated`. Deleting a row does not
-// rub the contour off the sheet - the line is still drawn and now holds no
-// height - so it belongs here, under "No elevation", where it can be found
-// and given one back. `removed` still does its own job (it stops a fresh
-// suggest re-seeding the deleted VALUE, ewApplySaved); it is not a reason
-// to hide the line.
-function ewDenomList() {
-  const st = state.ew;
-  if (!st) return [];
-  return (st.elev || []).concat(st.unelev || []);
-}
-function ewStubs() {
-  const st = state.ew;
-  if (!st || !Array.isArray(st.rows)) return [];
-  const have = new Set(st.rows.map(r => r.chain_id));
-  return ewDenomList().filter(u => u && !have.has(u.chain_id))
-    .map(u => ({ chain_id: u.chain_id, length_pt: u.length_pt,
-                 style_id: u.style_id, z: NaN, noElev: true }));
-}
-
-// The coverage dict every surface reads: the served one, restated over the
-// rows that are on screen at this instant. ONE source for the panel block,
-// the basis block and the printed report - a stale copy on paper is the
-// whole of the defect ewCoverageLive documents.
-function ewCovNow() {
-  const st = state.ew;
-  if (!st) return null;
-  return ewCoverageLive(st.cov, st.rows || [], ewDenomList());
-}
-
-// Rows + stubs, classified, filtered and ordered - one function so the chip
-// counts, the list and the card count can never disagree about what is on
-// screen.
-// THE WORK AREA REACHES THIS PANEL (2026-09-09). The boxes drawn with the
-// work-area tool already mask every other quantity on the sheet; the
-// earthwork rows ignored them, so a box around the pad still listed - and
-// put into the surfaces - every contour on the sheet (Koby, live). A
-// contour with NONE of its length inside the boxes is out of this panel:
-// not listed, not sent to the volume. One with any length inside stays
-// whole (a surface needs the line, not a clipped piece of it).
-function ewInWorkArea(row) {
-  if (typeof wzActive !== "function" || !wzActive()) return true;
-  const ch = chainById(row.chain_id);
-  if (!ch) return true;                  // a typed-in row with no chain: keep
-  return wzChainFrac(ch) > 0;
-}
-// how many of the panel's contours the work area leaves out, for the hint
-function ewOutsideWorkArea() {
-  const st = state.ew;
-  if (!st || !Array.isArray(st.rows) || typeof wzActive !== "function" || !wzActive()) return 0;
-  return st.rows.filter(r => !ewInWorkArea(r)).length
-    + ewStubs().filter(s => !ewInWorkArea(s)).length;
-}
-
-function ewReviewView() {
-  const st = state.ew;
-  const rows = ((st && st.rows) || []).filter(ewInWorkArea);
-  const stubs = ewStubs().filter(ewInWorkArea);
-  const iv = (st && st.cov && st.cov.interval) || null;
-  const r = ewReviewClasses(rows, 0, iv);
-  const items = rows.map((row, i) => ({ row: row, cls: r.cls[i] }))
-    .concat(stubs.map(s => ({ row: s, cls: "none" })));
-  const counts = {};
-  for (const k of EW_REVIEW_ORDER) counts[k] = 0;
-  for (const it of items) counts[it.cls] = (counts[it.cls] || 0) + 1;
-  const filt = (st && st.filter) || null;
-  let shown = filt ? items.filter(it => it.cls === filt) : items;
-  const zk = v => Number.isFinite(v) ? v : 1e9;
-  if (st && st.sort === "doubt")
-    shown = [...shown].sort((a, b) =>
-      EW_REVIEW[a.cls].rank - EW_REVIEW[b.cls].rank
-      || zk(a.row.z) - zk(b.row.z)
-      || a.row.chain_id - b.row.chain_id);
-  else
-    shown = [...shown].sort((a, b) => zk(a.row.z) - zk(b.row.z)
-      || a.row.chain_id - b.row.chain_id);
-  const cap = (st && st.showAll) ? shown.length : EW_ROW_CAP;
-  return { items: items, counts: counts, iv: r.iv, total: items.length,
-           shown: shown.slice(0, cap), hidden: Math.max(0, shown.length - cap),
-           filtered: shown.length };
-}
-
-// HOW MUCH OF THE SHEET IS BEHIND THE NUMBER, above the rows and readable
-// before Calculate. The sentences are ewCoverageText's, the same ones the
-// basis block beside the volume and the printed report use.
-function renderEwCoverage() {
-  const box = $("ewCoverage");
-  if (!box) return;
-  const cov = ewCovNow();
-  box.hidden = !(cov && cov.contour_chains > 0);
-  box.innerHTML = "";
-  if (box.hidden) return;
-  const head = document.createElement("div");
-  head.className = "ew-cov-head";
-  head.textContent = "How much of this sheet is behind the volume";
-  box.appendChild(head);
-  for (const s of ewCoverageText(cov, null)) {
-    const d = document.createElement("div");
-    d.className = "ew-cov-line";
-    d.textContent = s;
-    box.appendChild(d);
-  }
-  const iv = ewReviewView().iv;
-  const d = document.createElement("div");
-  d.className = "ew-cov-iv";
-  d.textContent = iv.why;
-  box.appendChild(d);
-  box.appendChild(ewIntervalControl(cov));
-}
-
-// THE CONTOUR INTERVAL, AND A WAY TO ARGUE WITH IT.
-//
-// Every elevation COUNTED between two labelled contours is derived from
-// this number, and a sheet that labels only its index contours implies the
-// wrong one: Barn C3.0 draws 350 lines at the 1 ft its notes state twice
-// and labels 26 of them, every label a multiple of 5. So the panel says
-// what the interval is, where it came from, and takes the estimator's own.
-//
-// Typing re-reads the page (suggestOnce keys on it) because the counted
-// rows are downstream of it. Clearing the box hands it back to the sheet.
-function ewIntervalControl(cov) {
-  const b = (cov && cov.interval) || {};
-  const note = b.note || {};
-  const wrap = document.createElement("div");
-  wrap.className = "ew-cov-ivset";
-  const lab = document.createElement("label");
-  lab.textContent = "Contour interval";
-  lab.htmlFor = "ewIvFt";
-  wrap.appendChild(lab);
-  const inp = document.createElement("input");
-  inp.type = "number";
-  inp.id = "ewIvFt";
-  inp.step = "0.1";
-  inp.min = "0";
-  inp.placeholder = b.interval_ft == null ? "not read" : String(b.interval_ft);
-  if (state.ewIntervalFt) inp.value = state.ewIntervalFt;
-  inp.addEventListener("change", () => ewSetInterval(inp.value));
-  wrap.appendChild(inp);
-  const ft = document.createElement("span");
-  ft.className = "ew-iv-unit";
-  ft.textContent = "ft";
-  wrap.appendChild(ft);
-  const why = document.createElement("span");
-  why.className = "ew-iv-why";
-  why.textContent = state.ewIntervalFt
-    ? "\u2014 yours; clear the box to use the sheet's"
-    : "\u2014 " + (b.source || "not read");
-  wrap.appendChild(why);
-  // the sheet's own words, when it has any - the evidence behind the number
-  if (note.quote) {
-    const q = document.createElement("div");
-    q.className = "ew-iv-quote";
-    q.textContent = "\u201c" + note.quote + "\u201d";
-    wrap.appendChild(q);
-  }
-  // ...and when the sheet says more than one thing, both, because picking
-  // one of them for the operator is how a confident wrong number is made
-  if ((note.candidates || []).length > 1) {
-    const c = document.createElement("div");
-    c.className = "ew-iv-quote";
-    c.textContent = "the sheet states " + note.candidates.length
-      + " different intervals: "
-      + note.candidates.map(x => x.interval_ft + " ft").join(", ")
-      + " \u2014 type the one that applies";
-    wrap.appendChild(c);
-  }
-  return wrap;
-}
-
-function ewSetInterval(v) {
-  const n = parseFloat(v);
-  const next = isFinite(n) && n > 0 ? n : null;
-  if (next === (state.ewIntervalFt || null)) return;
-  state.ewIntervalFt = next;
-  // the counted rows come from it, so the page is read again - and the
-  // panel is repainted AFTER it lands, or the line keeps crediting the
-  // sheet for a number the operator just typed (seen live 2026-09-18:
-  // rows went 60 -> 64 while the text still said "the sheet's note")
-  if (typeof ewEnsure === "function") {
-    state.ew = null;
-    Promise.resolve(ewEnsure()).then(() => {
-      if (typeof renderEw === "function") renderEw();
-      else if (typeof renderEwCoverage === "function") renderEwCoverage();
-    }).catch(() => {});
-  }
-}
-
-// One chip per class of evidence, with its count. Clicking filters; clicking
-// the live chip clears. The sort switch is here too: "by elevation" is the
-// order the panel has always used and stays the default (this change moves
-// no number and no default), "most doubtful first" is the sweep order.
-function renderEwFilters() {
-  const box = $("ewFilters");
-  if (!box) return;
-  const st = state.ew;
-  box.innerHTML = "";
-  // `[]` is truthy, so guarding on `!st.rows` painted an "All 0" chip and a
-  // sort switch directly above renderEw's "empty is not an answer" hint.
-  // The honest condition is the REVIEW SURFACE being empty, not the row
-  // array: a sheet with no rows but unelevated contours still has stubs to
-  // filter, and ewReviewView counts both.
-  const v = ewReviewView();
-  if (!st || !st.rows || !v.total) { box.hidden = true; return; }
-  box.hidden = false;
-  const chip = (key, label, n, title, on) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ew-chip" + (on ? " on" : "")
-      + (key ? " c-" + key.replace(/[^a-z]/g, "") : "");
-    b.textContent = label + " " + n;
-    b.title = title;
-    b.onclick = () => {
-      st.filter = (st.filter === key) ? null : key;
-      st.showAll = false;
-      renderEw();
-    };
-    box.appendChild(b);
-  };
-  chip(null, "All", v.total,
-    "Every contour line on this sheet - the ones with an elevation and the "
-    + "ones without.", !st.filter);
-  for (const k of EW_REVIEW_ORDER) {
-    if (!v.counts[k]) continue;
-    chip(k, EW_REVIEW[k].chip, v.counts[k], EW_REVIEW[k].why,
-         st.filter === k);
-  }
-  const sort = document.createElement("button");
-  sort.type = "button";
-  sort.className = "ew-chip ew-chip-sort" + (st.sort === "doubt" ? " on" : "");
-  sort.textContent = st.sort === "doubt" ? "most doubtful first"
-                                         : "by elevation";
-  sort.title = "Switch the order. “Most doubtful first” puts the "
-    + "rows nothing printed, and the rows a machine transcribed, at the top. "
-    + "It changes the order only - no elevation, no surface, no volume.";
-  sort.onclick = () => {
-    st.sort = st.sort === "doubt" ? "z" : "doubt";
-    renderEw();
-  };
-  box.appendChild(sort);
-}
-
-// Plain English for how a row got its surface. `splitBy` is the server's
-// own word for which tier decided (earthwork.split_rows_surface); a row the
-// operator clicked outranks all of it and says so.
-function ewSplitNote(row) {
-  if (!row) return "";
-  if (row.surfaceBy === "operator")
-    return "You put this contour on this side.";
-  if (row.splitBy === "interval-infill")
-    return "No number is printed on this line. We counted it between two "
-      + "labelled lines. It starts on skip and adds nothing until you pick "
-      + "a side.";
-  if (row.splitBy === "legend")
-    return "The sheet's legend names this kind of line. That is why it is "
-      + "on this side.";
-  if (row.splitBy === "color") {
-    // The polarity of the ink rule is the server's verdict for the whole
-    // sheet (split_counts.polarity): the legend's named families confirm
-    // it, flip it, or say nothing. Three different claims; say which.
-    // (typeof-guarded: tests run this function outside the app, with no state)
-    const pol = (typeof state !== "undefined" && state.ew && state.ew.polarity) || "convention";
-    if (pol === "legend-flipped")
-      return "The legend does not name this line. It is on this side because "
-        + "of its ink. On this sheet the legend's own lines are inked the "
-        + "other way round (dark is existing, grey is new), so we went by "
-        + "the sheet, not the usual rule.";
-    if (pol === "legend-confirmed")
-      return "The legend does not name this line. It is on this side because "
-        + "of its ink: light grey is the ground now, solid black is the new "
-        + "ground. This sheet's legend agrees with that rule.";
-    return "The legend does not name this line. It is on this side because "
-      + "of its ink: light grey is the ground now, solid black is the new "
-      + "ground. That is the usual drafting rule. The sheet does not say it.";
-  }
-  if (row.splitBy === "width")
-    return "A GUESS. The legend did not help and the ink did not help. We "
-      + "went by how thick the line is: thin is the ground now, thick is "
-      + "the new ground. Some drawings do not follow that. Check this one "
-      + "on the paper before you trust the number.";
-  if (row.splitBy === "none")
-    return "NO SIDE YET. The sheet gave us no way to tell. No legend row, "
-      + "one ink, one line thickness. So we did not guess. Pick EXIST or "
-      + "PROP, or use the buttons above the list to set them all at once.";
-  return "We did not record where this side came from.";
-}
-
-// The rows the server could not put on a side (split_by "none") and the
-// operator has not yet touched. Counted, not flagged: the hint and the
-// bulk buttons both come from this one list, so they cannot disagree.
-function ewUnsplitRows() {
-  if (!state.ew) return [];
-  return state.ew.rows.filter(r => r.splitBy === "none"
-    && r.surface == null && r.surfaceBy !== "operator" && !r.noElev);
-}
-
-// One sentence above the list when the sheet could not be split, with the
-// two bulk moves an operator actually makes on such a sheet ("it is all
-// existing ground" is the common case for a survey / road-grading sheet).
-// Every row it moves is stamped as an operator decision, the same as a
-// click on the row, so the basis text and the payload say so.
-function ewUnsplitHint() {
-  const un = ewUnsplitRows();
-  if (!un.length) return null;
-  const d = document.createElement("div");
-  d.className = "ew-hint ew-unsplit";
-  d.id = "ewUnsplit";
-  const s = document.createElement("span");
-  s.textContent = un.length + (un.length === 1 ? " contour has" : " contours have")
-    + " no side yet. The sheet gives no clue which lines are the ground now "
-    + "and which are new. They count for nothing until you choose. ";
-  d.appendChild(s);
-  for (const [key, lab] of [["existing", "All existing"], ["proposed", "All proposed"]]) {
-    const b = document.createElement("button");
-    b.className = "mini";
-    b.id = key === "existing" ? "ewAllExist" : "ewAllProp";
-    b.textContent = lab;
-    b.title = "Put every unassigned contour on " + key + ". Rows you already "
-      + "chose a side for are left alone.";
-    b.onclick = () => {
-      for (const r of ewUnsplitRows()) { r.surface = key; r.surfaceBy = "operator"; }
-      renderEw(); calcStateDirty();
-    };
-    d.appendChild(b);
-  }
-  return d;
-}
-
-function renderEw() {
-  const box = $("ewRows");
-  renderEwDropped();
-  renderEwCoverage();
-  // ...and the basis block beside the volume, which carries the SAME
-  // sentences. Without this a deleted row moved the head above the rows and
-  // left that block contradicting it - one screen apart, both live, both
-  // ours (R1). It repaints from what it was last painted with; a page with
-  // no calculation on it has nothing stored and nothing to repaint.
-  if (state.ew && state.ew.basis)
-    renderEwBasis(state.ew.basis.j, state.ew.basis.body);
-  renderEwFilters();
-  box.innerHTML = "";
-  if (!state.ew || !(state.ew.rows.length || ewStubs().length)) {
-    // "EMPTY IS NOT AN ANSWER" (the same shape as the elevation reader's
-    // failed-vs-answered-empty split). An empty row set can mean the
-    // drafter labelled nothing, or that the reader missed them, or that
-    // the excluded families / white masks took every seeding chain out of
-    // the pool. The panel cannot tell those apart, so it must not assert
-    // the first one.
-    box.innerHTML = '<div class="ew-hint">We found no contour elevations on '
-      + 'this sheet. That can mean the sheet labels none, or that our reader '
-      + 'missed them, or that the families you excluded held them — we '
-      + 'cannot tell which. Click <b>+ Add contour</b>, click the line, type '
-      + 'its elevation.</div>';
-    return;
-  }
-  // blank (not-yet-typed) elevations sink to the bottom; NaN must never
-  // reach the comparator (NaN-returning comparators scramble the sort)
-  const zk = v => Number.isFinite(v) ? v : 1e9;
-  state.ew.rows.sort((a, b) => zk(a.z) - zk(b.z));
-  const view = ewReviewView();
-  const nOut = ewOutsideWorkArea();
-  if (nOut > 0) {
-    const d = document.createElement("div");
-    d.className = "ew-hint ew-wz-note";
-    d.id = "ewWzNote";
-    d.textContent = nOut + (nOut === 1 ? " contour is" : " contours are")
-      + " outside the work area, so " + (nOut === 1 ? "it is" : "they are")
-      + " left out of this list and out of the volume. Clear the work area to get "
-      + (nOut === 1 ? "it" : "them") + " back.";
-    box.appendChild(d);
-  }
-  const unsplit = ewUnsplitHint();
-  if (unsplit) box.appendChild(unsplit);
-  if (!view.shown.length) {
-    const d = document.createElement("div");
-    d.className = "ew-hint";
-    d.textContent = "No contour line on this sheet is in that group. Press "
-      + "“All” above to see every one of the " + view.total + ".";
-    box.appendChild(d);
-    return;
-  }
-  for (const it of view.shown) {
-    const row = it.row;
-    if (row.noElev) { box.appendChild(ewStubRow(row)); continue; }
-    const div = document.createElement("div");
-    div.className = "ew-row has-x rc-" + it.cls.replace(/[^a-z]/g, "");
-    // ONE GESTURE, THE ONE THE LINE LIST ALREADY USES. Clicking a row used
-    // to select the chain and repaint, leaving the operator to find it on a
-    // sheet that may be scrolled anywhere; revealChain() is the per-family
-    // line list's click - select, centre, flash - and going list-to-sheet is
-    // the whole point of a review surface (it changes nothing: no tick, no
-    // quantity, no elevation).
-    div.title = "Click to go to this contour on the sheet — it selects, "
-      + "centres and flashes the line. Nothing is changed.";
-    div.onclick = (ev) => {
-      if (ev.target.tagName === "INPUT" || ev.target.tagName === "BUTTON") return;
-      if (!revealChain(row.chain_id)) {
-        state.selected = row.chain_id; state.selPt = null;
-        updateSelBar(chainById(row.chain_id));
-        draw();
-      }
-    };
-    const z = document.createElement("input");
-    z.className = "z"; z.type = "number"; z.step = "0.1";
-    z.value = Number.isFinite(row.z) ? row.z : "";
-    z.placeholder = "elev";
-    z.name = "ew-z-" + row.chain_id;
-    z.oninput = () => { row.z = parseFloat(z.value); };
-    // Enter commits (blur), never submits anything; Esc leaves the field
-    // without reaching the global Esc (which clears the canvas selection)
-    z.onkeydown = (ev) => {
-      if (ev.key === "Enter") { ev.preventDefault(); z.blur(); }
-      else if (ev.key === "Escape") { ev.stopPropagation(); z.blur(); }
-    };
-    // no re-render on change/blur: rebuilding the rows mid-click would
-    // swallow the first click on EXIST/PROP; the next renderEw (surface
-    // click, add, remove) re-sorts anyway
-    const meta = document.createElement("div");
-    meta.className = "ew-meta";
-    // THE IDENTITY THE OPERATOR SAYS OUT LOUD. "line 168" is the name this
-    // app already uses for one chain (the selection bar's "in list" button
-    // reveals "line #168"), so the review list, the canvas and the style
-    // list name the same object the same way.
-    //
-    // TWO LINES, NOT FIVE (2026-09-09). The provenance sentence used to
-    // ride in this same column beside the buttons, and in a 200 px column
-    // it wrapped to three lines: measured on Oncor C-04, every row was
-    // 4-5 lines tall and three rows fit a screen of 150. The identity
-    // stays here, one line, beside the buttons; the sentence gets the
-    // whole width of the row underneath (.ew-src) - still on the row, not
-    // in a tooltip, the same words as before.
-    meta.textContent = `line ${row.chain_id} · w ${row.width}`;
-    const src = document.createElement("div");
-    src.className = "ew-src";
-    src.textContent = ewRowSource(row);
-    // WHICH CLASS OF EVIDENCE, on the row and in the filter chips, from one
-    // table (EW_REVIEW) - so a row can never be sorted into a group whose
-    // name it does not wear.
-    // `ew-inf-tag` is kept as the badge's class for the inferred group: the
-    // panel has worn that word (and that style) since the infill pass
-    // landed, and the selection chip's tooltip test points at it as the
-    // vocabulary the two screens share.
-    const cb = document.createElement("span");
-    cb.className = "ew-cls k-" + it.cls.replace(/[^a-z]/g, "")
-      + (it.cls === "inferred" ? " ew-inf-tag" : "");
-    cb.textContent = EW_REVIEW[it.cls].badge;
-    cb.title = EW_REVIEW[it.cls].why;
-    // The badge leads the PROVENANCE line, not the identity: beside the
-    // elevation the column has room for the line number or for a wide
-    // badge ("off interval"), not both, and the badge is the class of the
-    // sentence it now sits in front of. Still on the row, still the first
-    // thing read after the number.
-    src.prepend(cb);
-    if (ewRowInferred(row)) {
-      // The badge and the sentence, on the row, not in a tooltip: an
-      // inferred elevation must never be able to pass for a read one.
-      div.classList.add("ew-inferred");
-      z.classList.add("inferred");
-      if (row.inferredWhy) {
-        const why = document.createElement("div");
-        why.className = "ew-inf-why";
-        why.textContent = row.inferredWhy;
-        src.appendChild(why);
-      }
-    }
-    const seg = document.createElement("div");
-    seg.className = "seg";
-    // WHO PUT THIS ROW ON THIS SIDE. The panel now takes the server's split
-    // (legend > ink > width), and those are three very different strengths
-    // of claim - "the sheet's own legend names this family" is evidence,
-    // "we sorted the strokes by weight and cut at the middle" is a guess
-    // that was measured wrong on 67 of Oncor C-04's 115 rows. An operator
-    // sweeping a sheet needs to know which one they are looking at before
-    // deciding whether to check it against the paper.
-    seg.title = ewSplitNote(row);
-    for (const [key, lab] of [["existing", "EXIST"], ["proposed", "PROP"], [null, "skip"]]) {
-      const b = document.createElement("button");
-      b.textContent = lab;
-      if (row.surface === key) b.className = key === "existing" ? "on-ex" : key === "proposed" ? "on-pr" : "";
-      if (row.surface === key && key === null) b.style.opacity = "1";
-      b.onclick = () => {
-        // the ONE place a surface becomes an operator decision rather than
-        // an engine default - see calcStatePayload's surface_by note
-        row.surface = key;
-        row.surfaceBy = "operator";
-        renderEw(); calcStateDirty();
-      };
-      seg.appendChild(b);
-    }
-    const x = document.createElement("button");
-    x.className = "mini x"; x.textContent = "×";
-    x.title = "remove this contour from the calculation";
-    x.onclick = () => {
-      state.ew.rows = state.ew.rows.filter(r => r !== row);
-      // remember the deletion: restore merges saved rows into a FRESH
-      // suggest, and without this list the suggest re-seeds deleted rows
-      (state.ew.removed = state.ew.removed || []).push(row.chain_id);
-      if (state.hotChain === row.chain_id) state.hotChain = null;
-      renderEw();
-      draw();
-      calcStateDirty();
-    };
-    div.append(z, meta, seg, x, src);
-    div.onmouseenter = () => hotChainSet(row.chain_id);
-    div.onmouseleave = () => hotChainSet(null);
-    box.appendChild(div);
-  }
-  if (view.hidden > 0) {
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "ew-more";
-    more.textContent = "and " + view.hidden + " more in this group — show "
-      + "them all (the cap hides nothing; this opens it)";
-    more.onclick = () => { state.ew.showAll = true; renderEw(); };
-    box.appendChild(more);
-  } else if (state.ew.showAll && view.filtered > EW_ROW_CAP) {
-    const less = document.createElement("button");
-    less.type = "button";
-    less.className = "ew-more";
-    less.textContent = "showing all " + view.filtered + " — collapse to the "
-      + "first " + EW_ROW_CAP;
-    less.onclick = () => { state.ew.showAll = false; renderEw(); };
-    box.appendChild(less);
-  }
-}
-
-// A contour line with NO elevation, listed so it can be found and fixed
-// where it is found. It is NOT a panel row and moves no volume until an
-// elevation is typed into it - typing one runs the same ewAppendRow the
-// "+ Add contour" button runs, and the line then wears the "Typed by you"
-// class like any other hand-entered elevation.
-function ewStubRow(stub) {
-  const div = document.createElement("div");
-  div.className = "ew-row ew-stub rc-none";
-  div.title = "Click to go to this contour on the sheet — it selects, "
-    + "centres and flashes the line. Nothing is changed.";
-  div.onclick = (ev) => {
-    if (ev.target.tagName === "INPUT" || ev.target.tagName === "BUTTON") return;
-    if (!revealChain(stub.chain_id)) {
-      state.selected = stub.chain_id; state.selPt = null;
-      updateSelBar(chainById(stub.chain_id));
-      draw();
-    }
-  };
-  const z = document.createElement("input");
-  z.className = "z"; z.type = "number"; z.step = "0.1";
-  z.placeholder = "elev";
-  z.name = "ew-nz-" + stub.chain_id;
-  const commit = () => {
-    const v = parseFloat(z.value);
-    if (Number.isFinite(v)) ewAdoptStub(stub.chain_id, v);
-  };
-  z.onchange = commit;
-  z.onkeydown = (ev) => {
-    if (ev.key === "Enter") { ev.preventDefault(); commit(); }
-    else if (ev.key === "Escape") { ev.stopPropagation(); z.blur(); }
-  };
-  const meta = document.createElement("div");
-  meta.className = "ew-meta";
-  meta.textContent = `line ${stub.chain_id}`;
-  const cb = document.createElement("span");
-  cb.className = "ew-cls k-none";
-  cb.textContent = EW_REVIEW.none.badge;
-  cb.title = EW_REVIEW.none.why;
-  const src = document.createElement("div");
-  src.className = "ew-src";
-  src.textContent = "no elevation read on this line — type the one you read on the drawing";
-  src.prepend(cb);
-  div.append(z, meta, src);
-  div.onmouseenter = () => hotChainSet(stub.chain_id);
-  div.onmouseleave = () => hotChainSet(null);
-  return div;
-}
-
-function ewAdoptStub(cid, val) {
-  if (!Number.isFinite(val)) return;
-  const before = state.ew.rows.length;
-  ewAppendRow(cid);
-  if (state.ew.rows.length === before) return;   // ewAppendRow refused
-  const row = state.ew.rows.find(r => r.chain_id === cid);
-  if (!row) return;
-  row.z = val;
-  renderEw();
-  calcStateDirty();
-  setStatus("line " + cid + " added at " + val
-    + " — press EXIST or PROP to put it in a surface");
-}
-
-$("ewCalc").onclick = async () => {
-  if (ewNotReady("the volume calculation")) return;
-  const body = ewBody();
-  $("ewResult").textContent = "calculating…";
-  const r = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    ewRefused(e.detail, r.status);
-    return;
-  }
-  const j = await r.json();
-  $("ewResult").classList.remove("ew-refused");
-  state.ew.result = j;
-  const off = [];
-  if (j.existing_offset_ft) off.push(`existing −${j.existing_offset_ft.toFixed(2)} ft`);
-  if (j.proposed_offset_ft) off.push(`proposed −${j.proposed_offset_ft.toFixed(2)} ft`);
-  // the engine reports -0.0 when nothing is cut (negated empty sum); show 0
-  const cutQ = j.cut_yd3 > 0 ? j.cut_yd3 : 0, fillQ = j.fill_yd3 > 0 ? j.fill_yd3 : 0;
-  renderEwStale();
-  renderEwBound();
-  // Layers-only (audit item 10): a clearing sheet has no cut/fill TIN, but
-  // stripping is area x depth. The failure is stated, never zeroed - a
-  // printed "cut 0 CY" on a sheet nobody graded is a confident wrong number.
-  $("ewResult").innerHTML = j.layers_only
-    ? `<b>no cut/fill:</b> ${j.cut_fill_error} ` +
-      `<br><span class="ew-meta">layer volumes below still compute ` +
-      `(${Number(j.layer_area_sf).toLocaleString()} SF from the ${j.area_source})</span>`
-    : `<b>cut ${ewCY(cutQ)} CY</b> · <b>fill ${ewCY(fillQ)} CY</b>` +
-      ` · net ${ewCY(j.net_yd3)} CY over ${Number(j.area_sf).toLocaleString()} SF` +
-      (j.max_cut_ft || j.max_fill_ft
-        ? `<br><span class="ew-meta">deepest cut ${j.max_cut_ft} ft · ` +
-          `deepest fill ${j.max_fill_ft} ft — eyeball these against the ` +
-          `contours; a peak that surprises you is a row to check</span>` : "") +
-      (off.length ? `<br><span class="ew-meta">surfaces lowered: ${off.join(", ")}</span>` : "");
-  // per-layer slabs: area x thickness, shown under the stacks
-  const out = $("ewLayerOut");
-  out.innerHTML = "";
-  for (const lay of (j.layers || [])) {
-    const d = document.createElement("div");
-    d.innerHTML = `<span>${ewItemLabel(lay)} <span class="sub">· ${lay.thickness_in}" over ` +
-      `${Number(j.layer_area_sf || j.area_sf).toLocaleString()} SF</span></span><b>${ewCY(lay.volume_yd3)} CY</b>`;
-    out.appendChild(d);
-  }
-  renderEwBasis(j, body);
-  renderEwProof(j);
-  renderEwReady(j);
-  // Calculating is LOOKING. The rows only reach the itemised takeoff once
-  // the estimator presses "Add to takeoff" - see ewAdd below. If they
-  // already did, refresh in place: consent was given for THIS calculation,
-  // and leaving a superseded number priced would be its own silent lie.
-  if (state.ew.added) ewApplyItems(j);
-  renderEwTake();
-  renderEwBalance(j);
-  renderItemized();
-  if ($("ewMap").checked) await ewFetchMap();
-};
-
-// AN ABSTAIN MUST LEAVE NOTHING BEHIND.
-//
-// The old handler wrote the server's sentence into #ewResult and returned.
-// Everything the PREVIOUS calculation had painted stayed on screen beside
-// it - the per-layer slabs in #ewLayerOut, the basis block, the material
-// balance - and state.ew.result kept the superseded numbers, so if the
-// operator had already pressed "Add to takeoff" those cubic yards were
-// still in state.extraItems and would still price, still export and still
-// print. A refusal that leaves a number on the screen is not an abstain.
-//
-// So: clear the result, clear every panel the result feeds, take the
-// earthwork rows back OUT of the itemised takeoff (saying so), and render
-// the refusal with its evidence - which surface, what it held, what fixes
-// it. `detail` is the object takeoff_engine.earthwork._floor_refusal built
-// (message / code / surface / basis); a plain string still renders, because
-// the other 400s from this route are still sentences.
-function ewRefused(detail, status) {
-  const d = (detail && typeof detail === "object") ? detail : {};
-  const msg = (typeof detail === "string" ? detail : d.message)
-              || ("failed (" + status + ")");
-  const hadAdded = !!(state.ew && state.ew.added);
-  if (state.ew) { state.ew.result = null; state.ew.added = false; }
-  ewClearItems();
-  $("ewLayerOut").innerHTML = "";
-  // AND THE PICTURE ON THE DRAWING, which is where the operator is looking.
-  //
-  // Until this fix the handler cleared every box in the panel and never
-  // touched state.ew.map - and draw() paints state.ew.map.img under the
-  // linework on EVERY repaint, unconditionally, for as long as it is set.
-  // Reproduced on the DEM outline sheet: tick "Show cut/fill map",
-  // Calculate a good volume, reassign a row so one surface loses its
-  // relief, Calculate again - the panel read "No volume published" while a
-  // full-sheet colour depth map and its numbered ramp ("cut −3.4 ft …
-  // +3.4 ft fill") stayed on the sheet. A depth map is a quantity drawn
-  // instead of typed, so that is a number surviving an abstain - the exact
-  // thing this handler exists to stop.
-  //
-  // The TICK STAYS ON. The checkbox is the operator's standing request and
-  // ewCalc refetches the map on the next Calculate that succeeds; unticking
-  // it here would answer a question they did not ask.
-  if (state.ew) state.ew.map = null;
-  const legend = $("ewMapLegend");
-  if (legend) legend.hidden = true;
-  ewMapNote(null, null);   // the map's own note goes with the map
-  renderEwBasis(null, null);
-  renderEwBalance(null);
-  renderEwTake();
-  renderItemized();
-  const box = $("ewResult");
-  box.innerHTML = "";
-  const head = document.createElement("b");
-  head.textContent = "No volume published.";
-  box.appendChild(head);
-  // The engine's sentences start "the existing surface ..." because they are
-  // written to sit mid-sentence in a log line. Here one follows a full stop,
-  // so it opens a sentence and has to look like one. Seen on :8100.
-  box.appendChild(document.createTextNode(
-    " " + (msg ? msg.charAt(0).toUpperCase() + msg.slice(1) : msg)));
-  const b = d.basis;
-  if (b && b.existing && b.proposed) {
-    const say = (s) => {
-      const n = s.distinct_elevations;
-      return `<b>${s.name}</b>: ${s.n_contours} contour`
-        + `${s.n_contours === 1 ? "" : "s"} + ${s.n_spots} spot grade`
-        + `${s.n_spots === 1 ? "" : "s"} → <b>${n}</b> distinct elevation`
-        + `${n === 1 ? "" : "s"}`
-        + (s.z_min_ft == null ? ""
-           : ` (${s.z_min_ft}${s.z_max_ft === s.z_min_ft ? "" : "–" + s.z_max_ft} ft)`);
-    };
-    const line = document.createElement("div");
-    line.className = "ew-meta";
-    line.innerHTML = say(b.existing) + "<br>" + say(b.proposed);
-    box.appendChild(line);
-  }
-  if (hadAdded) {
-    const w = document.createElement("div");
-    w.className = "ew-meta";
-    w.textContent = "The earthwork lines from the previous calculation have "
-      + "been removed from the takeoff — they were computed from rows this "
-      + "one refuses.";
-    box.appendChild(w);
-  }
-  box.classList.add("ew-refused");
-  setStatus(msg, "err");
-  // repaint the sheet without the map that was just dropped: clearing
-  // state.ew.map only takes effect on the next draw(), and nothing else
-  // schedules one on this path.
-  draw();
-}
-
-// Whole cubic yards, everywhere a volume is shown or priced. The surface is
-// interpolated between contours 1-5 ft apart; 0.1 CY on it is a lie of
-// precision, and it was being printed straight onto a bid.
-function ewCY(v) {
-  return Math.round(Number(v) || 0).toLocaleString();
-}
-const ewR = v => Math.round(Number(v) || 0);
-// The server writes the balance's "why" sentence already formatted to 0.1
-// ("fill 40,349.6 CY - reused 13,677.4 CY"). Round the CY figures inside it
-// so the sentence cannot contradict the whole-CY number sitting beside it.
-// Anchored on the CY unit: percentages and x-factors in the same string
-// keep their decimals.
-function ewRoundCYText(s) {
-  return String(s == null ? "" : s).replace(
-    /(\d[\d,]*)\.(\d+)(?=\s*CY\b)/g,
-    (m) => ewCY(parseFloat(m.replace(/,/g, ""))));
-}
-
-// Every earthwork row is replaced on each apply so edits never double-count.
-function ewClearItems() {
-  state.extraItems = state.extraItems.filter(it => !EW_ITEM_RE.test(it.label));
-}
-
-// The push. Named as on Beaumont's bid sheet, rounded to whole CY.
-// Cut and fill are computed at whatever scale was in force when Calculate was
-// pressed, and the reviewer can change that scale afterwards. The volumes do
-// NOT follow it - the surfaces are re-integrated server-side, so unlike the
-// areas panel this cannot be rescaled by arithmetic on the client. Say so, and
-// offer the one-click redo, rather than leaving cubic yards on screen that
-// belong to a scale nobody is using any more.
-function ewScaleStale() {
-  const j = state.ew && state.ew.result;
-  const was = j && j.ft_per_paper_inch;
-  const now = arFpi();
-  if (!was || now === null) return null;
-  return Math.abs(now - was) > 1e-6 ? { was: +was, now } : null;
-}
-function renderEwStale() {
-  const box = $("ewStale");
-  if (!box) return;
-  const st = ewScaleStale();
-  box.hidden = !st;
-  if (!st) return;
-  box.innerHTML = "";
-  const msg = document.createElement("span");
-  msg.innerHTML = `<b>These cubic yards are not the scale in force.</b> They `
-    + `were computed at 1 inch = ${st.was.toFixed(2)} ft; the sheet is now set `
-    + `to <b>1 inch = ${st.now.toFixed(2)} ft</b>. Volume moves with the square `
-    + `of the scale, so expect about `
-    + `${Math.pow(st.now / st.was, 2).toFixed(1)}\u00d7. Recalculate before pricing.`;
-  const b = document.createElement("button");
-  b.className = "mini";
-  b.textContent = "recalculate at " + st.now.toFixed(2) + " ft/in";
-  b.onclick = () => $("ewCalc").click();
-  box.append(msg, b);
-}
-
-function ewApplyItems(j) {
-  ewClearItems();
-  if (!j) return;
-  if (j.cut_yd3 > 0) state.extraItems.push({ label: "Site Cut", qty: ewR(j.cut_yd3), unit: "CY" });
-  if (j.fill_yd3 > 0) state.extraItems.push({ label: "Site Fill", qty: ewR(j.fill_yd3), unit: "CY" });
-  for (const lay of (j.layers || []))
-    if (lay.volume_yd3 > 0)
-      state.extraItems.push({ label: ewItemLabel(lay), qty: ewR(lay.volume_yd3), unit: "CY" });
-  // the limit of work itself is two bid lines (Beaumont's step one on every
-  // site plan): the ring's area is Clear & Grub, its length is the fence.
-  // Only a picked or drawn limit - a work-area box is a crop, not a site.
-  if (j.boundary && j.boundary.is_limit) {
-    if (j.boundary.area_sf > 0)
-      state.extraItems.push({ label: "Clear & Grub", qty: Math.round(j.boundary.area_sf), unit: "SF" });
-    if (j.boundary.perim_ft > 0)
-      state.extraItems.push({ label: "Silt / Construction Fence", qty: Math.round(j.boundary.perim_ft), unit: "LF" });
-    for (const lab of ["Clear & Grub", "Silt / Construction Fence"])
-      if (!store.getItem(tradeKey(lab))) store.setSession(tradeKey(lab), "Earthwork & Grading");
-  }
-  // where the dirt goes. These price like any other row, but tradeFor()
-  // would file "Import Structural" under General (it matches no keyword)
-  // and "Export Asphalt" under Paving, so seed the trade the way
-  // stApplyItems does - session default only, the reviewer's pick wins.
-  for (const r of ((j.balance && j.balance.rows) || [])) {
-    if (!(r.qty > 0)) continue;
-    state.extraItems.push({ label: r.label,
-                            qty: r.unit === "CY" ? ewR(r.qty) : r.qty,
-                            unit: r.unit });
-    if (!store.getItem(tradeKey(r.label)))
-      store.setSession(tradeKey(r.label), "Earthwork & Grading");
-  }
-}
-
-$("ewAdd").onclick = () => {
-  if (ewNotReady("the earthwork rows")) return;
-  if (!state.ew.result) return setStatus("press Calculate first — there is no volume to add yet", "err");
-  state.ew.added = !state.ew.added;
-  if (state.ew.added) ewApplyItems(state.ew.result);
-  else ewClearItems();
-  renderEwTake();
-  renderItemized();
-  setStatus(state.ew.added
-    ? "earthwork added to the takeoff — it will price and print with the caveat"
-    : "earthwork removed from the takeoff");
-};
-
-function renderEwTake() {
-  const box = $("ewTake"), btn = $("ewAdd"), note = $("ewTakeNote");
-  if (!box || !btn || !note) return;
-  const j = state.ew && state.ew.result;
-  box.classList.toggle("off", !j);
-  if (!j) return;
-  btn.textContent = state.ew.added ? "Remove from takeoff" : "Add to takeoff";
-  btn.classList.toggle("on", !!state.ew.added);
-  note.textContent = state.ew.added
-    ? "In the itemized takeoff. It will price, export and print on the report, "
-      + "with the basis above repeated on the report's own face."
-    : "Not in the takeoff. Approving now exports no earthwork line at all — "
-      + "press this only if you mean to bid these quantities.";
-}
-
-// THE DISJOINT-RANGE CAUTION, IN ONE PLACE, FOR SCREEN AND FOR PAPER.
-//
-// surface_basis.caution used to appear at exactly one site in this file -
-// the on-screen basis block below. ewApproveNotes and ewBasisNote, which
-// build the approve note and the printed report, never saw it. So the one
-// shape the volume floor deliberately declines to REFUSE ("the two surfaces
-// do not overlap in elevation ... check the rows before pricing") was on
-// screen and nowhere on paper, while the comment inside renderEwBasis said
-// in as many words that screen and paper cannot drift apart. An estimator
-// reads the report.
-//
-// Both sites now take their words from here, so they are identical by
-// construction rather than by two authors agreeing.
-//
-// `approve` truncates every note at APPROVE_NOTE_MAX and says nothing when
-// it does, so the TAIL of a disclosure is what would be lost. The server's
-// caution ends with a generic clause the headline already carries; when the
-// pair will not fit, drop that clause WHOLE rather than ship a cut
-// sentence - the same rule ewBasisNote applies to its own second clause.
-// The trim happens here, so a trimmed caution is trimmed on both.
-const EW_CAUTION_HEAD = "Check these rows. ";
-function ewCautionText(j) {
-  const c = (j && j.surface_basis && j.surface_basis.caution) || "";
-  if (!c) return "";
-  if (EW_CAUTION_HEAD.length + c.length <= APPROVE_NOTE_MAX) return c;
-  const cut = c.indexOf(" That is normal on");
-  return cut > 0 ? c.slice(0, cut)
-                 : c.slice(0, APPROVE_NOTE_MAX - EW_CAUTION_HEAD.length);
-}
-
-// What the number rests on, printed beside the number. Every field here is
-// one the response or the request already carried: nothing is inferred.
-// WHAT BACKS THIS NUMBER - the checks, in the estimator's words.
-//
-// The volume kernel is exact where the evidence is complete (measured on
-// analytic surfaces: 0.00% on a plane, -0.03% on a cone) and the grid moves
-// it +-0.4%, so a wrong cut/fill is a wrong INPUT. The estimator cannot see
-// inputs, and "I won't invent volumes" is what a client said about exactly
-// that. So the reply carries `proof` and this prints it: the surface against
-// the elevations the sheet itself prints as points, the same rows through
-// the other surface model and a finer grid, and what region was counted.
-// A check that CANNOT run says so - it is never counted as a pass.
-function renderEwProof(j) {
-  const box = $("ewProof");
-  if (!box) return;
-  const p = (j && j.proof) || null;
-  const checks = (p && p.checks) || [];
-  box.classList.remove("v-pass", "v-warn");
-  if (!p || !checks.length) {
-    const only = closureLine(j);
-    box.classList.toggle("off", !only);
-    box.innerHTML = only;
-    return;
-  }
-  box.classList.remove("off");
-  const nPass = checks.filter(c => c.state === "pass").length;
-  const verdict = p.verdict === "pass" ? "every check passes"
-    : p.verdict === "cannot check" ? "not everything could be checked"
-    : "check these before you bid it";
-  box.classList.add(p.verdict === "pass" ? "v-pass" : "v-warn");
-  const li = checks.map(c => {
-    const cls = c.state === "pass" ? "s-pass" : c.state === "warn" ? "s-warn" : "s-none";
-    const mark = c.state === "pass" ? "\u2713" : c.state === "warn" ? "!" : "?";
-    return `<li class="${cls}">${mark} ${esc(c.text)}</li>`;
-  }).join("");
-  // the worst spot, named: an estimator can walk to it on the sheet
-  const res = (p.spot_residual || {});
-  let worst = null;
-  for (const side of ["existing", "proposed"]) {
-    const w = ((res[side] || {}).worst || [])[0];
-    if (w && (!worst || Math.abs(w.diff_ft) > Math.abs(worst.diff_ft))) {
-      worst = Object.assign({}, w, { side });
-    }
-  }
-  const worstLine = worst
-    ? `<span class="ep-worst">worst point: the sheet prints `
-      + `<b>${worst.printed_ft}</b> (${esc(String(worst.tag || ""))}) where our `
-      + `${esc(worst.side)} surface reads <b>${worst.surface_ft}</b> - `
-      + `${worst.diff_ft > 0 ? "we are low by" : "we are high by"} `
-      + `<b>${Math.abs(worst.diff_ft)} ft</b></span>`
-    : "";
-  box.innerHTML = `<span class="ep-head">What backs this number</span> `
-    + `<span class="ep-verdict">\u2014 ${nPass} of ${checks.length} checks pass, `
-    + `${verdict}</span><ul>${li}</ul>${worstLine}${closureLine(j)}`;
-}
-
-// WHAT WAS CARRIED TO THE TOP OF A HILL, AND WHAT WAS NOT.
-//
-// A surface built from contours stops at its highest one, so a summit comes
-// out flat. The engine puts one point inside the innermost ring - half a
-// contour interval above it, the hand-takeoff convention - and that is an
-// ASSUMPTION, so it is on screen with the ring's area next to it. Refusals
-// are here too: Oncor C-04's only closed ring is a five-point pad outline
-// at 569.9 on a 1 ft sheet, and closing it would have added half a foot of
-// fill over 28,600 SF. A skip nobody can see reads as "no peaks here".
-function closureLine(j) {
-  const all = (j && j.closures) || [];
-  if (!all.length) return "";
-  const did = all.filter(c => c.applied);
-  const not = all.filter(c => !c.applied);
-  const bits = [];
-  if (did.length) {
-    const hi = did.filter(c => c.kind === "summit").length;
-    const lo = did.length - hi;
-    const what = [hi ? `${hi} high point${hi === 1 ? "" : "s"}` : "",
-                  lo ? `${lo} low point${lo === 1 ? "" : "s"}` : ""]
-      .filter(Boolean).join(" and ");
-    bits.push(`carried the surface to the top of ${what}`);
-  }
-  if (not.length) bits.push(`left ${not.length} ring${not.length === 1 ? "" : "s"} open`);
-  const rows = all.map(c => {
-    const area = Number(c.area_sf || 0).toLocaleString();
-    const head = c.applied
-      ? `${esc(c.surface)} ${esc(c.kind)} \u2014 ${c.ring_z} ring carried to `
-        + `<b>${c.z}</b> over ${area} SF`
-      : `${esc(c.surface)} ${c.ring_z} ring, ${area} SF \u2014 not closed`;
-    return `<li>${head}<br><span class="ep-why">${esc(c.why || "")}</span></li>`;
-  }).join("");
-  return `<details class="ep-closure"><summary>Peaks and low points: `
-    + `${esc(bits.join(", "))}${did.length ? " (assumed \u2014 type a spot to "
-    + "override)" : ""}</summary><ul>${rows}</ul></details>`;
-}
-
-// WHAT THIS NUMBER STILL NEEDS BEFORE IT CAN CARRY A BID.
-//
-// The kernel is exact on analytic truth (0.00% on a plane) and moves +-0.4%
-// across grid sizes, so a wrong cut/fill is a wrong INPUT - and an input
-// nobody was asked for is the one an estimator cannot see. Each item is
-// supplied, assumed or missing, and the verdict is READY only when nothing
-// required is assumed or missing. Measured costs of leaving them open, on
-// this corpus: elevations swing Barn C3.0 by 89-144% depending on WHICH
-// lines carry one; the limit of work is 23% of its area; 6 in of strip is
-// 30% of C-04's cut; 12 in of section is 88% of it.
-//
-// It never blocks the button. An estimator checking a hunch does not want
-// a wall - he wants to know what is still open.
-function renderEwReady(j) {
-  const box = $("ewReady");
-  if (!box) return;
-  const rd = (j && j.readiness) || null;
-  box.classList.remove("r-ready", "r-open");
-  if (!rd || !rd.items || !rd.items.length) {
-    box.classList.add("off");
-    box.innerHTML = "";
-    return;
-  }
-  box.classList.remove("off");
-  box.classList.add(rd.ready ? "r-ready" : "r-open");
-  const MARK = { supplied: "\u2713", assumed: "~", missing: "!", "not built": "\u2013" };
-  const li = rd.items.map(it => {
-    const cls = "ri-" + String(it.state).replace(/\s+/g, "-");
-    const val = it.value ? ` <b>${esc(String(it.value))}</b>` : "";
-    const why = it.why ? `<span class="ri-why">${esc(it.why)}</span>` : "";
-    // an assumed item can be answered right here: the estimator says the
-    // default IS his answer, and it stops being an assumption
-    const can = it.state === "assumed" && CONFIRMABLE[it.id];
-    const btn = can
-      ? ` <button class="ri-ok" data-confirm="${esc(it.id)}">${esc(CONFIRMABLE[it.id])}</button>`
-      : "";
-    return `<li class="${cls}"><span class="ri-mark">${MARK[it.state] || "?"}</span>`
-      + `${esc(it.label)}${val}${btn}${why ? "<br>" + why : ""}</li>`;
-  }).join("");
-  box.innerHTML = `<span class="ri-head">Ready to bid?</span> `
-    + `<span class="ri-verdict">\u2014 ${esc(rd.sentence)}</span><ul>${li}</ul>`;
-  box.querySelectorAll("[data-confirm]").forEach(b =>
-    b.addEventListener("click", () => ewConfirmInput(b.dataset.confirm)));
-}
-
-// the defaults an estimator can adopt as his own answer, and the words for
-// doing it. Anything not here has to be typed - a strip depth is a number
-// off a soils report, and no button can know it.
-const CONFIRMABLE = {
-  strip: "no topsoil to strip",
-  dig_depth: "dig stops at finish grade",
-  swell: "in-place yards are right",
-  reuse: "this balance is right",
-};
-
-function ewConfirmInput(id) {
-  if (!id) return;
-  state.ewConfirmed = state.ewConfirmed || [];
-  if (!state.ewConfirmed.includes(id)) state.ewConfirmed.push(id);
-  // recompute so the contract, the volume and the ledger agree - the
-  // confirmation is part of the body the number was computed from
-  const btn = $("ewCalc");
-  if (btn && !btn.disabled) btn.click();
-}
-
-function renderEwBasis(j, body) {
-  const box = $("ewBasis");
-  if (!box) return;
-  // a layers-only answer has no interpolation to describe
-  const show = j && !j.layers_only;
-  // WHAT THIS BLOCK WAS PAINTED FROM, kept so a row edit can repaint it.
-  // Its coverage lines are ewCoverageText's, now read live off the rows
-  // (ewCovNow) - and this function used to run ONLY when a calculation
-  // landed, so deleting a row left the head above the rows saying 81 while
-  // this block one screen down still said 101. Remembered HERE rather than
-  // at the call site so ewRefused's renderEwBasis(null, null) clears it by
-  // the same line that clears the block.
-  if (state.ew) state.ew.basis = show ? { j: j, body: body } : null;
-  box.classList.toggle("off", !show);
-  if (!show) return;
-  const ex = j.existing_contours, pr = j.proposed_contours;
-  // BOTH SIDES, NAMED. The spot grades split by tag since 2026-09-16, so
-  // "on the existing surface" was a guess from whichever list happened to
-  // be non-empty and it described 14 of C-04's 21 points wrongly.
-  const nEx = ((body && body.existing_points) || []).length;
-  const nPr = ((body && body.proposed_points) || []).length;
-  const nPts = nEx + nPr;
-  const side = nEx && nPr ? `${nEx} on the ground now, ${nPr} on the new ground`
-             : nEx ? "on the ground now" : "on the new ground";
-  box.innerHTML = "";
-  const line = (html) => {
-    const d = document.createElement("div");
-    d.innerHTML = html;
-    box.appendChild(d);
-    return d;
-  };
-  line(`Interpolated from <b>${ex}</b> existing and <b>${pr}</b> proposed `
-     + `contour${pr === 1 ? "" : "s"}`
-     + (nPts ? `, plus <b>${nPts}</b> spot grade${nPts === 1 ? "" : "s"} `
-             + (nEx && nPr ? `(${side})` : `${side}`) : "")
-     + `, sampled on a <b>${j.cell_ft}</b> ft grid over <b>${Number(j.area_sf).toLocaleString()}</b> SF.`);
-  // WHERE THE ELEVATIONS CAME FROM, beside the number they produced. This
-  // block described the geometry and the model and said nothing about the
-  // readings, so a volume built entirely from machine-read digits looked
-  // exactly like one built from the sheet's own text (measured 2026-09-02
-  // on the DEM outline sheet: 17 machine-read rows, cut 44% low, fill 49%
-  // high, and every word on this panel identical to the native run's).
-  // Same count and same grammar as the printed report's ewBasisNote, so
-  // screen and paper cannot drift apart.
-  // THE FLOOR'S OTHER HALF, DISCLOSED RATHER THAN REFUSED. A pair of
-  // surfaces whose elevation ranges do not overlap is normal on a raised
-  // pad or a deep excavation and is what a mis-assigned row or a misread
-  // digit also looks like - the engine cannot tell those apart, so it says
-  // so beside the number instead of picking. The words are ewCautionText's,
-  // shared with the printed report, so this line and that one cannot drift.
-  //
-  // How often it fires, re-measured 2026-09-02 over 30 sheets x the five
-  // panel configurations - 75 pair-configurations with rows on both sides:
-  // FOUR are disjoint, all of them Barn C4.4-SE (existing 4536-4539 against
-  // a proposed surface that is one row at 4540, a 1.0 ft gap), and in every
-  // one of those four the volume floor refuses the volume anyway because
-  // that proposed surface holds a single elevation. So no PUBLISHED volume
-  // in this corpus carries the caution - which is a statement about the
-  // corpus, not a claim that the line is dead code.
-  const cautionTxt = ewCautionText(j);
-  if (cautionTxt) {
-    const c = line(`<b>Check these rows.</b> ${esc(cautionTxt)}`);
-    c.className = "ew-basis-ocr";
-  }
-  // HOW MUCH OF THE SHEET IS UNDER THIS NUMBER, beside the number. The
-  // block above says what the volume was interpolated FROM; without this it
-  // says nothing about what it was NOT interpolated from, and a volume
-  // built on 41 of a sheet's 368 contour lines read exactly like one built
-  // on all of them (CLAUDE.md s5: a silent cap reports as full coverage).
-  // The words are ewCoverageText's, shared with the panel head above the
-  // rows and with the printed report, so the three cannot drift.
-  // FOLDED, NOT DROPPED. ewCoverageText returns up to four sentences - how
-  // many contour lines carry an elevation, what share of the sheet that is,
-  // what sits outside the count and why. All four are load-bearing (s5: a
-  // silent cap reports as full coverage) and all four in a row are what
-  // pushed the numbers off the panel's first screen. The FIRST one - the
-  // count itself - stays on the face; the arithmetic behind it opens on a
-  // button. Nothing here can be dismissed, only folded.
-  const covAcc = ewAcceptedSplit();
-  const covSents = ewCoverageText(ewCovNow(), covAcc);
-  if (covSents.length) line(esc(covSents[0])).className = "ew-basis-cov";
-  if (covSents.length > 1) {
-    const more = document.createElement("span");
-    more.hidden = true;
-    for (const sent of covSents.slice(1)) {
-      const d = document.createElement("div");
-      d.className = "ew-basis-cov";
-      d.textContent = sent;
-      more.appendChild(d);
-    }
-    // the model's REASONING joins it: the name stays on the face, the
-    // sentence explaining the pick does not need to be read every time
-    if (j.surface_model_why) {
-      const w = document.createElement("div");
-      w.className = "ew-basis-model";
-      w.textContent = `${ewModelName(j.surface_model)}: ${j.surface_model_why}.`
-        + (j.label_band_ft == null ? "" :
-          ` Measured label sparsity ${j.label_band_ft} ft (existing `
-          + `${j.label_band_existing_ft}, proposed ${j.label_band_proposed_ft}).`);
-      more.appendChild(w);
-    }
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "mini ew-limit-more";
-    const say = () => { btn.textContent = "how this number was counted "
-      + (more.hidden ? "\u25b8" : "\u25be"); };
-    btn.setAttribute("aria-expanded", "false");
-    btn.onclick = () => {
-      more.hidden = !more.hidden;
-      btn.setAttribute("aria-expanded", String(!more.hidden));
-      say();
-    };
-    say();
-    box.appendChild(btn);
-    box.appendChild(more);
-  }
-  const prov = ewAcceptedSplit();
-  if (prov.machine) {
-    line(`<b>${prov.machine}</b> of the <b>${prov.total}</b> elevations `
-       + "under this number had their digits read by machine off a picture "
-       + "of the sheet, not from its text — they can disagree with what is "
-       + "printed. Check them against the drawing before pricing.")
-      .className = "ew-basis-ocr";
-  }
-  // WHAT BOUNDED THE REGION, if anything. Until 2026-09-10 this sentence
-  // ended "No input on this panel can bound it" - stale since the limit of
-  // work landed, and wrong again once the work area reached this panel.
-  const bnd = body && body.boundary;
-  const u = line(bnd
-    ? "That region is bounded by <b>" + (state.ewBound ? "your limit of work" : "the work-area box")
-      + "</b> (" + bnd.length + " points): only ground inside it is counted."
-    : "That region is <b>not the graded area</b>: it is where the two "
-      + "surfaces overlap, a box round the lines. "
-      + "Set a limit of work, or draw a work area, to bound it.");
-  u.className = bnd ? "bounded" : "unbounded";
-  // WHICH SURFACE PRODUCED THIS NUMBER. The two models differ by tens of
-  // percent on a sparse sheet, so the model rides beside the volume and
-  // not in a tooltip: an operator must never be unable to tell which one
-  // ran, or that it was picked for them.
-  if (j.surface_model) {
-    // the name and where it came from; the why is in the fold above
-    const m = line(`Between the contours: <b>${ewModelName(j.surface_model)}</b>`
-      + ` — ${esc(j.surface_model_source || "")}.`);
-    m.className = "ew-basis-model";
-  }
-  renderEwModelNote(j);
-}
-
-// WHAT BACKS EVERY ELEVATION THE OPERATOR ACTUALLY ACCEPTED.
-//
-// Counted off the live rows, not off the suggest payload: a row the
-// operator left on SKIP or deleted contributes nothing and must not be
-// disclosed as if it did.
-//
-// THE DEFECT THIS REPLACES. The old version counted `r.inferred`, which the
-// server sets on interval-infill rows ALONE - `inherited` rows (26 of
-// C-04's 150; no label printed on those lines at all) never carry it. The
-// note built from that count then read "35 of the contour elevations in
-// this volume were INFERRED ... not read from a printed label", which SAYS
-// nothing about the other 115 and IMPLIES all of them were label-backed.
-// On the document an estimator bids from, that silently reclassified 26
-// unlabelled contours as printed. The split is now taken from `how`, the
-// same table the chip and the panel row read, and every bucket is named.
-function ewAcceptedSplit() {
-  const rows = (state.ew && state.ew.rows) || [];
-  // `machine` cuts ACROSS the buckets below (a gap-ocr row is counted in
-  // `printed` and in `machine`): the buckets answer "is a label printed
-  // there", `machine` answers "were the digits recognised rather than
-  // read". Both belong on the report - see ewBasisNote.
-  const out = { total: 0, printed: 0, nearby: 0, nearbyTagged: 0,
-                infill: 0, inherited: 0, manual: 0, unknown: 0, machine: 0 };
-  for (const r of rows) {
-    if (!isFinite(r.z)) continue;
-    if (r.surface !== "existing" && r.surface !== "proposed") continue;
-    out.total++;
-    if (r.manual) { out.manual++; continue; }
-    if (r.how === "inherited") { out.inherited++; continue; }
-    if (r.how === "interval-infill" || (r.inferred && !r.how)) {
-      out.infill++; continue;
-    }
-    const prov = elevProvenance(r.how);
-    if (prov.machine) out.machine++;
-    const kind = prov.kind;
-    if (kind === "printed") out.printed++;
-    else if (kind === "nearby") {
-      out.nearby++;
-      if (r.tag) out.nearbyTagged++;
-    } else out.unknown++;
-  }
-  return out;
-}
-// Accepted rows whose elevation is NOT read from any label on the sheet.
-// Kept under its old name because the approve note and its test both ask
-// this question - but it is now every unprinted mechanism, not one of them.
-function ewInferredAccepted() {
-  const a = ewAcceptedSplit();
-  return a.infill + a.inherited + a.manual + a.unknown;
-}
-
-// The two names the operator sees, used everywhere a model is named so the
-// control, the basis line and the printed report cannot drift apart.
-function ewModelName(m) {
-  return m === "clamped_ct" ? "smooth surface, clamped to the contours"
-       : m === "linear" ? "linear TIN"
-       : String(m || "");
-}
-
-// Live note beside the picker: after a Calculate, say what AUTO decided and
-// on what measurement, so choosing "Auto" is not choosing blind.
-function renderEwModelNote(j) {
-  const n = $("ewModelNote");
-  if (!n) return;
-  if (!j || !j.surface_model) { n.textContent = ""; return; }
-  const sel = $("ewModelSel");
-  const chosen = sel ? sel.value : "auto";
-  n.textContent = chosen === "auto"
-    ? `auto picked ${ewModelName(j.surface_model)}`
-      + (j.label_band_ft == null ? "" : ` (labels ${j.label_band_ft} ft apart)`)
-    : `using ${ewModelName(j.surface_model)}`;
-}
-
 // The lines the approve payload carries onto the printed report, so a reader
 // of the PDF who never saw this panel learns the same three things. Empty
 // unless the estimator actually added earthwork - no earthwork row, no note.
@@ -15562,7 +12832,7 @@ const APPROVE_NOTES_MAX = 7;   // mirrors server.py approve(): body.notes[:7]
 // not do that, and server.py approve() moved with it.
 const APPROVE_NOTE_MAX = 400;  // ...and its per-note str(x)[:400]
 // DEFECT 0, ON THE DELIVERABLE. The Suggested disables group takes real
-// footage out of the sheet total - measured at 11.6% of Kayden C5.1, 45
+// footage out of the sheet total - measured at 11.6% of a subdivision sheet C5.1, 45
 // families and 17,600 ft - and until this note existed the exported elements
 // and the printed PDF were word for word identical before and after. The
 // panel on screen said so loudly; the document that reaches a client said
@@ -15593,320 +12863,64 @@ function sgApproveNotes() {
   return out;
 }
 
+// the cut / fill caveat the report carries with the volumes: what they rest on
+function cfApproveNotes() {
+  if (typeof cfAdded !== "function" || !cfAdded()) return [];
+  // the engine's live result, else what the job's record kept when the rows were added
+  const live = cfState && cfState.summary && !cfState.summary.error ? cfState.summary : null;
+  const s = live || state.cfFacts || (state.calcSaved && state.calcSaved.cf) || null;
+  if (!s) return ["Cut / fill: volumes between two surfaces built from the sheet's contours and spot grades, "
+    + "as last computed in the Cut / fill panel (open it to see the scale and the coverage)."];
+  const cov = s.coverage != null ? Math.round(s.coverage * 100) : null;
+  const fx = s.factors || {};
+  const fxTxt = (Math.abs((+fx.export || 1) - 1) > 1e-9 || Math.abs((+fx.import || 1) - 1) > 1e-9)
+    ? `bank measure for cut and fill; export x ${+fx.export || 1}, import x ${+fx.import || 1} typed by the operator`
+    : "bank measure, no shrink or swell";
+  const out = ["Cut / fill: volumes between two surfaces built from the sheet's contours and spot grades "
+    + "(" + fxTxt + ")"
+    + (s.scale_ft_per_in ? `; scale 1" = ${cfScaleTxt(s.scale_ft_per_in)} ft` + (s.scale_source ? ` (${s.scale_source})` : " (unconfirmed)") : "; scale not set")
+    + (s.region_source && /^the work area/.test(s.region_source) ? "; no limit drawn - the work area drawn in review"
+       : s.region_source && /^the grading zones/.test(s.region_source) ? "; no limit drawn - the grading zones are the area"
+       : s.region_source && !/^drawn/.test(s.region_source) ? "; no limit drawn - the overlap of the two surfaces" : "")
+    + (cov != null ? `; the surfaces cover ${cov} % of the limit` : "")
+    + (s.zones_itemized ? "; each grading zone dug to its own depth, one row pair per zone"
+       + (s.section_ft && s.zones_rest ? `, the rest of the limit lowered ${s.section_ft} ft for the pavement section` : "")
+       : s.section_ft ? `; proposed lowered ${s.section_ft} ft for the pavement section` : "")
+    + "."];
+  const nq = s.questions_total != null ? s.questions_total : (s.questions || []).length;
+  if (nq) out.push(`Cut / fill: ${nq} question${nq === 1 ? "" : "s"} the read left open (heights the sheet did not settle) - see the Cut / fill panel.`);
+  return out;
+}
 function approveNotes() {
-  return [...sgApproveNotes(), ...famApproveNotes(), ...ewApproveNotes()];
+  return [...cfApproveNotes(), ...sgApproveNotes(), ...famApproveNotes()];
 }
 function approveNotesDropped() {
   return Math.max(0, approveNotes().length - APPROVE_NOTES_MAX);
 }
 
-function ewApproveNotes() {
-  const j = state.ew && state.ew.added && state.ew.result;
-  if (!j) return [];
-  // Which surface produced the number, on the face of the report. A reader
-  // of the printed PDF never saw the panel, and the two models differ by
-  // tens of percent on a sparse sheet - so the model, WHY it was chosen and
-  // the measurement behind the choice travel with the volume. Inferred
-  // elevations get their own line only when some were actually accepted.
-  const acc = ewAcceptedSplit();
-  const caution = ewCautionText(j);
-  return [
-    "EARTHWORK (Site Cut / Site Fill / Import Structural / strip and place "
-    + "rows) is a contour interpolation, not a measured volume.",
-    // SECOND, not last: of everything on this list this is the only line
-    // that says the number may be wrong, and `approve` keeps six notes.
-    ...(caution ? [EW_CAUTION_HEAD + caution] : []),
-    `Surface between the contours: ${ewModelName(j.surface_model)}`
-    + ` — ${j.surface_model_source || "default"}.`
-    + (j.surface_model_why ? ` ${j.surface_model_why}.` : "")
-    + (j.label_band_ft == null ? "" :
-      ` Measured label sparsity ${j.label_band_ft} ft.`),
-    // WHAT BACKS THE ELEVATIONS, mechanism by mechanism. The old line
-    // counted one mechanism and left the reader to assume the rest were
-    // printed; this one accounts for every accepted row (see
-    // ewAcceptedSplit) and stays inside `approve`'s 400-char per-note cap.
-    ...ewBasisNote(acc),
-    // ...and HOW MUCH OF THE SHEET those elevations are. ewBasisNote says
-    // what backs the accepted rows; this says how many of the sheet's
-    // contour lines are not among them. Same sentences as the panel.
-    ...ewCoverageNote(ewCovNow(), acc, APPROVE_NOTE_MAX),
-    // WHICH BOUND APPLIED. This said "no input on the panel can bound it"
-    // for a week after the limit of work landed (2026-09-10) - the panel's
-    // own block was corrected then and this copy of the sentence was not.
-    `Interpolated from ${j.existing_contours} existing and `
-    + `${j.proposed_contours} proposed contours over `
-    + `${Number(j.area_sf).toLocaleString()} SF. `
-    + (j.boundary_applied
-      ? "That region is bounded by the limit of work: only ground inside it is counted."
-      : "That region is NOT the graded area: it is where the two convex hulls "
-        + "of the assigned contours overlap. Set a limit of work to bound it."),
-    // keep each line under the 400-char cap `approve` applies, or the tail
-    // of the disclosure is what gets cut
-    // Re-scored 2026-09-17 on the one job with a real bid (FINDINGS 37):
-    // like for like, cut +43% and fill -36%. A multiple in one direction
-    // was the old build's number and no longer describes this one.
-    "No typical cross-section, no subgrade depth, no shrink/swell factor. "
-    + "On the one job scored against a real bid, cut and fill were each off "
-    + "by up to about 40%, in opposite directions.",
-  ];
-}
-
-// The one sentence on the printed report that says what backs the numbers.
-// Returns [] when every accepted elevation was read out of a contour's own
-// break - there is then nothing to caveat. Split out so the wording is
-// testable against a row set rather than against a fixed string.
-function ewBasisNote(a) {
-  const notPrinted = a.infill + a.inherited + a.manual + a.unknown;
-  // A machine-read elevation is a caveat on its own, even when every label
-  // IS printed: the digits under this volume came out of a recogniser.
-  // Before 2026-09-02 this function returned [] for such a sheet and the
-  // report said nothing at all (measured on the DEM outline sheet: 17
-  // machine-read rows, note identical to a fully native sheet's).
-  const mach = a.machine || 0;
-  if (!a.total || (!notPrinted && !a.nearby && !mach)) return [];
-  const bits = [];
-  if (a.infill) bits.push(`${a.infill} counted between contours at the `
-    + "sheet's interval");
-  if (a.inherited) bits.push(`${a.inherited} carried along the contour from `
-    + "another piece of it (no label on those lines)");
-  if (a.manual) bits.push(`${a.manual} typed in by the reviewer`);
-  if (a.unknown) bits.push(`${a.unknown} of unrecorded origin`);
-  // "all are printed on the sheet" is TRUE - each of those breaks holds a
-  // label - but printed straight after the machine-read sentence it reads
-  // as a contradiction of it. Seen on the live report 2026-09-02: "...read
-  // by machine off a picture of the sheet, not from its text ... Of 17
-  // contour elevations accepted here, all are printed on the sheet." Where
-  // every accepted elevation was machine-read, the useful fact is the one
-  // that sentence was carrying all along - the label is real, only the
-  // digits were recognised - so say THAT instead of appearing to take the
-  // caveat back.
-  const allMachine = mach && mach >= a.total;
-  const head = notPrinted
-    ? `Of ${a.total} contour elevations accepted here, ${notPrinted} are `
-      + `printed NOWHERE on the sheet: ${bits.join("; ")}.`
-    : allMachine
-      ? `Every one of them is a label the drafter drew on this sheet, not an `
-        + `elevation this tool inferred.`
-      : `Of ${a.total} contour elevations accepted here, all are printed on `
-        + `the sheet.`;
-  // FIRST in the returned sentence, because `approve` truncates the tail:
-  // of everything here this is the clause an estimator must not lose.
-  // Kept short on purpose: with the notPrinted clause behind it the pair
-  // must fit APPROVE_NOTE_MAX, or the mixed sheet - the one that most
-  // needs both - loses the second half.
-  const m = !mach ? "" : `${mach} of the ${a.total} elevations here had `
-    + "their digits read by machine off a picture of the sheet, not from "
-    + "its text, and can disagree with what is printed - check them "
-    + "against the drawing. ";
-  const near = !a.nearby ? ""
-    : ` Of the ${a.printed + a.nearby} printed, ${a.nearby} are the nearest `
-      + "number BESIDE the line, not a label in its break"
-      + (a.nearbyTagged ? `; ${a.nearbyTagged} of those carry a legend-keyed `
-        + "spot tag (BW/TW/ME), so they are probably not contour labels." : ".");
-  // `approve` truncates each note at 400 chars (APPROVE_NOTE_MAX) and says
-  // nothing when it does, so the TAIL of a disclosure is what would be lost.
-  // Drop the secondary clause whole rather than ship a cut sentence.
-  const full = m + head + near;
-  return [full.length <= APPROVE_NOTE_MAX ? full
-        : (m + head).length <= APPROVE_NOTE_MAX ? m + head
-        : (m || head).slice(0, APPROVE_NOTE_MAX)];
-}
-
-// The balance panel. Every row states WHICH AREA produced it on the row
-// itself, not in a tooltip: removal layers are stripped over the disturbed
-// area, cut and fill exist only where the two surfaces overlap, and an
-// estimator reading a strip volume beside a cut volume has to see that.
-function renderEwBalance(j) {
-  const box = $("ewBalOut"), note = $("ewBalNote");
-  if (!box) return;
-  box.innerHTML = "";
-  const b = j && j.balance;
-  if (!b) { if (note) note.textContent = ""; return; }
-  // whole CY here too: every figure in this block is a cubic-yard volume
-  // derived from the same interpolated surface (see ewCY)
-  const n = v => Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 });
-  const nCY = v => ewCY(v);
-  for (const r of (b.rows || [])) {
-    const d = document.createElement("div");
-    d.className = "bal-row k-" + r.kind;
-    const lab = document.createElement("div");
-    lab.className = "lab";
-    lab.textContent = r.label;
-    const why = document.createElement("span");
-    why.className = "why";
-    why.textContent = ewRoundCYText(r.basis)
-      + (r.area_sf ? ` \u00b7 over ${n(r.area_sf)} SF (${r.area_source})` : "")
-      + (r.destination ? ` \u00b7 ${r.destination}` : "");
-    lab.appendChild(why);
-    const q = document.createElement("b");
-    q.textContent = `${r.unit === "CY" ? nCY(r.qty) : n(r.qty)} ${r.unit}`;
-    d.append(lab, q);
-    box.appendChild(d);
-  }
-  const sum = document.createElement("div");
-  sum.className = "bal-sum";
-  const line = (...parts) => {
-    const el = document.createElement("div");
-    for (const p of parts) {
-      if (typeof p === "string") el.append(document.createTextNode(p));
-      else { const bb = document.createElement("b"); bb.textContent = nCY(p); el.append(bb); }
-    }
-    sum.appendChild(el);
-  };
-  line("site cut ", b.cut_yd3, " = reused ", b.cut_reused_yd3,
-       " + exported ", b.cut_export_yd3);
-  line("reuse pool ", b.reuse_pool_yd3, " = reused ", b.reuse_yd3,
-       " + surplus ", b.surplus_yd3);
-  line("fill needed ", b.fill_demand_yd3, " = reused ", b.reuse_yd3,
-       " + imported ", b.import_yd3);
-  line("total export ", b.export_total_yd3, " \u00b7 respread ",
-       b.respread_total_yd3, " (CY)");
-  box.appendChild(sum);
-  if (note)
-    note.textContent = b.basis
-      + ". In-place cubic yards between the two surfaces: no swell, shrink, "
-      + 'compaction or working room. "Export" means moved, not hauled away.';
-}
-
-// A FAILED RESPONSE BODY IS NOT ALWAYS JSON.
-//
-// Every error branch on this panel did `await r.json().catch(() => ({}))`,
-// which silently turns an unparseable body into {} and leaves the reader
-// with nothing but the status code. That is exactly what a 500 looks like:
-// FastAPI's unhandled-exception page is `Internal Server Error` in
-// text/plain. Measured 2026-09-02 against /earthwork/map on the DEM outline
-// sheet - the panel could only say "map failed (500)".
-//
-// Read the body ONCE as text, then try to parse it. Returns the route's
-// `detail` (string OR the structured refusal object) when there is one, the
-// raw text when there is not, and null for an empty body.
-async function fetchDetail(r) {
-  let t = "";
-  try { t = await r.text(); } catch (_) { return null; }
-  try {
-    const j = JSON.parse(t);
-    if (j && typeof j === "object" && "detail" in j) return j.detail;
-    return j;
-  } catch (_) { return t.trim().slice(0, 300) || null; }
-}
-
-// The cut/fill map's own refusal, in its own slot beside the toggle.
-//
-// NOT #ewResult. /earthwork/map can refuse a body /earthwork answered 200:
-// a layers-only sheet (the cut/fill floor refuses, but named layer stacks
-// over a strip area still compute) has layer volumes and NO dz grid to
-// paint. Writing the map's message into #ewResult wiped the layers-only
-// explanation - which surface was short, what it held, what the layer
-// slabs below still mean - off the screen and replaced it with a status
-// code. A map that cannot be drawn says so where the map controls are.
-// The one reader of a refusal `detail`. The volume floor answers the SAME
-// object from /earthwork, /earthwork/map and /earthwork/zone, but FastAPI
-// also raises plain-string details elsewhere on those routes, so every
-// caller has to handle both - and a caller that forgot printed
-// "[object Object]" over the operator's only explanation. One function, so
-// a new refusal route cannot invent a third way to read the same field.
-function ewDetailText(detail) {
-  if (typeof detail === "string") return detail;
-  return (detail && typeof detail === "object" && detail.message) || "";
-}
-
-function ewMapNote(detail, status) {
-  const box = $("ewMapNote");
-  if (!box) return;
-  if (detail == null && status == null) { box.hidden = true; box.innerHTML = ""; return; }
-  const d = (detail && typeof detail === "object") ? detail : {};
-  const msg = ewDetailText(detail)
-              || ("the map could not be drawn (" + status + ")");
-  box.innerHTML = "";
-  const head = document.createElement("b");
-  head.textContent = "No cut/fill map.";
-  box.appendChild(head);
-  box.appendChild(document.createTextNode(" " + msg));
-  const s = d.surface;
-  if (s && s.name) {
-    const line = document.createElement("div");
-    line.innerHTML = `<b>${esc(s.name)}</b>: ${s.n_contours} contour`
-      + `${s.n_contours === 1 ? "" : "s"} + ${s.n_spots} spot grade`
-      + `${s.n_spots === 1 ? "" : "s"} → <b>${s.distinct_elevations}</b> `
-      + `distinct elevation${s.distinct_elevations === 1 ? "" : "s"}`;
-    box.appendChild(line);
-  }
-  box.hidden = false;
-}
-
-// cut/fill map: the server paints the dz grid (cut blue, fill yellow,
-// depth -> opacity) and tells us the page-pt box it covers; draw() lays
-// it under the chains. Refetched on every Calculate while the toggle is on.
-async function ewFetchMap() {
-  if (!state.ew) return;
-  ewMapNote(null, null);
-  const r = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/map`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(ewBody()),
-  });
-  if (!r.ok) {
-    // the refusal goes in the map's own slot, and the volume sentence
-    // beside it is left exactly as the Calculate that produced it wrote it
-    ewMapNote(await fetchDetail(r), r.status);
-    state.ew.map = null;
-    $("ewMapLegend").hidden = true;
-    draw();
-    return;
-  }
-  ewMapNote(null, null);
-  const bbox = (r.headers.get("X-Map-Bbox") || "").split(",").map(Number);
-  const refDz = r.headers.get("X-Map-Ref-Dz");
-  const blob = await r.blob();
-  const img = await createImageBitmap(blob);
-  if (!state.ew) return;
-  const mine = state.ew.map = { img, bbox, refDz: refDz ? parseFloat(refDz) : null, labels: [] };
-  // The block depths ride in the map's cached meta (one number per block;
-  // the crew's copy of this map has them printed). `mine`: Calculate
-  // refetches the map whenever the tick is on, so two fetches can be in
-  // flight and the slower one's meta would land on the faster one's map -
-  // measured live 2026-09-16, the canvas printed no depths at all while
-  // the endpoint was serving 87 of them.
-  try {
-    const mr = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/map?meta=1`);
-    if (mr.ok) {
-      const m = await mr.json();
-      if (state.ew && state.ew.map === mine) {
-        mine.labels = m.labels || [];
-        mine.spacing = m.label_spacing_ft || null;
-      }
-    }
-  } catch (e) { /* the map still paints without its numbers */ }
-  if (!state.ew || state.ew.map !== mine) return;   // a newer map owns the canvas
-  const nw = $("ewMapNumsWrap");
-  if (nw) nw.hidden = !(state.ew.map.labels && state.ew.map.labels.length);
-  // the legend makes the ramp readable: full color = the ref depth
-  const leg = $("ewMapLegend");
-  if (leg) {
-    const r = refDz ? parseFloat(refDz) : null;
-    leg.hidden = false;
-    leg.querySelector(".eml-txt").textContent = r
-      ? `cut −${r.toFixed(1)} ft … +${r.toFixed(1)} ft fill (full color)`
-      : "cut blue · fill orange";
-  }
-  draw();
-}
-$("ewMap").onchange = async () => {
-  // silently un-ticking the box during the 94-204 s read read as a frozen UI
-  if (ewNotReady("the cut/fill map")) { $("ewMap").checked = false; return; }
-  if ($("ewMap").checked) await ewFetchMap();
-  else {
-    state.ew.map = null; $("ewMapLegend").hidden = true;
-    if ($("ewMapNumsWrap")) $("ewMapNumsWrap").hidden = true;
-    ewMapNote(null, null); draw();
-  }
-};
-if ($("ewMapNums")) $("ewMapNums").onchange = () => draw();
-
 // ---------- pipe trench calculator ----------
-// Bedding rules from the underground-utilities spec discussed with the
-// client: clearance around the pipe grows with burial depth. Editable
-// because every jurisdiction's spec differs.
-// Utility presets (Beaumont, 2026-09-15 call, 31:17-32:04): water and sewer
+// Rebuilt 2026-09-26 (fix/trenching, PLAN.md section 7) around how the
+// clients bid a trench:
+//   * DEPTH comes off the sheet's PROFILE where there is one (site contractor, call
+//     2026-09-03: a scale down the profile, existing ground to pipe bottom,
+//     a mark every time it crosses 6 / 8 / 10 / 12 ft). The server reads the
+//     profile (GET .../profile: axes snapped to the grid, every ground line
+//     and pipe per station, the printed elevations compared with the read)
+//     and the depth series is mapped onto the plan run. Typed end depths
+//     stay as the fallback, and the panel says which one it used.
+//   * WIDTH is by PIPE SIZE, not by depth: the site contractor's convention is the pipe
+//     OD + 6 in each side; the set's printed detail (Bc + 18") is offered
+//     when the set prints one (GET .../trench-details); the old depth-class
+//     table is still there as a third convention.
+//   * BEDDING is an envelope round the pipe - so much below it, the pipe,
+//     so much above it, at the trench width - not a square box.
+//   * RUNS are structure to structure (POST .../runs: the family split at
+//     the structures the sheet names, through the wyes, named and sized off
+//     the sheet), picked from a list or by clicking the line on the plan.
+//   * ROWS: LF per depth band per pipe size (the contractor's pay item), trench
+//     excavation, bedding and backfill CY per run, structures per system,
+//     all filed under the system's trade and saved with the job.
+// Utility presets (excavator, 2026-09-15 call, 31:17-32:04): water and sewer
 // run about 6 ft here for frost and get laid back 1:1; gas and electric are
 // shallower and "not so much". The preset only FILLS the fields - every one
 // stays editable - and the gas / electric depths are placeholders to confirm
@@ -15923,72 +12937,570 @@ const TR_DEFAULT_RULES = [
   { to_ft: 4, clr_in: 12 },
   { to_ft: 99, clr_in: 18 },
 ];
+// FEET, not points: fmtQty() takes POINTS and converts through the scale,
+// and everything the run builder and the profile return is already feet
+// (the first live capture printed a 243-ft run as "39 LF" that way)
+function trFmtFt(v) {
+  const n = +v;
+  if (!isFinite(n)) return "?";
+  return n >= 1000 ? (n / 1000).toFixed(1) + "k" : (Math.round(n * 10) / 10).toLocaleString();
+}
+// the utility a system code means, for the preset and the row wording
+const TR_SYSTEM_WORD = { STM: "storm", SS: "sewer", W: "water", G: "gas", E: "electric", RUN: "pipe" };
+const TR_SYSTEM_UTIL = { STM: "storm", SS: "sewer", W: "water", G: "gas", E: "electric" };
+const TR_SYSTEM_TRADE = { STM: "Wet Utilities", SS: "Wet Utilities", W: "Wet Utilities",
+                          G: "Dry Utilities", E: "Dry Utilities" };
+// families the run builder is asked about: named like a pipe system, on,
+// and not a profile-view or text layer
+const TR_UTIL_RX = /WATER|WATR|SEWER|SANITARY|STORM|\bSD\b|\bSS\b|DRAIN|FORCE ?MAIN|\bFM\b|\bGAS\b|ELEC|\bUGE\b|\bUE\b|CONDUIT|TELE|COMM|FIBER|\bWM\b|\bWL\b|IRRIG|PIPE|CULVERT/i;
+const TR_NOT_UTIL_RX = /PROF|TEXT|TXT|ANNO|CONTOUR|TOPO|INLET PROTECT|SEDIMENT|SILT/i;
 
-$("trClose").onclick = () => { $("trPanel").hidden = true; state.hotChain = null; draw(); };
+function trDefaultState() {
+  return {
+    style_id: null, od_in: 6, d0_ft: 2, d1_ft: 8,
+    rules: TR_DEFAULT_RULES.map(r => ({ ...r })),
+    // sides vertical unless the operator (or a utility preset) lays them
+    // back - the standing convention, and the contractor's, is the vertical cut
+    utility: "", layback_hv: 0, layback_from_ft: 4,
+    // width by pipe size: the client preset (OD + clr_in each side) is the
+    // default; "detail" takes the set's printed rule; "rules" is the old
+    // depth-class table above
+    conv: "preset", clr_in: 6, detail_clr_in: null, detail_note: "", detail_util: "",
+    bed_below_in: 6, bed_above_in: 12,
+    // the profile's depth is surface to the pipe INVERT (the neat-line
+    // convention the contractor measures by); this digs deeper than the invert when
+    // the detail calls for bedding under the pipe
+    below_invert_in: 0,
+    depth_src: "profile", surface_i: 0, pipe_i: 0, profile_i: 0,
+    band_edge: 6, band_step: 2,
+    split: true, run_id: null, run_key: null,
+    // added runs, their results and the INPUTS each was added with, keyed by
+    // the run's own key (system + the chains it is made of): never by the
+    // server's positional id, which renumbers whenever the family set moves
+    added: new Set(), results: {}, runInputs: {},
+  };
+}
+
+// the stable key of a run: its system and the chains it is made of
+function trRunKey(run) {
+  if (!run) return null;
+  return (run.system || "RUN") + ":" + (run.chain_ids || []).slice().sort((a, b) => a - b).join("+");
+}
+function trFamKey(styleId) { return "fam:" + styleId; }
+
+// the panel's inputs as one object - what a run is calculated from and what
+// an added run REMEMBERS, so later edits made for another run never move it
+const TR_INPUT_KEYS = ["od_in", "conv", "clr_in", "detail_clr_in", "bed_below_in", "bed_above_in",
+                       "below_invert_in", "depth_src", "surface_i", "pipe_i", "profile_i", "utility",
+                       "layback_hv", "layback_from_ft", "d0_ft", "d1_ft", "band_edge", "band_step"];
+function trInputsSnapshot(t) {
+  const out = {};
+  for (const k of TR_INPUT_KEYS) out[k] = t[k];
+  out.rules = t.rules.map(r => ({ to_ft: r.to_ft, clr_in: r.clr_in }));
+  out._profilePicked = !!t._profilePicked;
+  return out;
+}
+function trInputsLoad(t, inp) {
+  if (!inp) return;
+  for (const k of TR_INPUT_KEYS) if (inp[k] !== undefined) t[k] = inp[k];
+  if (Array.isArray(inp.rules) && inp.rules.length) t.rules = inp.rules.map(r => ({ to_ft: r.to_ft, clr_in: r.clr_in }));
+  t._profilePicked = !!inp._profilePicked;
+  const e = $("trBandEdge"), s = $("trBandStep");
+  if (e && isFinite(+t.band_edge)) e.value = t.band_edge;
+  if (s && isFinite(+t.band_step)) s.value = t.band_step;
+}
+
+$("trClose").onclick = () => { $("trPanel").hidden = true; state.hotChain = null; state.trRunHot = null; draw(); };
 $("trBtn").onclick = () => {
   const panel = $("trPanel");
-  if (!panel.hidden) { panel.hidden = true; return; }
+  if (!panel.hidden) { panel.hidden = true; state.trRunHot = null; draw(); return; }
   panel.hidden = false;
   panel.scrollIntoView({ block: "start", behavior: "smooth" });
   if (!state.tr) {
-    state.tr = {
-      style_id: null, od_in: 6, d0_ft: 2, d1_ft: 8,
-      rules: TR_DEFAULT_RULES.map(r => ({ ...r })),
-      // sides vertical unless the operator (or a utility preset) lays them
-      // back - the standing convention, and Pierce's, is the vertical cut
-      utility: "", layback_hv: 0, layback_from_ft: 4,
-    };
+    state.tr = trDefaultState();
     if (state.calcSavedLoaded) trApplySaved();
     else if (state.calcSaveBroken)
       calcNotePut("trHint", "This page's saved calculator inputs could not be read when it loaded, and edits here are NOT being saved. Reload to retry.");
   }
   renderTr();
   renderCheckQueue();   // trApplySaved may have settled a stale-input entry
+  trLoad();
 };
+
+// the families the run builder is asked about
+function trUtilityStyleIds() {
+  if (!state.result) return [];
+  const out = [];
+  for (const st of state.result.styles) {
+    if (!state.include.get(st.style_id)) continue;
+    const name = (state.labels.get(st.style_id) || st.suggested_label || "") + " " + (st.layer || "");
+    if (!TR_UTIL_RX.test(name) || TR_NOT_UTIL_RX.test(name)) continue;
+    out.push(st.style_id);
+  }
+  // the family the operator picked in the select is a pipe run whatever
+  // it is called: a water main named by its dash pattern ("dash1 d21.6
+  // g5.5") reaches the run builder through the pick
+  const t = state.tr;
+  if (t && typeof t.style_id === "number" && !out.includes(t.style_id)
+      && state.result.styles.some(s => s.style_id === t.style_id)) out.push(t.style_id);
+  return out;
+}
+
+// One fetch each per page: the profile read, the runs, and (once per job)
+// what the set prints about trench geometry. All three are additive: a
+// sheet with no profile still gets its runs, a sheet with no runs still
+// gets the typed-ends calculator, and nothing here blocks the panel.
+async function trLoad() {
+  if (!state.result || !state.tr) return;
+  const gen = state.gen, job = state.job, page = state.page;
+  const t = state.tr;
+  if (!state.trProfile) {
+    state.trProfile = { loading: true };
+    try {
+      const r = await fetch(`/api/job/${job}/page/${page}/profile`);
+      const j = r.ok ? await r.json() : { profiles: [], notes: ["profile read failed (" + r.status + ")"] };
+      if (gen !== state.gen) return;
+      state.trProfile = j;
+    } catch (e) { if (gen === state.gen) state.trProfile = { profiles: [], notes: ["profile read failed: server unreachable"] }; }
+    if (!(state.trProfile.profiles || []).some(p => p.pipes && p.pipes.length)) t.depth_src = "typed";
+  }
+  if (!state.trDetails || state.trDetails.job !== job) {
+    try {
+      const r = await fetch(`/api/job/${job}/trench-details`);
+      const j = r.ok ? await r.json() : {};
+      if (gen !== state.gen) return;
+      state.trDetails = { job, ...j };
+      trApplyDetails();
+    } catch (e) { /* the preset stands */ }
+  }
+  await trLoadRuns();
+  if (gen !== state.gen) return;
+  renderTr();
+}
+
+// The scale changed (typed, picked, put back): every run already in the takeoff is calculated
+// again at the scale now in force, with the inputs it was added with. Nothing is refetched -
+// a run's feet are its own points times the scale.
+function trRecalcAdded() {
+  if (!state.result || !state.result.scale) return;
+  if (!state.tr) {
+    // a session that never opened the Trench panel: the rows came back from the job's record.
+    // Bring the panel's state up (not the panel) so the runs can be calculated again - they
+    // stayed at the old scale while the status said "every quantity recalculated".
+    const has = state.extraItems.some(it => typeof it.kind === "string" && it.kind.indexOf("trench_") === 0);
+    if (!has || !state.calcSavedLoaded) return;
+    state.tr = trDefaultState();
+    trApplySaved();
+  }
+  const t = state.tr;
+  if (!t.added || !t.added.size) return;
+  const redo = () => {
+    let n = 0;
+    for (const key of [...t.added]) {
+      const old = t.results[key];
+      let res = null;
+      if (key.startsWith("fam:")) res = trCalcRun(null, { ...(t.runInputs[key] || {}), style_id: +key.slice(4) });
+      else { const run = trRunByKey(key); if (run) res = trCalcRun(run, t.runInputs[key] || {}); }
+      if (!res) continue;
+      if (old) trClearItems(old);
+      t.results[key] = res; trApplyItems(res); n++;
+    }
+    if (n) { renderItemized(); calcSave(); calcStateDirty(); }
+  };
+  // the runs and the profile come from the server: read them first when this session has not
+  const ready = state.trRuns && Array.isArray(state.trRuns.runs) && state.trProfile && !state.trProfile.loading;
+  if (ready) redo();
+  else trLoad().then(redo).catch(() => {});
+}
+async function trLoadRuns() {
+  if (!state.result || !state.tr) return;
+  const gen = state.gen, job = state.job, page = state.page;
+  const sids = trUtilityStyleIds();
+  if (!sids.length) { state.trRuns = { runs: [], structures: [], systems: [], notes: ["no utility line family is ticked on this sheet"] }; return; }
+  const labels = {};
+  for (const sid of sids) labels[sid] = state.labels.get(sid) || "";
+  // the CURRENT geometry of those families (the operator's merges, splits
+  // and drawn lines), so a run follows what is on screen
+  const chains = state.result.chains
+    .filter(c => sids.includes(c.style_id) && !state.excluded.has(c.chain_id))
+    .map(c => ({ chain_id: c.chain_id, style_id: c.style_id, points: c.points,
+                 class: c.class, inline_labels: c.inline_labels || [], dash_signature: c.dash_signature || "" }));
+  state.trRuns = { loading: true };
+  let ok = false;
+  try {
+    const r = await fetch(`/api/job/${job}/page/${page}/runs`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ style_ids: sids, labels, chains,
+                             exclude_chain_ids: [...state.excluded],
+                             split_at_structures: !!state.tr.split,
+                             // the scale on screen (a typed scale lives only here until Approve)
+                             scale_ft_per_in: (state.result.scale && +state.result.scale.ft_per_paper_inch) || null }),
+    });
+    const j = r.ok ? await r.json() : { runs: [], structures: [], systems: [], notes: ["runs failed (" + r.status + ")"] };
+    if (gen !== state.gen) return;
+    state.trRuns = j;
+    ok = r.ok;
+  } catch (e) {
+    if (gen === state.gen) state.trRuns = { runs: [], structures: [], systems: [], notes: ["runs failed: server unreachable"] };
+  }
+  for (const r of state.trRuns.runs || []) r.key = trRunKey(r);
+  // rows added before this load (a reload, a family change) are recomputed
+  // on the same runs, each with the inputs it was added with; a run that is
+  // no longer there keeps its rows and is said (never silently dropped)
+  const t = state.tr;
+  const gone = [];
+  for (const key of [...t.added]) {
+    if (key.startsWith("fam:")) continue;
+    const run = trRunByKey(key);
+    if (!run) { if (ok) gone.push(key); continue; }
+    const old = t.results[key];
+    if (old) trClearItems(old);
+    const res = trCalcRun(run, t.runInputs[key]);
+    if (res) { t.results[key] = res; trApplyItems(res); }
+  }
+  if (gone.length) {
+    state.trRuns.notes = (state.trRuns.notes || []).concat([
+      `${gone.length} added run${gone.length === 1 ? "" : "s"} no longer in this reading (${gone.map(k => (t.results[k] || {}).name || k).join(", ")}): its rows stay in the takeoff until you remove them there`]);
+  }
+  if (t.added.size) renderItemized();
+  if (t.run_key && !t.run_id && trRunByKey(t.run_key)) t.run_id = trRunByKey(t.run_key).id;
+  if (t.run_id !== null && !trRunById(t.run_id)) t.run_id = null;
+}
+
+// what the set prints about the trench: the FIRST width rule for the
+// current run's utility becomes the "printed detail" convention's number,
+// with the sentence on screen; a rule printed for another utility is
+// offered and said to be another utility's
+function trApplyDetails() {
+  const t = state.tr, d = state.trDetails;
+  if (!t || !d) return;
+  const w = (d.widths || [])[0];
+  if (w && t.detail_clr_in === null) {
+    t.detail_clr_in = w.each_side_in;
+    t.detail_util = (w.utility || "").toLowerCase();
+    t.detail_note = `sheet ${w.page + 1}: "${w.text}"` + (w.utility ? ` (${w.utility.toLowerCase()})` : " (no utility named)");
+  }
+  // bedding depths only when the record did not carry the operator's own
+  if (t._bedRestored) return;
+  const b = (d.bedding || []);
+  const below = b.find(x => x.side === "below"), above = b.find(x => x.side === "above");
+  if (below && !t._bedFromSheet) { t.bed_below_in = below.in; t._bedFromSheet = true; }
+  if (above && !t._bedFromSheet2) { t.bed_above_in = above.in; t._bedFromSheet2 = true; }
+}
+
+// the printed minimum cover for THIS utility - a sentence that names it,
+// or one on a detail sheet the server attributed to it; a cover the set
+// prints for the water service is not the storm drain's (the first cut
+// took the first cover on the set for every preset)
+const TR_UTIL_WORDS = { water: /WATER/, sewer: /SEWER|SANITARY/, storm: /STORM|DRAIN/, gas: /GAS/, electric: /ELEC/ };
+function trPrintedCover(utility) {
+  const d = state.trDetails;
+  if (!d || !d.covers || !d.covers.length) return null;
+  const rx = TR_UTIL_WORDS[utility];
+  if (!rx) return null;
+  return d.covers.find(r => rx.test(String(r.utility || "").toUpperCase())) || null;
+}
+
+function trRunById(id) {
+  const R = state.trRuns && state.trRuns.runs;
+  return R ? R.find(r => r.id === id) || null : null;
+}
+function trRunByKey(key) {
+  const R = state.trRuns && state.trRuns.runs;
+  return R ? R.find(r => r.key === key) || null : null;
+}
+// the run under a click: of the runs that carry the clicked chain (a chain
+// cut at a structure belongs to two), the one whose line is nearest the
+// click - the first run holding the chain was the main every time
+function trRunAt(chainId, px, py) {
+  const R = state.trRuns && state.trRuns.runs;
+  if (!R) return null;
+  let best = null, bd = Infinity;
+  for (const r of R) {
+    if (!(r.chain_ids || []).includes(chainId)) continue;
+    const p = r.points || [];
+    for (let i = 1; i < p.length; i++) {
+      const d = distToSeg(px, py, p[i - 1], p[i]);
+      if (d < bd) { bd = d; best = r; }
+    }
+  }
+  return best;
+}
+
+// The profile a run reads its depth from. A profile belongs to ONE pipe:
+// the one its title names (BR-STORM EAST PROFILE, WATER MAIN PLAN AND
+// PROFILE) and the one whose stationing is about the run's length. A run
+// of another system, or a lateral a quarter the length of the profile's
+// pipe, gets the typed depths and a note - not another pipe's depths.
+function trProfileFor(run, inputs) {
+  const P = (state.trProfile && state.trProfile.profiles) || [];
+  const t = inputs || state.tr;
+  if (!P.length) return null;
+  if (t._profilePicked && t.profile_i >= 0 && t.profile_i < P.length) return P[t.profile_i];
+  let best = null, bd = Infinity;
+  P.forEach((p, i) => {
+    if (!p.pipes || !p.pipes.length) return;
+    // a run of a named system takes only its own system's profile; a run of a
+    // pattern-named family (system RUN) has no system to disagree with
+    if (run && p.system && run.system && run.system !== "RUN" && p.system !== run.system) return;
+    const span = p.pipes[0].sta1 - p.pipes[0].sta0;
+    if (run && run.length_ft && span > 0) {
+      const ratio = run.length_ft / span;
+      if (ratio < 0.75 || ratio > 1.33) return;
+    }
+    const d = run && run.length_ft ? Math.abs(span - run.length_ft) : i;
+    if (d < bd) { bd = d; best = i; }
+  });
+  if (best === null) return null;
+  if (!inputs) state.tr.profile_i = best;
+  return P[best];
+}
+// why a run has no profile of its own, for the panel
+function trProfileWhyNot(run) {
+  const P = (state.trProfile && state.trProfile.profiles) || [];
+  if (!P.length || !run) return "";
+  const p = P.find(q => q.pipes && q.pipes.length);
+  if (!p) return "";
+  if (p.system && run.system && run.system !== "RUN" && p.system !== run.system)
+    return `the sheet's profile is a ${TR_SYSTEM_WORD[p.system] || p.system} profile; this ${TR_SYSTEM_WORD[run.system] || "pipe"} run uses the typed depths`;
+  const span = p.pipes[0].sta1 - p.pipes[0].sta0;
+  if (run.length_ft && span > 0 && (run.length_ft / span < 0.75 || run.length_ft / span > 1.33))
+    return `the profile's pipe covers ${trFmtFt(span)} ft of stationing and this run measures ${trFmtFt(run.length_ft)} ft: not the same pipe, so the typed depths are used`;
+  return "";
+}
+
+// [station, depth] where the chosen surface and the pipe's invert both read
+function trDepthSeries(prof, surface_i, pipe_i) {
+  if (!prof || !prof.pipes || !prof.pipes.length || !prof.surfaces || !prof.surfaces.length) return [];
+  const s = prof.surfaces[Math.min(surface_i, prof.surfaces.length - 1)];
+  const p = prof.pipes[Math.min(pipe_i, prof.pipes.length - 1)];
+  const out = [];
+  for (let i = 0; i < p.samples.length && i < s.samples.length; i++) {
+    const [sta, inv] = p.samples[i];
+    const g = s.samples[i][1];
+    if (inv === null || inv === undefined || g === null || g === undefined) continue;
+    out.push([sta, Math.max(g - inv, 0)]);
+  }
+  return out;
+}
+
+// select a run: an ADDED run brings back the inputs it was added with; a
+// new one takes the run's size and system into the panel's inputs; the
+// numbers follow at once (calculate is a read, adding is the consent)
+function trSelectRun(id) {
+  const t = state.tr, run = trRunById(id);
+  if (!t || !run) return;
+  t.run_id = id;
+  t.run_key = run.key;
+  t.style_id = run.style_ids ? run.style_ids[0] : t.style_id;
+  if (t.added.has(run.key) && t.runInputs[run.key]) {
+    trInputsLoad(t, t.runInputs[run.key]);
+  } else {
+    const sz = trSizeInches(run.size);
+    if (sz) t.od_in = sz;
+    const util = TR_SYSTEM_UTIL[run.system];
+    if (util && t.utility !== util) trPreset(util);
+  }
+  state.trRunHot = run.points;
+  const res = trCalcRun(run);
+  if (res) t.results[run.key] = res;
+  if (t.added.has(run.key) && res) trApplyItems(res);
+  renderTr();
+  draw();
+  calcStateDirty();
+}
+
+function trSizeInches(size) {
+  const m = /^(\d{1,2}(?:\.\d+)?)/.exec(String(size || ""));
+  return m ? parseFloat(m[1]) : null;
+}
+
+// a utility preset: its depth (or the set's printed cover for THAT
+// utility, when it prints one), its layback; the pipe size stays whatever
+// the run says
+function trPreset(util) {
+  const t = state.tr, p = TR_UTILITY_PRESETS[util];
+  if (!t || !p) return;
+  t.utility = util;
+  const cov = trPrintedCover(util);
+  const od = (t.od_in || 0) / 12;
+  // typed depth = cover to the top of the pipe + the pipe + the bedding under
+  // it: the trench BOTTOM (the same reading the width rules take)
+  const d = cov ? Math.round((cov.cover_ft + od + (t.bed_below_in || 0) / 12) * 100) / 100 : p.d;
+  t.d0_ft = d; t.d1_ft = d; t.layback_hv = p.hv; t.layback_from_ft = p.from;
+  t._coverNote = cov ? `typed depth ${d} ft = ${cov.cover_ft} ft cover (sheet ${cov.page + 1}: "${cov.text.slice(0, 60)}") + pipe + ${t.bed_below_in} in bedding` : "";
+}
 
 function renderTr() {
   const box = $("trBody");
   box.innerHTML = "";
   if (!state.result) { box.textContent = "run Detect first"; return; }
   const t = state.tr;
+  if (!t) return;
+  const mkLabel = (txt) => { const d = document.createElement("div"); d.textContent = txt; return d; };
+  const note = (txt, cls) => { const d = document.createElement("div"); d.className = "tr-note" + (cls ? " " + cls : ""); d.textContent = txt; return d; };
+
+  // ---- runs -------------------------------------------------------------
+  const runsBox = document.createElement("div");
+  runsBox.className = "tr-runs";
+  const R = state.trRuns;
+  const head = document.createElement("div");
+  head.className = "tr-runs-head";
+  head.innerHTML = "<b>Runs</b> <span class=\"dim\">click one here, or click its line on the plan</span>";
+  runsBox.appendChild(head);
+  if (!R || R.loading) runsBox.appendChild(note("reading the runs on this sheet…"));
+  else if (!R.runs || !R.runs.length) runsBox.appendChild(note((R.notes && R.notes[0]) || "no pipe runs found in the ticked utility families"));
+  else {
+    const sys = {};
+    for (const r of R.runs) (sys[r.system] = sys[r.system] || []).push(r);
+    for (const code of Object.keys(sys)) {
+      const S = (R.systems || []).find(s => s.code === code) || {};
+      const sh = document.createElement("div");
+      sh.className = "tr-sys";
+      sh.textContent = `${TR_SYSTEM_WORD[code] || code}: ${sys[code].length} run${sys[code].length === 1 ? "" : "s"}, ${trFmtFt(S.length_ft || 0)} ft, ${S.structures_on_runs || 0} structure${S.structures_on_runs === 1 ? "" : "s"}`;
+      runsBox.appendChild(sh);
+      for (const r of sys[code]) {
+        const row = document.createElement("div");
+        row.className = "tr-run" + (t.run_id === r.id ? " on" : "") + (t.added.has(r.key) ? " added" : "");
+        const nm = document.createElement("b"); nm.textContent = r.name;
+        const ends = document.createElement("span");
+        ends.textContent = ` ${r.from} to ${r.to}`;
+        const q = document.createElement("span"); q.className = "tr-run-q";
+        q.textContent = (r.length_ft !== null ? trFmtFt(r.length_ft) + " LF" : Math.round(r.length_pt) + " pt")
+          + (r.size ? ` · ${r.size}${r.size_mixed ? " (mixed)" : ""}` : "")
+          + (t.added.has(r.key) ? " ✓" : "");
+        row.append(nm, ends, q);
+        row.onclick = () => trSelectRun(r.id);
+        row.onmouseenter = () => { state.trRunHot = r.points; draw(); };
+        row.onmouseleave = () => { const cur = trRunById(t.run_id); state.trRunHot = cur ? cur.points : null; draw(); };
+        runsBox.appendChild(row);
+      }
+    }
+    const split = document.createElement("label");
+    split.className = "tr-split";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!t.split; cb.name = "tr-split";
+    cb.onchange = async () => { t.split = cb.checked; t.run_id = null; state.trRunHot = null; await trLoadRuns(); renderTr(); draw(); };
+    split.append(cb, document.createTextNode(" split runs at structures (off: a main runs through its inlets and breaks where a lateral leaves it)"));
+    runsBox.appendChild(split);
+    if (R.notes && R.notes.length) runsBox.appendChild(note(R.notes.join(" ")));
+  }
+  box.appendChild(runsBox);
+
+  // ---- depth: the profile ---------------------------------------------
+  const run = trRunById(t.run_id);
+  const P = state.trProfile;
+  const prof = trProfileFor(run);
+  const profBox = document.createElement("div");
+  profBox.className = "tr-prof";
+  if (!P || P.loading) profBox.appendChild(note("reading the sheet's profile…"));
+  else if (!prof) {
+    const why = trProfileWhyNot(run);
+    profBox.appendChild(note(why || ("No profile with a pipe on this sheet: depths are the typed end depths below, a straight line between them." + ((P.notes && P.notes.length) ? " " + P.notes[0] : "")), why ? "warn" : ""));
+  } else {
+    const cv2 = document.createElement("canvas");
+    cv2.id = "trProf"; cv2.width = 600; cv2.height = 150;
+    profBox.appendChild(cv2);
+    const surf = prof.surfaces[Math.min(t.surface_i, prof.surfaces.length - 1)];
+    const pipe = prof.pipes[Math.min(t.pipe_i, prof.pipes.length - 1)];
+    const line = document.createElement("div"); line.className = "tr-prof-line";
+    const srcSel = document.createElement("select"); srcSel.name = "tr-depth-src";
+    for (const [v, lab] of [["profile", "Depth from the profile (this sheet)"], ["typed", "Typed end depths (straight line)"]]) {
+      const o = document.createElement("option"); o.value = v; o.textContent = lab; o.selected = t.depth_src === v; srcSel.appendChild(o);
+    }
+    srcSel.onchange = () => { t.depth_src = srcSel.value; trRecalc(); renderTr(); };
+    line.appendChild(srcSel);
+    if (prof.surfaces.length > 1) {
+      const ss = document.createElement("select"); ss.name = "tr-surface";
+      prof.surfaces.forEach((s, i) => {
+        const o = document.createElement("option"); o.value = i;
+        o.textContent = `from the ${s.kind} line (${s.label || (s.dashed ? "dashed" : "solid")})`;
+        o.selected = i === t.surface_i; ss.appendChild(o);
+      });
+      ss.onchange = () => { t.surface_i = +ss.value; trRecalc(); renderTr(); };
+      line.appendChild(ss);
+    }
+    profBox.appendChild(line);
+    const chk = (prof.checks || []).filter(c => c.diff !== null && /pipe/.test(c.line || ""));
+    let txt = `${prof.title ? prof.title + ": " : ""}${surf ? surf.kind + " line" : "surface"} to pipe invert, read every ${prof.step_ft} ft of station (H 1"=${Math.round(prof.h_ft_per_in)}', V 1"=${Math.round(prof.v_ft_per_in)}')`;
+    if (pipe && pipe.od_ft) txt += `; the pipe is drawn ${Math.round(pipe.od_ft * 12)} in tall`;
+    if (chk.length) {
+      const worst = Math.max(...chk.map(c => Math.abs(c.diff)));
+      txt += `; ${chk.length} printed elevation${chk.length === 1 ? "" : "s"} on the graph sit within ${worst.toFixed(2)} ft of the read pipe line`;
+    }
+    profBox.appendChild(note(txt));
+    if (run && run.length_ft && pipe) {
+      const span = pipe.sta1 - pipe.sta0;
+      const st = run.length_ft / span;
+      if (Math.abs(st - 1) > 0.05)
+        profBox.appendChild(note(`the profile's pipe covers ${trFmtFt(span)} ft of stationing; this run measures ${trFmtFt(run.length_ft)} ft on the plan - the depths are stretched onto the run (x${st.toFixed(3)})`, "warn"));
+    }
+    if (P.profiles.length > 1) {
+      const ps = document.createElement("select"); ps.name = "tr-profile";
+      P.profiles.forEach((p, i) => {
+        const o = document.createElement("option"); o.value = i;
+        const pp = p.pipes && p.pipes[0];
+        o.textContent = pp ? `profile ${i + 1}${p.title ? " " + p.title : ""}: pipe sta ${trFmtFt(pp.sta0)}-${trFmtFt(pp.sta1)}` : `profile ${i + 1}: no pipe`;
+        o.selected = i === t.profile_i; ps.appendChild(o);
+      });
+      ps.onchange = () => { t.profile_i = +ps.value; t._profilePicked = true; trRecalc(); renderTr(); };
+      profBox.appendChild(ps);
+    }
+    if (t.depth_src === "typed") profBox.appendChild(note("using the TYPED end depths below, not the profile", "warn"));
+  }
+  box.appendChild(profBox);
+
+  // ---- inputs -------------------------------------------------------------
   const grid = document.createElement("div");
   grid.className = "tr-grid";
-
-  const mkLabel = (txt) => { const d = document.createElement("div"); d.textContent = txt; return d; };
   const sel = document.createElement("select");
   sel.name = "tr-style";
   const opt0 = document.createElement("option");
   opt0.value = ""; opt0.textContent = "— pick the pipe run —";
   sel.appendChild(opt0);
+  // the lines a run would be calculated over: the style's chains that are
+  // not erased and not the legend's own sample bars (swatchExclude). A
+  // style with none left - a legend sample drawn on its own CAD layer - is
+  // not a pipe run and is not offered (D05).
+  const live = new Map();
+  for (const c of state.result.chains)
+    if (!state.excluded.has(c.chain_id)) live.set(c.style_id, (live.get(c.style_id) || 0) + 1);
   for (const st of state.result.styles) {
     if (!state.include.get(st.style_id)) continue;
+    const n = live.get(st.style_id) || 0;
+    if (!n) continue;
     const o = document.createElement("option");
     o.value = st.style_id;
-    o.textContent = `${(state.labels.get(st.style_id) || st.suggested_label).slice(0, 30)} · ${st.n} lines`;
+    o.textContent = `${(state.labels.get(st.style_id) || st.suggested_label).slice(0, 30)} · ${n} line${n === 1 ? "" : "s"}`;
     if (t.style_id === st.style_id) o.selected = true;
     sel.appendChild(o);
   }
-  sel.onchange = () => { t.style_id = sel.value === "" ? null : +sel.value; };
-  grid.append(mkLabel("Pipe run (line style)"), sel);
+  sel.onchange = async () => {
+    t.style_id = sel.value === "" ? null : +sel.value; t.run_id = null; t.run_key = null; state.trRunHot = null; draw();
+    // a family picked here joins the runs list (see trUtilityStyleIds)
+    await trLoadRuns();
+    renderTr(); draw();
+  };
+  grid.append(mkLabel(run ? `Run ${run.name} (${run.from} to ${run.to})` : "Pipe run (a whole line family, when no run is picked)"), sel);
+  if (run && t.added.has(run.key)) grid.append(mkLabel(""), note("this run is in the takeoff: the inputs below are the ones it was added with, and edits here refresh its rows only", "warn"));
 
   const num = (key, step) => {
     const i = document.createElement("input");
     i.type = "number"; i.step = step; i.value = t[key]; i.name = "tr-" + key;
-    i.oninput = () => { t[key] = parseFloat(i.value); };
+    i.oninput = () => { t[key] = parseFloat(i.value); trRecalc(); };
     return i;
   };
-  grid.append(mkLabel("Pipe OD (inches)"), num("od_in", "0.5"));
-  grid.append(mkLabel("Invert depth at start (ft)"), num("d0_ft", "0.5"));
+  grid.append(mkLabel("Pipe OD (inches)" + (run && run.size ? ` — ${run.size} read ${run.size_from === "family name" ? "from the family's name" : run.size_from === "beside" ? "beside the run" : "off the run"}${run.size_mixed ? "; two sizes are printed along it" : ""}` : run ? " — no size printed for this run" : "")), num("od_in", "0.5"));
+  grid.append(mkLabel("Invert depth at start (ft)" + (t.depth_src === "profile" && prof ? " — unused: the profile sets the depth" : "")), num("d0_ft", "0.5"));
   grid.append(mkLabel("Invert depth at end (ft)"), num("d1_ft", "0.5"));
   // utility preset: fills the depths and the layback, then gets out of the way
   const ut = document.createElement("select");
   ut.name = "tr-utility";
-  for (const [v, lab] of [["", "\u2014 none \u2014"],
-                          ["water", "Water \u2014 6 ft, laid back 1:1"],
-                          ["sewer", "Sewer \u2014 6 ft, laid back 1:1"],
-                          ["storm", "Storm \u2014 4 ft, vertical"],
-                          ["gas", "Gas \u2014 3 ft, vertical"],
-                          ["electric", "Electric / comm \u2014 3 ft, vertical"]]) {
+  for (const [v, lab] of [["", "— none —"],
+                          ["water", "Water — 6 ft (or the printed cover), laid back 1:1"],
+                          ["sewer", "Sewer — 6 ft (or the printed cover), laid back 1:1"],
+                          ["storm", "Storm — 4 ft, vertical"],
+                          ["gas", "Gas — 3 ft, vertical"],
+                          ["electric", "Electric / comm — 3 ft, vertical"]]) {
     const o = document.createElement("option");
     o.value = v; o.textContent = lab;
     if ((t.utility || "") === v) o.selected = true;
@@ -15997,31 +13509,135 @@ function renderTr() {
   ut.onchange = () => {
     t.utility = ut.value;
     const p = TR_UTILITY_PRESETS[ut.value];
-    if (p) { t.d0_ft = p.d; t.d1_ft = p.d; t.layback_hv = p.hv; t.layback_from_ft = p.from; renderTr(); }
+    if (p) { trPreset(ut.value); trRecalc(); renderTr(); }
   };
-  grid.append(mkLabel("Utility (fills the depths and layback below \u2014 edit them after)"), ut);
+  grid.append(mkLabel("Utility (fills the depths and layback below — edit them after)"), ut);
+  if (t._coverNote) grid.append(mkLabel(""), note(t._coverNote));
   grid.append(mkLabel("Layback, horizontal per vertical (0 = vertical walls or a trench box; 1 = a 1:1 V)"), num("layback_hv", "0.25"));
   grid.append(mkLabel("Lay back only when deeper than (ft)"), num("layback_from_ft", "0.5"));
+
+  // width convention
+  const cs = document.createElement("select"); cs.name = "tr-conv";
+  const otherUtil = run && t.detail_util && TR_SYSTEM_UTIL[run.system] && t.detail_util !== TR_SYSTEM_UTIL[run.system];
+  const detailTxt = t.detail_clr_in !== null
+    ? `Printed detail — OD + ${t.detail_clr_in} in each side${t.detail_util ? " (" + t.detail_util + (otherUtil ? "; this run is " + (TR_SYSTEM_WORD[run.system] || "another utility") : "") + ")" : ""}`
+    : "Printed detail — type the clearance (none read off this set)";
+  for (const [v, lab] of [["preset", `Preset — pipe OD + ${t.clr_in} in each side, any depth`],
+                          ["detail", detailTxt],
+                          ["rules", "Depth-class table — clearance grows with depth (below)"]]) {
+    const o = document.createElement("option"); o.value = v; o.textContent = lab; o.selected = t.conv === v; cs.appendChild(o);
+  }
+  cs.onchange = () => { t.conv = cs.value; trRecalc(); renderTr(); };
+  grid.append(mkLabel("Trench width, by pipe size"), cs);
+  if (t.conv === "preset") grid.append(mkLabel("Clearance each side (in)"), num("clr_in", "1"));
+  if (t.conv === "detail") {
+    const i = document.createElement("input"); i.type = "number"; i.step = "0.5"; i.name = "tr-detail_clr_in";
+    i.value = t.detail_clr_in === null ? "" : t.detail_clr_in;
+    i.oninput = () => { t.detail_clr_in = i.value === "" ? null : parseFloat(i.value); trRecalc(); };
+    grid.append(mkLabel("Printed clearance each side (in)" + (t.detail_note ? " — " + t.detail_note : "")), i);
+  }
+  grid.append(mkLabel("Bedding under the pipe (in)"), num("bed_below_in", "1"));
+  grid.append(mkLabel("Bedding over the pipe (in)"), num("bed_above_in", "1"));
+  if (t.depth_src === "profile" && prof)
+    grid.append(mkLabel("Dig below the invert (in) — the profile depth stops at the pipe's invert; bedding under the pipe goes here when the detail calls for it"), num("below_invert_in", "1"));
   box.appendChild(grid);
 
-  const rl = document.createElement("div");
-  rl.className = "tr-rules";
-  rl.textContent = "Bedding rules (per spec):";
-  box.appendChild(rl);
-  t.rules.forEach((r, k) => {
-    const row = document.createElement("div");
-    row.className = "tr-rule";
-    const a = document.createElement("input");
-    a.type = "number"; a.step = "0.5"; a.value = r.to_ft; a.name = `tr-to-${k}`;
-    a.oninput = () => { r.to_ft = parseFloat(a.value); };
-    const b = document.createElement("input");
-    b.type = "number"; b.step = "1"; b.value = r.clr_in; b.name = `tr-clr-${k}`;
-    b.oninput = () => { r.clr_in = parseFloat(b.value); };
-    const l1 = document.createElement("div"); l1.textContent = "to depth (ft)";
-    const l2 = document.createElement("div"); l2.textContent = "clearance (in)";
-    row.append(l1, a, l2, b);
-    box.appendChild(row);
-  });
+  if (t.conv === "rules") {
+    const rl = document.createElement("div");
+    rl.className = "tr-rules";
+    rl.textContent = "Depth-class clearance (per spec):";
+    box.appendChild(rl);
+    t.rules.forEach((r, k) => {
+      const row = document.createElement("div");
+      row.className = "tr-rule";
+      const a = document.createElement("input");
+      a.type = "number"; a.step = "0.5"; a.value = r.to_ft; a.name = `tr-to-${k}`;
+      a.oninput = () => { r.to_ft = parseFloat(a.value); trRecalc(); };
+      const b = document.createElement("input");
+      b.type = "number"; b.step = "1"; b.value = r.clr_in; b.name = `tr-clr-${k}`;
+      b.oninput = () => { r.clr_in = parseFloat(b.value); trRecalc(); };
+      const l1 = document.createElement("div"); l1.textContent = "to depth (ft)";
+      const l2 = document.createElement("div"); l2.textContent = "clearance (in)";
+      row.append(l1, a, l2, b);
+      box.appendChild(row);
+    });
+  }
+  trDrawProfile();
+  renderTrTake();
+  renderTrBands();
+}
+
+// the profile picture: ground and pipe against station, the depth bands
+// shaded between them, the picked run's stations bright and the rest dim
+function trDrawProfile() {
+  const cv2 = $("trProf");
+  const t = state.tr;
+  if (!cv2 || !t) return;
+  const run = trRunById(t.run_id);
+  const prof = trProfileFor(run);
+  if (!prof) return;
+  const W = cv2.width, H = cv2.height, ml = 34, mr = 6, mt = 6, mb = 16;
+  const c2 = cv2.getContext("2d");
+  c2.clearRect(0, 0, W, H);
+  const surf = prof.surfaces[Math.min(t.surface_i, prof.surfaces.length - 1)];
+  const pipe = prof.pipes[Math.min(t.pipe_i, prof.pipes.length - 1)];
+  const st = prof.stations;
+  const s0 = st[0], s1 = st[st.length - 1];
+  let lo = Infinity, hi = -Infinity;
+  for (const ln of [...prof.surfaces, ...prof.pipes]) for (const [, a, b] of ln.samples) {
+    if (a !== null) { lo = Math.min(lo, a); hi = Math.max(hi, b === null ? a : b); }
+  }
+  if (!(hi > lo)) return;
+  const pad = (hi - lo) * 0.08;
+  lo -= pad; hi += pad;
+  const X = (s) => ml + (s - s0) / (s1 - s0) * (W - ml - mr);
+  const Y = (e) => mt + (hi - e) / (hi - lo) * (H - mt - mb);
+  // bands between the surface and the invert, coloured by depth class; a
+  // depth ON an edge is the shallower band, as the band table counts it
+  const F = parseFloat($("trBandEdge").value) || 6, S = parseFloat($("trBandStep").value) || 2;
+  const cols = ["rgba(90,160,255,0.25)", "rgba(60,120,230,0.35)", "rgba(40,80,200,0.45)", "rgba(20,50,160,0.55)", "rgba(10,30,120,0.65)"];
+  if (surf && pipe) {
+    for (let i = 0; i + 1 < st.length; i++) {
+      const g0 = surf.samples[i][1], g1 = surf.samples[i + 1][1];
+      const p0 = pipe.samples[i][1], p1 = pipe.samples[i + 1][1];
+      if (g0 === null || g1 === null || p0 === null || p1 === null) continue;
+      const d = Math.max((g0 - p0 + g1 - p1) / 2, 0);
+      const band = d <= F + 1e-9 ? 0 : Math.min(cols.length - 1, 1 + Math.floor((d - F - 1e-9) / S));
+      c2.fillStyle = cols[band];
+      c2.beginPath();
+      c2.moveTo(X(st[i]), Y(g0)); c2.lineTo(X(st[i + 1]), Y(g1));
+      c2.lineTo(X(st[i + 1]), Y(p1)); c2.lineTo(X(st[i]), Y(p0));
+      c2.closePath(); c2.fill();
+    }
+  }
+  const stroke = (ln, color, width, dash) => {
+    c2.strokeStyle = color; c2.lineWidth = width; c2.setLineDash(dash || []);
+    c2.beginPath();
+    let pen = false;
+    for (const [s, a] of ln.samples) {
+      if (a === null) { pen = false; continue; }
+      if (!pen) { c2.moveTo(X(s), Y(a)); pen = true; } else c2.lineTo(X(s), Y(a));
+    }
+    c2.stroke(); c2.setLineDash([]);
+  };
+  prof.surfaces.forEach((s, i) => stroke(s, i === t.surface_i ? (s.kind === "finished" ? "#d33" : "#666") : "#bbb", i === t.surface_i ? 1.6 : 1, s.dashed ? [4, 3] : []));
+  prof.pipes.forEach((p, i) => stroke(p, i === t.pipe_i ? "#111" : "#aaa", i === t.pipe_i ? 1.8 : 1));
+  // the run's stations: dim everything outside them
+  if (run && run.length_ft && pipe) {
+    c2.fillStyle = "rgba(255,255,255,0.55)";
+    c2.fillRect(ml, mt, X(pipe.sta0) - ml, H - mt - mb);
+    c2.fillRect(X(pipe.sta1), mt, W - mr - X(pipe.sta1), H - mt - mb);
+  }
+  // axes
+  c2.fillStyle = "#555"; c2.font = "9px sans-serif";
+  const step = (s1 - s0) > 400 ? 100 : 50;
+  for (let s = Math.ceil(s0 / step) * step; s <= s1; s += step) {
+    c2.fillRect(X(s), H - mb, 1, 3);
+    const lab = `${Math.floor(s / 100)}+${String(Math.round(s % 100)).padStart(2, "0")}`;
+    c2.fillText(lab, X(s) - 8, H - 4);
+  }
+  c2.fillText(String(Math.round(hi)), 2, mt + 8);
+  c2.fillText(String(Math.round(lo)), 2, H - mb);
 }
 
 // ---------- trench math (pure) -------------------------------------------
@@ -16066,14 +13682,14 @@ function trClrAt(rs, d) {
 // calculator always read). The consequence is embraced, not hidden:
 // crossing a rule edge re-prices the whole column, so 4.00 -> 4.01 ft
 // with the default table steps +40% BY DESIGN - a depth-class boundary
-// is a price step, the same shape as Pierce's 2-ft pricing bands. What
+// is a price step, the same shape as a contractor's 2-ft pricing bands. What
 // WAS a bug is fixed downstream: along a sloped run each slice is split
 // at rule-edge crossings (trRunVolumes), so the integral is exact for a
 // linear profile instead of whole slices snapping with their midpoints.
 function trHoleArea(rs, odFt, d, lb) {
   if (!(d > 0)) return 0;
   let a = (odFt + 2 * trClrAt(rs, d)) * d;
-  // LAYBACK (Beaumont, 2026-09-15 call, 28:00-32:04): "every trench we dig
+  // LAYBACK (excavator, 2026-09-15 call, 28:00-32:04): "every trench we dig
   // kind of has to be in a V shape" - water and sewer at about 6 ft here are
   // laid back, gas and electric usually not. lb = {hv, from}: once a trench
   // is deeper than `from` ft its sides are laid back at hv:1 over the FULL
@@ -16090,6 +13706,10 @@ function trHoleArea(rs, odFt, d, lb) {
 // audit-6a clamp structural: a sub-range of the hole cannot out-measure
 // the hole, so bedding can never again exceed the dig (the shipped 6a
 // defect had bedding at 137% of the dig on a 1-ft-deep run).
+// Kept for the depth-class convention; the envelope the panel uses now is
+// trEnvAreaW below (so much bedding under the pipe, the pipe, so much over
+// it, at the trench width - the audit's +261 % against the printed water
+// detail was this square).
 function trEnvArea(rs, odFt, d) {
   if (!(d > 0)) return 0;
   const w = odFt + 2 * trClrAt(rs, d);
@@ -16156,8 +13776,8 @@ function trTotals(dig, env, pipeVol) {
 // Display rounding for trench volumes, unchanged: 0.1 CY.
 function trCY(v) { return Math.round(v / 27 * 10) / 10; }
 
-// LF per depth band from the TYPED d0/d1 linear profile. Rick, Pierce Site
-// Work (transcript 2026-08-27): "we price by the foot to install pipe...
+// LF per depth band from the TYPED d0/d1 linear profile. A site contractor
+// (call 2026-08-27): "we price by the foot to install pipe...
 // it's a two-ft interval. So within 8-in sewer main we need to know how
 // much of it is 0 to six feet deep, how much is 6 to 8, how much is 8 to
 // 10, and so on. Sometimes we're up to 24 feet deep." First edge and step
@@ -16165,13 +13785,8 @@ function trCY(v) { return Math.round(v / 27 * 10) / 10; }
 // EXCAVATION-PLAN.md section 16), so the bands run [0,F], (F,F+S], ... out
 // to the deepest typed invert. A run sitting exactly ON an edge counts in
 // the SHALLOWER band - the same convention as the bedding rules' d <= to.
-//
-// TYPED DEPTHS ONLY - DO NOT WIRE PROFILE-DERIVED DEPTHS IN HERE. Deriving
-// depth from INV/RIM text is forbidden until the datum work (commit
-// 5390b3f, the abstain rule) is wired into profile reading: 81.9% of spot
-// grades on the Barn set come back with the hundreds digit unresolved, and
-// differencing truncated elevations puts a confident wrong number in a
-// priced band. EXCAVATION-PLAN.md section 16 is the binding instruction.
+// Profile-read depths go through trSeriesBands below (the same band
+// convention over a piecewise-linear depth series).
 function trDepthBands(runFt, d0, d1, firstEdge, step, maxRows) {
   const F = +firstEdge, S = +step;
   if (!(F > 0) || !(S > 0) || !(runFt > 0)) return null;
@@ -16194,117 +13809,409 @@ function trDepthBands(runFt, d0, d1, firstEdge, step, maxRows) {
   }
   return { rows, truncated };
 }
+
+// ---- width by pipe size, bedding as an envelope, depth as a series -------
+// A width CONVENTION: {mode: "clr", clr_ft} - the pipe OD plus a fixed
+// clearance each side at any depth (contractor: 6 in each side, so a 6-in pipe
+// digs an 18-in trench and a 12-in pipe a 24-in one; the set's printed
+// detail is the same shape: Bc + 18" is 9 in each side) - or {mode:
+// "rules", rs} - the depth-class table above.
+function trConvWidth(conv, odFt, d) {
+  if (conv && conv.mode === "rules") return odFt + 2 * trClrAt(conv.rs, d);
+  return odFt + 2 * Math.max(0, (conv && isFinite(conv.clr_ft)) ? conv.clr_ft : 0.5);
+}
+
+// Hole cross-section (sf) at depth d under a convention, layback as above.
+function trHoleAreaW(conv, odFt, d, lb) {
+  if (!(d > 0)) return 0;
+  let a = trConvWidth(conv, odFt, d) * d;
+  if (lb && lb.hv > 0 && d > (lb.from || 0)) a += lb.hv * d * d;
+  return a;
+}
+
+// Bedding-envelope cross-section (sf): the trench width times the pipe
+// zone's height - bedding under the pipe + the pipe + bedding over it
+// (bed = {below_ft, above_ft}) - clamped to the hole's depth so it can
+// never out-measure the hole. The pipe's own area comes off in trTotals.
+// CONVENTION: the printed details on the corpus (a water line detail:
+// 6" below, 12" above; a drain detail: 4" below, 6" above) draw exactly
+// this envelope; the old square box read +261 % against the first.
+function trEnvAreaW(conv, odFt, d, bed) {
+  if (!(d > 0)) return 0;
+  const w = trConvWidth(conv, odFt, d);
+  const h = Math.max(0, (bed && bed.below_ft) || 0) + odFt + Math.max(0, (bed && bed.above_ft) || 0);
+  return w * Math.min(h, d);
+}
+
+// A depth SERIES: [[station_ft, depth_ft], ...] in station order, depth
+// linear between samples (what the profile read gives every 1 ft, or the
+// two typed ends). Volumes are the exact integral of the piecewise-linear
+// series under the convention: each piece is split at the rule edges it
+// crosses (rules mode) and evaluated at its midpoint, as trRunVolumes.
+function trSeriesVolumes(conv, odFt, series, lb, bed) {
+  let dig = 0, env = 0, lf = 0;
+  const edges = (conv && conv.mode === "rules") ? conv.rs.map(r => r.to).filter(isFinite) : [];
+  for (let i = 0; i + 1 < series.length; i++) {
+    const L = series[i + 1][0] - series[i][0];
+    if (!(L > 0)) continue;
+    const dA = Math.max(series[i][1], 0), dB = Math.max(series[i + 1][1], 0);
+    lf += L;
+    const lo = Math.min(dA, dB), hi = Math.max(dA, dB), span = hi - lo;
+    if (span <= 1e-12) {
+      dig += trHoleAreaW(conv, odFt, dA, lb) * L;
+      env += trEnvAreaW(conv, odFt, dA, bed) * L;
+      continue;
+    }
+    const cuts = [lo];
+    for (const e of edges) if (e > lo && e < hi) cuts.push(e);
+    cuts.push(hi);
+    cuts.sort((x, y) => x - y);
+    // within a piece with no rule edge the hole area is linear in d only
+    // when the width is constant; the layback wedge is quadratic, so long
+    // pieces are sub-sliced to keep the midpoint rule within noise
+    for (let k = 0; k + 1 < cuts.length; k++) {
+      const u1 = cuts[k], u2 = cuts[k + 1];
+      const f = (u2 - u1) / span;
+      if (!(f > 0)) continue;
+      const n = (lb && lb.hv > 0 && (u2 - u1) > 0.5) ? Math.ceil((u2 - u1) / 0.25) : 1;
+      for (let q = 0; q < n; q++) {
+        const v1 = u1 + (u2 - u1) * q / n, v2 = u1 + (u2 - u1) * (q + 1) / n;
+        const dm = (v1 + v2) / 2, ff = f / n;
+        dig += trHoleAreaW(conv, odFt, dm, lb) * ff * L;
+        env += trEnvAreaW(conv, odFt, dm, bed) * ff * L;
+      }
+    }
+  }
+  return { dig, env, lf };
+}
+
+// LF per depth band over a series: bands [0,F], (F,F+S], ... as
+// trDepthBands; each linear piece contributes the exact measure of its
+// stations at each depth class (a piece sitting ON an edge is the
+// shallower band).
+function trSeriesBands(series, firstEdge, step, maxRows) {
+  const F = +firstEdge, S = +step;
+  if (!(F > 0) || !(S > 0) || series.length < 2) return null;
+  let dmax = 0, lf = 0;
+  for (const [, d] of series) dmax = Math.max(dmax, Math.max(d, 0));
+  const edges = [0, F];
+  while (edges[edges.length - 1] < dmax && edges.length < (maxRows || 64) + 1) edges.push(edges[edges.length - 1] + S);
+  const truncated = edges[edges.length - 1] < dmax;
+  const acc = new Array(edges.length - 1).fill(0);
+  for (let i = 0; i + 1 < series.length; i++) {
+    const L = series[i + 1][0] - series[i][0];
+    if (!(L > 0)) continue;
+    lf += L;
+    const a = Math.max(series[i][1], 0), b = Math.max(series[i + 1][1], 0);
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    for (let k = 0; k + 1 < edges.length; k++) {
+      const e0 = edges[k], e1 = edges[k + 1];
+      let frac;
+      if (hi - lo <= 1e-12) frac = (lo <= e1 && (lo > e0 || k === 0)) ? 1 : 0;
+      else {
+        // measure of the piece with depth in (e0, e1]; the first band takes
+        // everything from 0 up
+        const top = Math.min(hi, e1), bot = Math.max(lo, k === 0 ? -Infinity : e0);
+        frac = Math.max(0, (top - bot) / (hi - lo));
+      }
+      acc[k] += frac * L;
+    }
+  }
+  const rows = [];
+  for (let k = 0; k + 1 < edges.length; k++) rows.push({ lo: edges[k], hi: edges[k + 1], lf: acc[k] });
+  return { rows, truncated, lf };
+}
+
+// Map a profile's depth series (stations s0..s1 on the graph) onto a plan
+// run of length L: station s -> (s - s0) / (s1 - s0) x L. The stretch is
+// reported; a plan run that measures within a few percent of the profile's
+// stationing is the normal case (the profile IS the run, drawn to a
+// different horizontal scale).
+function trMapSeries(series, s0, s1, L) {
+  const span = s1 - s0;
+  if (!(span > 0) || !(L > 0) || !series.length) return { series: [], stretch: null };
+  const st = L / span;
+  return { series: series.map(([s, d]) => [(s - s0) * st, d]), stretch: st };
+}
 // TRENCH-MATH-END
+
+// the convention the panel (or a run's remembered inputs) is set to, as
+// trSeriesVolumes wants it
+function trConv(t) {
+  if (t.conv === "rules") return { mode: "rules", rs: trNormRules(t.rules) };
+  const clr = t.conv === "detail" && t.detail_clr_in !== null && isFinite(t.detail_clr_in)
+    ? t.detail_clr_in : (isFinite(t.clr_in) ? t.clr_in : 6);
+  return { mode: "clr", clr_ft: Math.max(0, clr) / 12 };
+}
+
+// One run (or, with no run picked, the whole family) under `inputs` - the
+// panel's inputs by default, an added run's remembered inputs on a reload.
+// Returns the result the rows are built from, or null with the reason on
+// the result line. A read, never a write: rows reach the takeoff through
+// trApplyItems only.
+function trCalcRun(run, inputs) {
+  const cur = state.tr;
+  const t = inputs ? { ...cur, ...inputs } : cur;
+  const out = $("trResult");
+  if (!cur) return null;
+  const say = (msg) => { if (!inputs) out.textContent = msg; return null; };
+  const sc = state.result.scale;
+  if (!sc) return say("no scale set on this page — volumes need feet");
+  const ftPerPt = sc.ft_per_paper_inch / 72.0;
+  const odFt = t.od_in / 12.0;
+  if (!(odFt > 0)) return say("pipe OD must be a positive number");
+  let runFt, chainIds, name, system = "RUN", key;
+  if (run) {
+    // the run's own points at the scale ON SCREEN: the server's length_ft is the scale it had
+    // when the runs were read, and a scale typed since would leave the feet stale
+    runFt = isFinite(+run.length_pt) && +run.length_pt > 0 ? +run.length_pt * ftPerPt
+      : (run.length_ft !== null ? run.length_ft : 0);
+    chainIds = run.chain_ids; name = run.name; system = run.system; key = run.key || trRunKey(run);
+  } else {
+    if (t.style_id === null) return say("pick a run, or a line family");
+    const chains = state.result.chains.filter(c => c.style_id === t.style_id && !state.excluded.has(c.chain_id));
+    if (!chains.length) return say("that style has no lines");
+    runFt = chains.reduce((s, c) => s + chainLenPt(c) * ftPerPt, 0);
+    chainIds = chains.map(c => c.chain_id);
+    name = (state.labels.get(t.style_id) || "pipe").slice(0, 40);
+    key = trFamKey(t.style_id);
+    const fam = (state.labels.get(t.style_id) || "") + " " + ((state.result.styles.find(s => s.style_id === t.style_id) || {}).layer || "");
+    system = /STORM|\bSD\b|DRAIN/i.test(fam) ? "STM" : /SEWER|SANITARY|\bSS\b/i.test(fam) ? "SS" : /WATER|WATR|\bWM\b|\bWL\b/i.test(fam) ? "W" : /\bGAS\b/i.test(fam) ? "G" : /ELEC|\bUE\b|\bUGE\b|CONDUIT|TELE|COMM|FIBER/i.test(fam) ? "E" : "RUN";
+  }
+  const conv = trConv(t);
+  const lb = { hv: Math.max(0, +t.layback_hv || 0), from: Math.max(0, +t.layback_from_ft || 0) };
+  const bed = { below_ft: Math.max(0, +t.bed_below_in || 0) / 12, above_ft: Math.max(0, +t.bed_above_in || 0) / 12 };
+  // the depth series: the profile mapped onto the run, else the typed ends
+  let series = null, depthFrom = "typed", stretch = null, prof = null, profNote = "";
+  if (t.depth_src === "profile") {
+    prof = trProfileFor(run, t);
+    if (prof && prof.pipes && prof.pipes.length) {
+      const raw = trDepthSeries(prof, t.surface_i, t.pipe_i);
+      if (raw.length >= 2) {
+        const pipe = prof.pipes[Math.min(t.pipe_i, prof.pipes.length - 1)];
+        const extra = Math.max(0, +t.below_invert_in || 0) / 12;
+        const m = trMapSeries(raw.map(([s, d]) => [s, d + extra]), raw[0][0], raw[raw.length - 1][0], runFt);
+        series = m.series; stretch = m.stretch; depthFrom = "profile";
+        const surf = prof.surfaces[Math.min(t.surface_i, prof.surfaces.length - 1)];
+        profNote = `depth read off the profile (${surf ? surf.kind + " line" : "surface"} to the pipe's invert, ${raw.length} stations from ${trFmtFt(raw[0][0])} to ${trFmtFt(raw[raw.length - 1][0])}`
+          + (extra > 0 ? `, plus ${Math.round(extra * 12)} in below the invert` : "") + ")"
+          + (pipe && Math.abs(stretch - 1) > 0.05 ? `, stretched x${stretch.toFixed(3)} onto the run` : "");
+      }
+    }
+  }
+  if (!series) {
+    if (!isFinite(t.d0_ft) || !isFinite(t.d1_ft)) return say("type both invert depths");
+    series = [[0, t.d0_ft], [runFt, t.d1_ft]];
+    depthFrom = "typed";
+    profNote = "depth from the TYPED end depths (a straight line between them)" + (t.depth_src === "profile" ? (trProfileWhyNot(run) ? " - " + trProfileWhyNot(run) : " - no profile for this run") : "");
+  }
+  let v;
+  if (depthFrom === "typed" && conv.mode === "rules") {
+    // the shipped path, kept to the letter for a typed run under the
+    // depth-class table
+    const rs = conv.rs, L = runFt, N = 60;
+    v = trRunVolumes(rs, odFt, L, t.d0_ft, t.d1_ft, N, lb);
+    const e = trSeriesVolumes(conv, odFt, series, lb, bed);
+    v = { dig: v.dig, env: e.env, lf: L };
+  } else {
+    v = trSeriesVolumes(conv, odFt, series, lb, bed);
+  }
+  const pipeVol = Math.PI * (odFt / 2) ** 2 * runFt;
+  const tot = trTotals(v.dig, v.env, pipeVol);
+  const dig = tot.dig, bedv = tot.bed, backfill = tot.backfill;
+  const F = +t.band_edge || 6, S = +t.band_step || 2;
+  const bt = trSeriesBands(series, F, S, 64);
+  let dmin = Infinity, dmax = 0, dsum = 0, n = 0;
+  for (const [, d] of series) { dmin = Math.min(dmin, d); dmax = Math.max(dmax, d); dsum += d; n++; }
+  // the size in the row label is the OD the volumes were computed with:
+  // one number, not the sheet's word beside the run when they disagree
+  const size = `${Math.round(t.od_in * 10) / 10}"`;
+  const width = conv.mode === "rules" ? "clearance by depth class" : `OD + ${Math.round(conv.clr_ft * 12 * 10) / 10} in each side`;
+  if (!inputs) {
+    out.innerHTML =
+      `<b>dig ${trCY(dig).toLocaleString()} CY</b> · <b>bedding ${trCY(bedv).toLocaleString()} CY</b>` +
+      ` · backfill ${trCY(backfill).toLocaleString()} CY · ${Math.round(runFt).toLocaleString()} LF of ${size} pipe` +
+      (lb.hv > 0 ? ` · sides laid back ${lb.hv}:1 where deeper than ${lb.from} ft` : " · vertical sides") +
+      ` · width ${width} · depth ${dmin === dmax ? trFmtFt(dmin) : trFmtFt(dmin) + "–" + trFmtFt(dmax)} ft (mean ${(dsum / Math.max(n, 1)).toFixed(2)})` +
+      (run && run.size && trSizeInches(run.size) !== null && Math.abs(trSizeInches(run.size) - t.od_in) > 0.05 ? ` · the sheet prints ${run.size} beside this run` : "") +
+      `<div class="tr-note">${profNote}</div>`;
+  }
+  const res = { key, run_id: run ? run.id : null, style_id: t.style_id, name, system, size, runFt, dig, bed: bedv, backfill,
+                layback: lb, utility: t.utility || "", depthFrom, stretch, bands: bt ? bt.rows : [],
+                structures: run ? (run.structures || []) : [], conv: conv.mode, width, band_edge: F, band_step: S };
+  if (!inputs) cur.calc = { series, runFt, res };   // the band table reads THIS snapshot
+  return res;
+}
+
+// the key of what the panel currently describes
+function trCurrentKey() {
+  const t = state.tr;
+  if (!t) return null;
+  const run = trRunById(t.run_id);
+  return run ? (run.key || trRunKey(run)) : (t.style_id !== null ? trFamKey(t.style_id) : null);
+}
+
+// an input changed: recompute the current run; when it is an added run, its
+// remembered inputs move with the panel and its rows refresh in place
+function trRecalc() {
+  const t = state.tr;
+  if (!t) return;
+  const run = trRunById(t.run_id);
+  if (!run && t.style_id === null) return;
+  const res = trCalcRun(run);
+  if (!res) return;
+  const k = res.key;
+  const old = t.results[k];
+  t.results[k] = res;
+  if (t.added.has(k)) {
+    t.runInputs[k] = trInputsSnapshot(t);
+    if (old) trClearItems(old);
+    trApplyItems(res);
+    renderItemized();
+    calcSave();
+  }
+  renderTrTake();
+  renderTrBands();
+  trDrawProfile();
+}
 
 $("trCalc").onclick = () => {
   const t = state.tr;
-  if (!t || t.style_id === null) { $("trResult").textContent = "pick the pipe run first"; return; }
-  const sc = state.result.scale;
-  if (!sc) { $("trResult").textContent = "no scale set on this page — volumes need feet"; return; }
-  const ftPerPt = sc.ft_per_paper_inch / 72.0;
-  const chains = state.result.chains.filter(c =>
-    c.style_id === t.style_id && !state.excluded.has(c.chain_id));
-  if (!chains.length) { $("trResult").textContent = "that style has no lines"; return; }
-  const odFt = t.od_in / 12.0;
-  if (!(odFt > 0)) { $("trResult").textContent = "pipe OD must be a positive number"; return; }
-  if (!isFinite(t.d0_ft) || !isFinite(t.d1_ft)) { $("trResult").textContent = "type both invert depths"; return; }
-  const rs = trNormRules(t.rules);
-  const lb = { hv: Math.max(0, +t.layback_hv || 0), from: Math.max(0, +t.layback_from_ft || 0) };
-  const N = 60;  // slices along each run, as before; rule-edge splits happen inside
-  let digRaw = 0, envRaw = 0, runFt = 0;
-  for (const c of chains) {
-    const L = chainLenPt(c) * ftPerPt;
-    runFt += L;
-    const v = trRunVolumes(rs, odFt, L, t.d0_ft, t.d1_ft, N, lb);
-    digRaw += v.dig; envRaw += v.env;
-  }
-  const pipeVol = Math.PI * (odFt / 2) ** 2 * runFt;
-  const { dig, bed, backfill } = trTotals(digRaw, envRaw, pipeVol);
-  $("trResult").innerHTML =
-    `<b>dig ${trCY(dig).toLocaleString()} CY</b> · <b>bedding ${trCY(bed).toLocaleString()} CY</b>` +
-    ` · backfill ${trCY(backfill).toLocaleString()} CY · ${Math.round(runFt).toLocaleString()} LF of pipe` +
-    (lb.hv > 0 ? ` · sides laid back ${lb.hv}:1 where deeper than ${lb.from} ft` : " · vertical sides");
-  const name = (state.labels.get(t.style_id) || "pipe").slice(0, 40);
-  // Consent is per system: recalculating the SAME style while its rows are
-  // added refreshes them in place - consent was given for THIS calculation,
-  // and a superseded number left priced is its own silent lie (same rule as
-  // ewCalc). Switching styles starts the new system un-added; the previous
-  // system's consented rows stay, and the exact-label filter in
-  // trClearItems scopes every apply/remove to one system's four rows.
-  if (t.added && t.result && t.result.style_id !== t.style_id) t.added = false;
-  t.result = { style_id: t.style_id, name, runFt, dig, bed, backfill, layback: lb, utility: t.utility || "" };
-  t.calc = { runFt, d0: t.d0_ft, d1: t.d1_ft };  // the band table reads THIS snapshot
-  // Audit item 5, the consent gate: Calculate only LOOKS. Rows reach
-  // state.extraItems - and through it the priced report - only via the
-  // "Add to takeoff" button (trAdd, below).
-  if (t.added) trApplyItems(t.result);
-  renderTrTake();
-  renderTrBands();
+  if (!t) return;
+  const run = trRunById(t.run_id);
+  if (!run && t.style_id === null) { $("trResult").textContent = "pick a run, or a line family"; return; }
+  trRecalc();
   renderItemized();
 };
 
-// Replace only THIS system's four rows. A prefix filter here once removed
-// every row starting Trench/Bedding/Backfill or ending (run), so
-// calculating a second pipe system silently deleted the first - a job with
-// sanitary + storm + water + force main could only ever hold one of the
-// four. Matching the exact labels this calculation regenerates (the style's
-// name is embedded in all four) scopes the replacement to one system.
-// Label-based on purpose: calcSave strips rows to {label, qty, unit}, so a
-// hidden style-id tag would not survive a session restore and restored rows
-// would stop being replaced. Trade-off accepted: renaming a style between
-// calculates leaves the old name's rows behind - visible and deletable,
-// which beats the silent deletion this replaces.
-function trClearItems(res) {
-  const mine = new Set([`${res.name} (run)`, `Trench excavation (${res.name})`,
-                        `Bedding gravel (${res.name})`, `Backfill (${res.name})`]);
-  state.extraItems = state.extraItems.filter(it => !mine.has(it.label));
+// TRENCH-ROWS-BEGIN (pure: no DOM; tests/test_bid_money.js evals this block with a fake
+// `state`, `store`, `trCY` and the TR_SYSTEM_* maps)
+// Row labels of one run: the run name is inside every label, so two runs
+// (or two systems) never collide, and a re-add replaces exactly its own
+// rows. Label-based on purpose: rows are stored as {label, qty, unit}.
+function trRowLabels(res) {
+  const word = TR_SYSTEM_WORD[res.system] || "pipe";
+  const out = [];
+  for (const b of res.bands || []) out.push(`${res.size} ${word} ${trBandText(b)} (${res.name})`);
+  out.push(`Trench excavation (${res.name})`, `Bedding gravel (${res.name})`, `Backfill (${res.name})`);
+  return out;
 }
+function trBandText(b) {
+  const f = (v) => (Math.round(v * 100) / 100).toLocaleString();
+  return `${f(b.lo)}-${f(b.hi)} ft deep`;
+}
+function trStructLabel(system) { return `Structures (${TR_SYSTEM_WORD[system] || "pipe"})`; }
+
+// EVERY row of the run, whatever bands, size or edges it was added with:
+// the run's name closes every one of its labels, so the suffix is the
+// filter (clearing by the NEW labels alone left the old bands standing
+// when an edge or the OD changed - the critic's H1 / H2).
+function trIsRowOf(label, name) {
+  return typeof label === "string" && (label.endsWith(`(${name})`) || label === `${name} (run)`);
+}
+function trClearItems(res) {
+  state.extraItems = state.extraItems.filter(it => !trIsRowOf(it.label, res.name));
+  trStructuresRow(res.system);
+}
+// the style id a run was calculated over: the bid sheet's `run` tag (bid-money) - a run of a
+// family that spans one style carries it, a family pick carries the family's
+function trRowKey(res) { return Number.isInteger(res.style_id) ? res.style_id : null; }
 
 function trApplyItems(res) {
   trClearItems(res);
-  // The FOOTAGE is the line item an excavator actually bids. Every utility
-  // row on Beaumont's Estimate #853 is priced per LF - the perimeter drain
-  // alone is 3,395 LF / $105,245 - while the CY volumes below are the
-  // supporting math. Emit the run first so it leads the group.
-  if (res.runFt > 0) state.extraItems.push({ label: `${res.name} (run)`, qty: Math.round(res.runFt * 10) / 10, unit: "LF" });
-  if (res.dig > 0) state.extraItems.push({ label: `Trench excavation (${res.name})`, qty: trCY(res.dig), unit: "CY" });
-  if (res.bed > 0) state.extraItems.push({ label: `Bedding gravel (${res.name})`, qty: trCY(res.bed), unit: "CY" });
-  if (res.backfill > 0) state.extraItems.push({ label: `Backfill (${res.name})`, qty: trCY(res.backfill), unit: "CY" });
+  const trade = TR_SYSTEM_TRADE[res.system] || "Wet Utilities";
+  // bid-money's provenance on every row: `run` (the style id), `runOf` (the family's label -
+  // the bid sheet replaces that family's feet with the run's), `utility` (the bid line's
+  // word), `kind` (what the row is). The band rows ARE the run's footage (kind trench_run).
+  const fam = (Number.isInteger(res.style_id) && state.labels.get(res.style_id)) || res.name;
+  // the utility: the system the run's name gives, else the preset the operator picked (a family
+  // with no system in its name dropped it, and its rows reached no bid line)
+  const tag = { run: trRowKey(res), runOf: fam, utility: TR_SYSTEM_UTIL[res.system] || String(res.utility || "").toLowerCase() };
+  const put = (label, qty, unit, kind) => {
+    if (!(qty > 0)) return;
+    const row = { label, qty: Math.round(qty * 10) / 10, unit, kind };
+    if (Number.isInteger(tag.run)) row.run = tag.run;
+    if (tag.runOf) row.runOf = tag.runOf;
+    if (tag.utility) row.utility = tag.utility;
+    state.extraItems.push(row);
+    // the system's trade, unless the operator has filed this label already
+    if (!store.getItem(tradeKey(label))) store.setSession(tradeKey(label), trade);
+  };
+  // The FOOTAGE is the line item an excavator actually bids, and a contractor
+  // bids it per depth band: one LF row per band, each carrying the pipe
+  // size (the bid sheet sums storm by size off that token). Their sum is
+  // the run's length, so no "(run)" total row rides beside them - that
+  // was the bid sheet's double count.
+  const bands = (res.bands || []).filter(b => b.lf > 0.05);
+  if (bands.length) for (const b of bands) put(`${res.size} ${TR_SYSTEM_WORD[res.system] || "pipe"} ${trBandText(b)} (${res.name})`, b.lf, "LF", "trench_run");
+  put(`Trench excavation (${res.name})`, trCY(res.dig), "CY", "trench_dig");
+  put(`Bedding gravel (${res.name})`, trCY(res.bed), "CY", "trench_bed");
+  put(`Backfill (${res.name})`, trCY(res.backfill), "CY", "trench_backfill");
+  trStructuresRow(res.system);
 }
+
+// one structures row per SYSTEM: the structures on its ADDED runs, counted
+// once each (a manhole shared by two runs is one manhole)
+function trStructuresRow(system) {
+  const t = state.tr;
+  const label = trStructLabel(system);
+  state.extraItems = state.extraItems.filter(it => it.label !== label);
+  if (!t) return;
+  const ids = new Set();
+  for (const k of t.added) {
+    const res = t.results[k];
+    if (!res || res.system !== system) continue;
+    for (const s of res.structures || []) ids.add(s);
+  }
+  if (ids.size) {
+    state.extraItems.push({ label, qty: ids.size, unit: "EA", kind: "trench_struct" });
+    if (!store.getItem(tradeKey(label))) store.setSession(tradeKey(label), TR_SYSTEM_TRADE[system] || "Wet Utilities");
+  }
+}
+// TRENCH-ROWS-END
 
 // Audit item 5: the same consent earthwork and structures already require.
 // Calculating is looking; this button is the decision.
 $("trAdd").onclick = () => {
-  if (!state.tr || !state.tr.result) return;
-  state.tr.added = !state.tr.added;
-  if (state.tr.added) trApplyItems(state.tr.result);
-  else trClearItems(state.tr.result);
+  const t = state.tr;
+  if (!t) return;
+  const run = trRunById(t.run_id);
+  const k = trCurrentKey();
+  const res = k && t.results[k];
+  if (!res) return;
+  if (t.added.has(k)) { t.added.delete(k); delete t.runInputs[k]; trClearItems(res); }
+  else { t.added.add(k); t.runInputs[k] = trInputsSnapshot(t); trApplyItems(res); }
   renderTrTake();
   renderItemized();
-  setStatus(state.tr.added
-    ? "trench rows added to the takeoff — they will price, export and print like any other row"
-    : "trench rows removed from the takeoff");
+  renderTr();
+  calcSave();
+  calcStateDirty();
+  setStatus(t.added.has(k)
+    ? `${res.name}: trench rows added to the takeoff — they price, export and print like any other row`
+    : `${res.name}: trench rows removed from the takeoff`);
 };
 
 function renderTrTake() {
   const box = $("trTake"), btn = $("trAdd"), note = $("trTakeNote");
   if (!box || !btn || !note) return;
-  const res = state.tr && state.tr.result;
+  const t = state.tr;
+  const k = trCurrentKey();
+  const res = t && k && t.results[k];
   box.classList.toggle("off", !res);
   if (!res) return;
-  btn.textContent = state.tr.added ? "Remove from takeoff" : "Add to takeoff";
-  btn.classList.toggle("on", !!state.tr.added);
-  note.textContent = state.tr.added
-    ? `${res.name}: in the itemized takeoff. Recalculating this style refreshes its rows in place; other systems' rows are never touched.`
-    : "Not in the takeoff. Calculate only shows the numbers — press this to bid them.";
+  const on = t.added.has(k);
+  btn.textContent = on ? "Remove from takeoff" : "Add to takeoff";
+  btn.classList.toggle("on", on);
+  const nAdded = [...t.added].filter(x => x !== k).length;
+  note.textContent = on
+    ? `${res.name}: in the itemized takeoff (${res.bands.filter(b => b.lf > 0.05).length} band row${res.bands.length === 1 ? "" : "s"}, dig, bedding, backfill). Edits here refresh its rows in place; other runs' rows are never touched.`
+    : `Not in the takeoff. Calculate only shows the numbers — press this to bid ${res.name}.` + (nAdded ? ` ${nAdded} other run${nAdded === 1 ? "" : "s"} already added.` : "");
 }
 
-// The Pierce band table. Reads the snapshot taken at Calculate (state.tr
-// .calc), so its rows always describe the run and profile the volumes above
-// came from; editing d0/d1 after Calculate changes nothing here until the
-// next Calculate. The edge inputs re-render live - they re-slice the same
-// snapshot, which is safe because bands are read-only and never touch
-// state.extraItems.
+// The depth-band table. Reads the snapshot taken at the last calculation
+// (state.tr.calc), so its rows always describe the run and depth series the
+// volumes came from. The edge inputs are inputs like any other: they
+// re-slice the run and, for an added run, refresh its rows.
 function renderTrBands() {
   const box = $("trBandBox"), out = $("trBandRows");
   if (!box || !out) return;
@@ -16312,24 +14219,28 @@ function renderTrBands() {
   box.classList.toggle("off", !c);
   if (!c) return;
   out.innerHTML = "";
-  const bt = trDepthBands(c.runFt, c.d0, c.d1,
-                          parseFloat($("trBandEdge").value),
-                          parseFloat($("trBandStep").value), 64);
+  const bt = trSeriesBands(c.series, parseFloat($("trBandEdge").value), parseFloat($("trBandStep").value), 64);
   if (!bt) {
     out.innerHTML = '<div class="tr-bands-note">first edge and step must be positive numbers</div>';
     return;
   }
-  const fmtE = (v) => (Math.round(v * 100) / 100).toLocaleString();
   for (const b of bt.rows) {
+    if (!(b.lf > 0.05)) continue;
     const row = document.createElement("div");
     row.className = "tr-band-row";
     const lab = document.createElement("span");
-    lab.textContent = `${fmtE(b.lo)}–${fmtE(b.hi)} ft deep`;
+    lab.textContent = trBandText(b);
     const q = document.createElement("b");
     q.textContent = `${Math.round(b.lf).toLocaleString()} LF`;
     row.append(lab, q);
     out.appendChild(row);
   }
+  const src = document.createElement("div");
+  src.className = "tr-bands-note";
+  src.textContent = c.res && c.res.depthFrom === "profile"
+    ? "From the profile's depth at every station, mapped onto the run, as of the last calculation."
+    : "From the typed start/end depths, interpolated linearly along the run, as of the last calculation.";
+  out.appendChild(src);
   if (bt.truncated) {
     const d = document.createElement("div");
     d.className = "tr-bands-note";
@@ -16337,14 +14248,22 @@ function renderTrBands() {
     out.appendChild(d);
   }
 }
-$("trBandEdge").oninput = renderTrBands;
-$("trBandStep").oninput = renderTrBands;
+$("trBandEdge").oninput = () => {
+  const t = state.tr;
+  if (!t) return;
+  t.band_edge = parseFloat($("trBandEdge").value) || 6;
+  t.band_step = parseFloat($("trBandStep").value) || 2;
+  trRecalc();
+  calcStateDirty();
+};
+$("trBandStep").oninput = $("trBandEdge").oninput;
+
 
 // ---------- symbol counter ----------
 $("symClose").onclick = () => { $("symPanel").hidden = true; state.symMarks = null; draw(); };
 
 // ---------- whole job: every mark code across the document ---------------
-// Bill Dunn, 2026-08-21: "I want to know that I have 27 type D windows on
+// A window estimator, 2026-08-21: "I want to know that I have 27 type D windows on
 // the fifth floor." A per-page count cannot answer that and neither can a
 // per-page CSV - what he faxes a supplier is one quantity per type for the
 // whole building. The server reads the per-page symbol caches only, so this
@@ -16449,12 +14368,20 @@ function xsKey(page, label) {
 async function xsLoadApproved() {
   const n = (state.kinds || []).length;
   const pages = [];
-  // p<N>_elements.json exists only for an approved page; 404 means "not
-  // approved", which is a fact, not an error. Fetched 8 at a time so a
-  // 200-sheet job does not open 200 sockets.
-  for (let base = 0; base < n; base += 8) {
-    const batch = [];
-    for (let p = base; p < Math.min(base + 8, n); p++) batch.push(p);
+  // ASK FIRST. /api/job/{id}/approved lists the pages that carry an
+  // approved export; only those are fetched. Probing every page and
+  // reading 404 as "not approved" was a fact, not an error - but the
+  // browser logs each 404 as a console error, 15 on a 15-sheet job
+  // (a house set, headed sweep 2026-09-08). An older server without the
+  // route falls back to the probe.
+  let want = null;
+  try {
+    const r = await fetch(`/api/job/${state.job}/approved`);
+    if (r.ok) { const j = await r.json(); if (j && Array.isArray(j.pages)) want = j.pages.filter(Number.isInteger); }
+  } catch (e) { /* fall back to probing */ }
+  const all = want !== null ? want : Array.from({ length: n }, (_, i) => i);
+  for (let base = 0; base < all.length; base += 8) {
+    const batch = all.slice(base, base + 8);
     const got = await Promise.all(batch.map(async (p) => {
       try {
         const r = await fetch(`/api/job/${state.job}/page/${p}/elements`);
@@ -16617,7 +14544,8 @@ $("rollCsv").onclick = () => {
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }).join(",")).join("\n");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  // the accuracy flag, as on every CSV (BETA_CSV_TAIL, from /api/beta-notice: critic bid-content-1, RISK-5)
+  a.href = URL.createObjectURL(new Blob([csv + BETA_CSV_TAIL], { type: "text/csv" }));
   a.download = (state.docName || "takeoff").replace(/\.pdf$/i, "") + " - marks by sheet.csv";
   a.click(); URL.revokeObjectURL(a.href);
   setStatus("whole-job mark CSV exported");
@@ -16641,7 +14569,7 @@ $("symBtn").onclick = async () => {
   renderSym();
 };
 
-// One takeoff line per mark: "W1L × 27 EA". Bill Dunn's trade counts by
+// One takeoff line per mark: "W1L × 27 EA". A window estimator's trade counts by
 // mark, not by symbol, so the mark IS the label.
 function symAdd(g) {
   const label = (g.name || "").trim();
@@ -16659,6 +14587,15 @@ $("symAddAll").onclick = () => {
   renderItemized();
 };
 
+// A schedule read on ANOTHER sheet counts the whole set. One sheet of a set with several plan
+// sheets can hold fewer of a mark without being wrong (check 4B, 2026-09-27: floor 1's 21 of
+// W1L against the building's 148 read "CHECK" - on every floor, whatever its count), so fewer
+// than the schedule is not a contradiction there: the total is checked in Whole job. MORE than
+// the schedule is one on any sheet.
+function symSetWide() {
+  const info = state.symInfo || {};
+  return Number.isInteger(info.schedule_page) && info.schedule_page !== state.page;
+}
 function renderSym() {
   const box = $("symRows"), info = state.symInfo || {};
   box.innerHTML = "";
@@ -16694,7 +14631,20 @@ function renderSym() {
     $("symTotal").hidden = true;
     return;
   }
-  state.sym.forEach((g, k) => {
+  // SCHEDULE MARKS FIRST. A group the sheet's own schedule names is the
+  // one the estimator came for (the window count, the door count); the
+  // unnamed shape families follow in count order as before. Stable, so
+  // nothing else reorders.
+  const order = state.sym.map((g, i) => [g, i]);
+  order.sort((a, b) => {
+    const an = a[0].schedule_qty !== undefined ? 0 : a[0].name ? 1 : 2;
+    const bn = b[0].schedule_qty !== undefined ? 0 : b[0].name ? 1 : 2;
+    if (an !== bn) return an - bn;
+    if (an === 0) return String(a[0].table || "").localeCompare(String(b[0].table || ""))
+      || String(a[0].name).localeCompare(String(b[0].name), undefined, { numeric: true });
+    return a[1] - b[1];
+  });
+  order.map(x => x[0]).forEach((g, k) => {
     const row = document.createElement("div");
     const gv = (g._scope || { v: "unknown" });
     const aside = gv.v === "out" && !g._keep;
@@ -16707,6 +14657,9 @@ function renderSym() {
     nm.className = "sym-name";
     nm.placeholder = "name it (e.g. WINDOW)";
     nm.name = "sym-name-" + k;
+    // a schedule mark is named by its table too: "WINDOW 2", "DOOR D" -
+    // that is the row the takeoff gets, and "2 x 8 EA" would say nothing
+    if (g.name && g.table && !g._labelled) { g.name = g.table + " " + g.name; g._labelled = true; }
     nm.value = g.name || "";
     nm.oninput = () => { g.name = nm.value; };
     const meta = document.createElement("div");
@@ -16723,6 +14676,14 @@ function renderSym() {
       meta.appendChild(os);
       nm.placeholder = "not a schedule mark — name it only if you want it";
     }
+    if (g.from_tag) {
+      // the set carries no schedule: the name was read off the tag itself,
+      // and there is no printed quantity to check it against
+      const ft = document.createElement("span");
+      ft.className = "sym-off";
+      ft.textContent = " · read off the tag — no schedule in this set to check against";
+      meta.appendChild(ft);
+    }
     if (aside || g._keep) {
       // Set aside is a filter, never a deletion: the row stays in the list
       // with its count, and one click puts it back in the total. Nothing
@@ -16735,8 +14696,11 @@ function renderSym() {
     if (g.schedule_qty !== undefined) {
       const chk = document.createElement("span");
       const ok = g.schedule_qty === g.n;
-      chk.className = ok ? "sym-chk-ok" : "sym-chk-bad";
+      // fewer than a schedule that counts the whole set is no contradiction on one sheet
+      const part = !ok && symSetWide() && g.n < g.schedule_qty;
+      chk.className = ok ? "sym-chk-ok" : part ? "sym-chk-part" : "sym-chk-bad";
       chk.textContent = ok ? ` · schedule says ${g.schedule_qty} ✓`
+        : part ? ` · schedule says ${g.schedule_qty} for the whole set — ${g.n} of them on this sheet (the total is checked in Whole job)`
         : ` · schedule says ${g.schedule_qty} — CHECK`;
       meta.appendChild(chk);
     }
@@ -16778,12 +14742,13 @@ function renderSym() {
 // ---------- sheet callouts: the leaders as data ----------
 function centerOn(xPt, yPt) {
   const f = IMG_DPI / 72;
-  const kFit = Math.min(cv.clientWidth / state.img.width,
-                        cv.clientHeight / state.img.height) * 0.97;
+  const [RW, RH] = rotSize();
+  const kFit = Math.min(cv.clientWidth / RW, cv.clientHeight / RH) * 0.97;
   const k = Math.max(state.view.k, kFit * 4.5);
   state.view.k = k;
-  state.view.x = cv.clientWidth / 2 - xPt * f * k;
-  state.view.y = cv.clientHeight / 2 - yPt * f * k;
+  const [u, v] = imgToRot(xPt * f, yPt * f);      // where the point sits in the turned view
+  state.view.x = cv.clientWidth / 2 - u * k;
+  state.view.y = cv.clientHeight / 2 - v * k;
   draw();
 }
 
@@ -17404,7 +15369,7 @@ function renderAiBanner() {
   // runs. count and objects moved on 6 and 5 of 32 pages, so a chip for
   // them is a coin toss dressed as advice.
   const CALC = {
-    earthwork: { btn: "ewBtn", label: "EARTHWORK — cut & fill from these contours" },
+    earthwork: { btn: "cfBtn", label: "CUT / FILL — volumes from these contours" },
     trench:    { btn: "trBtn", label: "TRENCH — excavation + bedding for a pipe run" },
   };
   for (const m of (j.page_modes || []).filter(m => CALC[m])) {
@@ -17476,7 +15441,61 @@ function subExportRows() {
   return out;
 }
 
-$("approveBtn").onclick = async () => {
+// The scale part of the approve payload: exactly the scale the page shows in force (state.result.scale, the one the
+// chip, the quantities and the banner read) and the stamp of the record it was shown against. One function, so a test
+// can hold the payload against the screen on every path (critic 24, RISK-1).
+function approveScaleParts() {
+  const scOn = state.result && state.result.scale;
+  return {
+    scale: (scOn && +scOn.ft_per_paper_inch > 0)
+      ? { ft_per_paper_inch: +scOn.ft_per_paper_inch,
+          text: scOn.text || null,
+          picked_by_reviewer: !!scOn.picked_by_reviewer,
+          // the second axis, so the report cannot disagree with this panel
+          v_ft_per_paper_inch: state.vScale || null }
+      : null,
+    scale_seen: (state.result && state.result._scaleSeen) || null,
+  };
+}
+// after an approve recorded the page's scale: the record's new stamp, the review's number now, and the saved scale
+// marked as set against that record
+function approveScaleRecorded(stamp, ft) {
+  if (!state.result) return;
+  state.result._scaleSeen = stamp;
+  if (ft > 0) state.result._scaleRec = ft;
+  scaleMarkSeen();
+  renderSheetHead();
+}
+
+// A FAILED APPROVE SAYS SO (UI verify 2026-10-02 #9). With the request aborted the page showed
+// nothing - status empty, button normal, "Failed to fetch" only in the console - and a contractor
+// believes it approved. Every way approveRun can end without the server's yes now puts a plain
+// sentence in the status line; the button is never disabled, so it stays usable.
+// APPROVE-FAIL-BEGIN
+const APPROVE_NO_ANSWER = "Approve did not go through: the server did not answer. Check your connection and press Approve again.";
+function approveFailText(status, e) {
+  // the server's own words, whole, when it gave a reason (a list of field errors is joined)
+  if (e && Array.isArray(e.detail) && e.detail.length)
+    return "Approve was refused: " + e.detail.map(d =>
+      (d && Array.isArray(d.loc) ? d.loc.filter(x => x !== "body").join(".") + ": " : "")
+      + ((d && d.msg) || JSON.stringify(d))).join("; ");
+  if (e && e.detail && typeof e.detail === "string") return e.detail;
+  if (status >= 500)
+    return "Approve did not go through: the server had a problem (error " + status + "). Nothing new is approved. Press Approve again.";
+  return "Approve was refused (error " + status + "). Nothing new is approved.";
+}
+async function approveClick(run, say) {
+  try { await run(); }
+  catch (err) {
+    try { console.error(err); } catch (e2) { /* no console */ }
+    say("Approve stopped on this page before it finished (" + String((err && err.message) || err)
+      + "). Press Approve again.", "err");
+  }
+}
+// APPROVE-FAIL-END
+$("approveBtn").onclick = () => approveClick(approveRun, setStatus);
+async function approveRun() {
+  const job0 = state.job, page0 = state.page, gen0 = state.gen;   // the page approved (the cut / fill refusal below)
   const labels = {};
   const subRows = subExportRows();
   for (const [sid, inc] of state.include) if (inc) labels[sid] = state.labels.get(sid) || "unlabeled";
@@ -17509,17 +15528,11 @@ $("approveBtn").onclick = async () => {
         });
       }
   }
-  const scOn = state.result && state.result.scale;
-  const scaleOnScreen = (scOn && +scOn.ft_per_paper_inch > 0)
-    ? { ft_per_paper_inch: +scOn.ft_per_paper_inch,
-        text: scOn.text || null,
-        picked_by_reviewer: !!scOn.picked_by_reviewer,
-        // the second axis, so the report cannot disagree with this panel
-        v_ft_per_paper_inch: state.vScale || null }
-    : null;
-  const r = await fetch(`/api/job/${state.job}/page/${state.page}/approve`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ labels, image_dpi: 300, scale: scaleOnScreen,
+  const { scale: scaleOnScreen, scale_seen: scaleSeenSent } = approveScaleParts();
+  const body = JSON.stringify({ labels, image_dpi: 300, scale: scaleOnScreen,
+      // the stamp of the scale record this page loaded (scaleRestore): the server refuses, writing nothing, when the
+      // record changed since and the scale on screen disagrees with it (critic 23, RISK-1)
+      scale_seen: scaleSeenSent,
       // Taken from the ROWS THE PANEL IS SHOWING, like quantity_overrides
       // above and for the same reason: the old builder re-derived the pools
       // from state.result.styles, which knows nothing about chain labels, so
@@ -17631,35 +15644,86 @@ $("approveBtn").onclick = async () => {
         [...Object.values(labels), ...state.chainLabels.values()]
           .map(l => [l, parseFloat(store.getItem(priceKey(l)) || "") || 0])
           .filter(([, v]) => v > 0 ? true : false)
-      ) }),
-  });
+      ) });
+  setStatus("approving…", "busy");
+  let r;
+  try {
+    r = await fetch(`/api/job/${state.job}/page/${state.page}/approve`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body });
+  } catch (err) {
+    return setStatus(APPROVE_NO_ANSWER, "err");
+  }
   if (!r.ok) {
     // The server refuses a scale outside its sanity band (server.py
     // _sane_ft). Nothing was written; show the reason instead of "exported
     // undefined elements", which is what a blind .json() produced.
-    let why = `approve failed (${r.status})`;
+    let why = approveFailText(r.status, null);
     try {
       const e = await r.json();
+      // a refusal that came after this approve recorded its scale carries the record's new stamp: this page saw it
+      if (e && e.detail && typeof e.detail === "object" && typeof e.detail.scale_stamp === "string"
+          && state.job === job0 && state.page === page0 && state.gen === gen0 && state.result)
+        approveScaleRecorded(e.detail.scale_stamp, scaleOnScreen ? scaleOnScreen.ft_per_paper_inch : 0);
+      // The engine does not stand behind the cut / fill rows this approve carried (server.py _cf_rows_refused; critic
+      // 8, WRONG-1: the rows at 50 were exported beside the page's quantities at 40). Nothing was exported. Its rows
+      // now come in when it has standing ones, else the rows leave; either way the reviewer looks, then approves again
+      if (e && e.detail && typeof e.detail === "object" && e.detail.cutfill && Number.isInteger(e.detail.export_page)) {
+        // another page's approved export still carries the job's rows (critic 11, r-2): they stay on this page, which
+        // is right - that page must be approved again without them first
+        return setStatus("nothing exported: " + cfSentence(e.detail.cutfill), "err");
+      }
+      if (e && e.detail && typeof e.detail === "object" && e.detail.cutfill) {
+        // on the page approved, as it was: the reviewer may turn to another page while the engine is asked, and its rows
+        // landed on the page then on screen (critic 9, WRONG-3)
+        const here = () => state.job === job0 && state.page === page0 && state.gen === gen0;
+        const full = await cfEngineState(job0, true);
+        if (!here()) return setStatus(`nothing exported from page ${page0 + 1}: its cut / fill rows are not the engine's now - open it and check them`, "err");
+        // the engine's rows go only on the page that holds the job's rows, or on this one when none does: filed on any
+        // other page they were exported twice (critic 9, WRONG-3)
+        const other = full && full.project && Number.isInteger(full.rows_page) && full.rows_page !== page0;
+        if (full && full.project && !full.why && full.summary && !other) {
+          cfApplyItems(full.summary);
+          if (cfState.job === job0) cfState.rowsPage = page0;
+          fetch(`/api/job/${job0}/page/${page0}/cutfill/rows`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ added: true, pid: cfState.pid || "", rows: cfRows(full.summary), summary: full.summary }) }).catch(() => {});
+          return setStatus("nothing exported: the cut / fill rows were not the engine's numbers now - they are updated: check them and approve again", "err");
+        }
+        if (cfAdded()) cfDropItems();
+        const why409 = cfSentence((full && full.why) || e.detail.cutfill);
+        const said409 = other
+          ? `nothing exported: the cut / fill rows left this page - the job's rows are in page ${full.rows_page + 1}'s takeoff (one set per job). Approve again`
+          : "nothing exported: the cut / fill rows left the takeoff: " + why409 + " " + cfBackThenApprove(full && full.rows_page);
+        cfLeftNote(other ? `the job's rows are in page ${full.rows_page + 1}'s takeoff` : why409.replace(/\.$/, ""), said409);
+        return setStatus(said409, "err");
+      }
       // FastAPI's validation errors arrive as a LIST OF OBJECTS, and
       // String([{...}]) is "[object Object]" - which is what an operator was
-      // shown when an approve was rejected. Say which field and why.
-      if (e && Array.isArray(e.detail))
-        why = "approve rejected: " + e.detail.map(d =>
-          (Array.isArray(d.loc) ? d.loc.filter(x => x !== "body").join(".") + ": " : "")
-          + (d.msg || JSON.stringify(d))).join("; ");
-      else if (e && e.detail) why = String(e.detail);
-    } catch (err) { /* not JSON */ }
+      // shown when an approve was rejected. Say which field and why (approveFailText).
+      why = approveFailText(r.status, e);
+    } catch (err) { /* not JSON: the plain sentence for the status stands */ }
     return setStatus(why, "err");
   }
-  const j = await r.json();
+  let j;
+  try { j = await r.json(); }
+  catch (err) {
+    return setStatus("The server answered Approve but its reply could not be read. Open Summary to see whether this sheet is approved.", "err");
+  }
+  // the scale record as this approve left it: the page's next approve sends its stamp
+  if (typeof j.scale_stamp === "string" && state.job === job0 && state.page === page0 && state.gen === gen0 && state.result)
+    approveScaleRecorded(j.scale_stamp, scaleOnScreen ? scaleOnScreen.ft_per_paper_inch : 0);
+  // approved again: the server says whether this page's approval stands now (an approve that fixed nothing keeps the
+  // note: critic 22, RISK-1)
+  approvalOutdated(state.gen).catch(() => {});
   // Report the round trip. A correction that silently failed to land is the
   // whole defect this change exists to close, so an override that matched no
   // row turns the line red rather than passing unmentioned.
   const ovN = (j.overrides || []).length;
   const ovW = j.override_warnings || [];
   const nDropped = approveNotesDropped();
-  setStatus(`exported ${j.exported} elements` +
-    (j.items ? ` · ${j.items.length} items itemized` : "") +
+  // the page's old Earthwork calculator work left the bid with this approve: said once, first (critic legacy-5, RISK-4)
+  setStatus((j.ew_said ? j.ew_said + " · " : "") + `exported ${nWord(j.exported, "element")}` +
+    (j.items ? ` · ${nWord(j.items.length, "item")} itemized` : "") +
     // Disclosure, not a boast: the export carries the components' money and
     // their parent's name, but the server drops the structured parent link,
     // so say which export is the full-fidelity one instead of letting a
@@ -17683,7 +15747,7 @@ $("approveBtn").onclick = async () => {
   a.href = url(`/api/job/${state.job}/page/${state.page}/elements`);
   a.hidden = false;
   const rl = $("reportLink");
-  rl.href = url(`/api/job/${state.job}/report.pdf`);
+  rl.href = bsReportUrl();
   rl.hidden = false;
   const bl = $("bidsheetLink");
   if (bl) { bl.href = bsCsvUrl(); bl.hidden = false; }
@@ -17914,12 +15978,72 @@ function syncBuffer() {
 }
 
 function fitOnLoad() { state.img = null; draw(); }
+// PAGE ROTATION (2026-09-26, audit SC-03): a sideways upload - a landscape
+// sheet scanned onto a portrait page, the text running bottom to top - is
+// turned upright on screen in quarter turns. VIEW ONLY: the image, the
+// chains and every overlay are drawn in the page's own pixel frame and one
+// rotation is composed into the canvas transform, so nothing measured moves
+// - a length, an area or a count is the same at every turn. The turn is
+// kept per document and page (`rotKey`), like a typed scale, so a reload
+// shows the sheet the way it was left.
+//   state.view.rot  0 | 90 | 180 | 270, clockwise, degrees
+//   rotSize()       the rotated frame's size in image px (w, h swap at 90/270)
+//   imgToRot(p)     image px -> rotated frame px;  rotToImg(u) the inverse
+function viewRot() { const r = +(state.view && state.view.rot) || 0; return ((r % 360) + 360) % 360; }
+function rotKey() { return "rot::" + (state.docName || "?") + "::p" + state.page; }
+function rotSize() {
+  if (!state.img) return [0, 0];
+  const r = viewRot();
+  return (r === 90 || r === 270) ? [state.img.height, state.img.width] : [state.img.width, state.img.height];
+}
+function imgToRot(px, py) {
+  const W = state.img ? state.img.width : 0, H = state.img ? state.img.height : 0;
+  switch (viewRot()) {
+    case 90: return [H - py, px];
+    case 180: return [W - px, H - py];
+    case 270: return [py, W - px];
+    default: return [px, py];
+  }
+}
+function rotToImg(u, v) {
+  const W = state.img ? state.img.width : 0, H = state.img ? state.img.height : 0;
+  switch (viewRot()) {
+    case 90: return [v, H - u];
+    case 180: return [W - u, H - v];
+    case 270: return [W - v, u];
+    default: return [u, v];
+  }
+}
+// compose the quarter turn into a context already translated and scaled to
+// the view: after this, drawing in image px lands in the rotated frame
+function viewApplyRot(ctx) {
+  const r = viewRot();
+  if (!r || !state.img) return;
+  const W = state.img.width, H = state.img.height;
+  if (r === 90) { ctx.translate(H, 0); ctx.rotate(Math.PI / 2); }
+  else if (r === 180) { ctx.translate(W, H); ctx.rotate(Math.PI); }
+  else if (r === 270) { ctx.translate(0, W); ctx.rotate(-Math.PI / 2); }
+}
+// the toolbar button: a quarter turn clockwise, kept for this page
+function rotateView(delta) {
+  if (!state.img) return setStatus("open a page first", "err");
+  state.view.rot = (viewRot() + (delta || 90) + 360) % 360;
+  try {
+    if (state.view.rot) store.setItem(rotKey(), String(state.view.rot));
+    else store.removeItem(rotKey());
+  } catch (e) { /* private mode: the turn lasts the session */ }
+  fitView(); draw();
+  setStatus(state.view.rot
+    ? `view turned ${state.view.rot}° clockwise — a display turn only: every length, area and count is unchanged`
+    : "view upright again");
+}
 function fitView() {
   if (!state.img) return;
-  const kx = cv.clientWidth / state.img.width, ky = cv.clientHeight / state.img.height;
+  const [W, H] = rotSize();
+  const kx = cv.clientWidth / W, ky = cv.clientHeight / H;
   state.view.k = Math.min(kx, ky) * 0.97;
-  state.view.x = (cv.clientWidth - state.img.width * state.view.k) / 2;
-  state.view.y = (cv.clientHeight - state.img.height * state.view.k) / 2;
+  state.view.x = (cv.clientWidth - W * state.view.k) / 2;
+  state.view.y = (cv.clientHeight - H * state.view.k) / 2;
 }
 
 /* ---- canvas paint, in one place ----------------------------------------
@@ -18005,6 +16129,7 @@ function draw() {
   const { x, y, k } = state.view;
   ctx.save();
   ctx.translate(x, y); ctx.scale(k, k);
+  viewApplyRot(ctx);                  // the page's quarter turn, view only
   ctx.fillStyle = CV_SHEET;
   ctx.fillRect(0, 0, state.img.width, state.img.height);
   ctx.drawImage(state.img, 0, 0);
@@ -18041,60 +16166,35 @@ function draw() {
     }
     ctx.globalAlpha = 1.0;
   }
-  // state.result gate: on a page switch state.ew outlives the old result
-  // until the new one lands (which resets it) - without the gate the old
-  // page's map would paint over the new page's image in that window
-  if (state.result && state.ew && state.ew.map && state.ew.map.img) {
-    // cut/fill map under the linework: the PNG is one pixel per grid
-    // cell, stretched to its page-pt bbox (pt -> image px like the chains)
-    const fm = IMG_DPI / 72;
-    const [bx0, by0, bx1, by1] = state.ew.map.bbox;
-    ctx.globalAlpha = 0.55;
-    ctx.drawImage(state.ew.map.img, bx0 * fm, by0 * fm, (bx1 - bx0) * fm, (by1 - by0) * fm);
-    ctx.globalAlpha = 1.0;
-    // PRINTED DEPTHS: one number per block, the block's mean dz - cut red
-    // with a minus, fill blue with a plus - the same ink as the zone
-    // numbers, so a map and a zone never disagree on what red means
-    const lab = state.ew.map.labels;
-    if (lab && lab.length && $("ewMapNums") && $("ewMapNums").checked) {
-      const spPt = state.ew.map.spacing && stFtPerPt() ? state.ew.map.spacing / stFtPerPt() : 0;
-      const fontPx = Math.max(spPt ? spPt * fm * 0.30 : 0, 9 / k);
-      ctx.font = `600 ${fontPx}px "IBM Plex Sans", -apple-system, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.lineWidth = fontPx / 5;
-      ctx.strokeStyle = CV_LABEL_HALO;
-      for (const c of lab) {
-        const dzv = c.dz === 0 ? 0 : c.dz;
-        const t = (dzv > 0 ? "+" : "") + dzv.toFixed(1);
-        ctx.fillStyle = dzv < 0 ? CV_GZ_CUT_LAB : dzv > 0 ? CV_GZ_FILL_LAB : CV_GZ_ZERO_LAB;
-        ctx.strokeText(t, c.x * fm, c.y * fm);
-        ctx.fillText(t, c.x * fm, c.y * fm);
-      }
-    }
+  // the pipe RUN the trench tool has picked (or is hovering in its list):
+  // a wide translucent ribbon UNDER the linework, and the system's
+  // structures as rings with their names while the panel is open
+  if (state.result && state.trRunHot && state.trRunHot.length > 1) {
+    const f = IMG_DPI / 72;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 140, 0, 0.55)";
+    ctx.lineWidth = 9 / k;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath();
+    state.trRunHot.forEach((p, i) => i ? ctx.lineTo(p[0] * f, p[1] * f) : ctx.moveTo(p[0] * f, p[1] * f));
+    ctx.stroke();
+    ctx.restore();
   }
-  // GRADING ZONES: each saved zone's dz map, clipped to its own polygon so
-  // the tint reads as the zone, not the zone's bounding box. Same result
-  // gate as the ew map above: a stale zone image must not survive a page
-  // switch (gzPageReset clears them at both chokepoints anyway).
-  if (state.result && state.gzones.length) {
-    const fg = IMG_DPI / 72;
-    for (const z of state.gzones) {
-      if (!z.img || !z.result || !z.result.bbox) continue;
-      const [zx0, zy0, zx1, zy1] = z.result.bbox;
-      ctx.save();
+  if (state.result && state.trRuns && state.trRuns.structures && !$("trPanel").hidden) {
+    const f = IMG_DPI / 72;
+    ctx.save();
+    ctx.font = `${11 / k}px sans-serif`;
+    for (const s of state.trRuns.structures) {
+      if (!s.name) continue;   // only structures on a run carry a name
+      ctx.strokeStyle = "rgba(200, 60, 0, 0.9)";
+      ctx.lineWidth = 2 / k;
       ctx.beginPath();
-      ctx.moveTo(z.polygon[0][0] * fg, z.polygon[0][1] * fg);
-      for (let i = 1; i < z.polygon.length; i++)
-        ctx.lineTo(z.polygon[i][0] * fg, z.polygon[i][1] * fg);
-      ctx.closePath();
-      ctx.clip();
-      ctx.globalAlpha = 0.55;
-      ctx.drawImage(z.img, zx0 * fg, zy0 * fg,
-                    (zx1 - zx0) * fg, (zy1 - zy0) * fg);
-      ctx.restore();
-      ctx.globalAlpha = 1.0;
+      ctx.arc(s.x * f, s.y * f, Math.max(s.r * f, 6 / k), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(200, 60, 0, 0.95)";
+      ctx.fillText(s.name, s.x * f + 8 / k, s.y * f - 6 / k);
     }
+    ctx.restore();
   }
   if (state.result) {
     const f = IMG_DPI / 72; // pt -> image px
@@ -18217,7 +16317,7 @@ function draw() {
       // seg_counts partitions points into the SOURCE ink marks: draw each
       // mark as its own solid subpath so every dash lands exactly where
       // the sheet printed it. A repeating template can only approximate -
-      // its phase drifts off the real bars (the Oncor property-line
+      // its phase drifts off the real bars (the substation property-line
       // complaint). Template remains the fallback for chains without mark
       // boundaries (native dash arrays, custom drawn lines, old results).
       if (ch._scOK === undefined)
@@ -18268,7 +16368,7 @@ function draw() {
       // wide enough to cover the widest stroke the chain loop can have given
       // this line - the elevation-group paint is 3x the plotted weight, and
       // a thinner knock-back left the group colour showing on an edge the
-      // number leaves out (seen live on Barn S1-1.3 with the groups painted)
+      // number leaves out (seen live on a structural sheet S1-1.3 with the groups painted)
       const wKnock = Math.max(Math.max(ch.width || 0.35, 0.35) * fo * 3.4, 3.6 / k) + 1.5 / k;
       for (const [a, b] of row.skip) {
         const seg = polySlice(ch.points, a, b);
@@ -18447,139 +16547,6 @@ function draw() {
     ctx.lineWidth = 1.5 / k; ctx.strokeStyle = CV_VERTEX; ctx.stroke();
   }
   // in-progress drawn line
-  if (state.tool === "ew-bound-draw" && state.ewBoundDraft.length) {
-    const f2b = IMG_DPI / 72;
-    ctx.save();
-    ctx.strokeStyle = CV_EWBOUND;
-    ctx.lineWidth = 2 / state.view.k;
-    ctx.setLineDash([8 / state.view.k, 5 / state.view.k]);
-    ctx.beginPath();
-    ctx.moveTo(state.ewBoundDraft[0][0] * f2b, state.ewBoundDraft[0][1] * f2b);
-    for (let i = 1; i < state.ewBoundDraft.length; i++)
-      ctx.lineTo(state.ewBoundDraft[i][0] * f2b, state.ewBoundDraft[i][1] * f2b);
-    // THE SNAP, SHOWN BEFORE THE CLICK COMMITS. While the pointer is inside
-    // the close radius the rubber band runs to the FIRST corner instead of to
-    // the cursor, so the shape on screen is exactly the shape the click will
-    // make. Without this the snap is a surprise; with it, it is a promise.
-    if (state.polySnap)
-      ctx.lineTo(state.ewBoundDraft[0][0] * f2b, state.ewBoundDraft[0][1] * f2b);
-    else if (state.ewBoundHover && !panning)
-      ctx.lineTo(state.ewBoundHover[0] * f2b, state.ewBoundHover[1] * f2b);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    for (const q of state.ewBoundDraft) {
-      ctx.beginPath();
-      ctx.arc(q[0] * f2b, q[1] * f2b, 4 / state.view.k, 0, Math.PI * 2);
-      ctx.fillStyle = CV_EWBOUND_DOT;
-      ctx.fill();
-    }
-    if (state.polySnap) drawPolyCloseRing(state.ewBoundDraft[0], CV_EWBOUND);
-    ctx.restore();
-  }
-  // grading zone: in-progress hand-drawn outline (same grammar as the
-  // limit of work above, purple so the two drafts cannot be confused)
-  if (state.tool === "gz-draw" && state.gzDraft.length) {
-    const fz = IMG_DPI / 72;
-    ctx.save();
-    ctx.strokeStyle = CV_GZONE_DRAFT;
-    ctx.lineWidth = 2 / k;
-    ctx.setLineDash([8 / k, 5 / k]);
-    ctx.beginPath();
-    ctx.moveTo(state.gzDraft[0][0] * fz, state.gzDraft[0][1] * fz);
-    for (let i = 1; i < state.gzDraft.length; i++)
-      ctx.lineTo(state.gzDraft[i][0] * fz, state.gzDraft[i][1] * fz);
-    if (state.polySnap)
-      ctx.lineTo(state.gzDraft[0][0] * fz, state.gzDraft[0][1] * fz);
-    else if (state.gzHover && !panning)
-      ctx.lineTo(state.gzHover[0] * fz, state.gzHover[1] * fz);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    for (const q of state.gzDraft) {
-      ctx.beginPath();
-      ctx.arc(q[0] * fz, q[1] * fz, 4 / k, 0, Math.PI * 2);
-      ctx.fillStyle = CV_GZONE;
-      ctx.fill();
-    }
-    if (state.polySnap) drawPolyCloseRing(state.gzDraft[0], CV_GZONE_DRAFT);
-    ctx.restore();
-  }
-  // grading zone: in-progress box drag
-  if (state.gzDrag) {
-    const fz = IMG_DPI / 72;
-    const a = state.gzDrag.a, b = state.gzDrag.b;
-    ctx.strokeStyle = CV_GZONE;
-    ctx.lineWidth = 1.8 / k;
-    ctx.setLineDash([5 / k, 4 / k]);
-    ctx.strokeRect(Math.min(a[0], b[0]) * fz, Math.min(a[1], b[1]) * fz,
-                   Math.abs(b[0] - a[0]) * fz, Math.abs(b[1] - a[1]) * fz);
-    ctx.setLineDash([]);
-  }
-  // saved grading zones: outline + centroid badge (+ per-cell dz numbers
-  // when the zone's "123" toggle is on). The badge rect is recorded on the
-  // zone in page pt so a plain canvas click can reopen its modal.
-  if (state.result && state.gzones.length) {
-    const fz = IMG_DPI / 72;
-    for (const z of state.gzones) {
-      const poly = z.polygon;
-      ctx.save();
-      ctx.strokeStyle = CV_GZONE_SAVED;
-      ctx.lineWidth = 2 / k;
-      ctx.setLineDash([9 / k, 5 / k]);
-      ctx.beginPath();
-      ctx.moveTo(poly[0][0] * fz, poly[0][1] * fz);
-      for (let i = 1; i < poly.length; i++)
-        ctx.lineTo(poly[i][0] * fz, poly[i][1] * fz);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.setLineDash([]);
-      // per-cell dz labels, styled like a grading plan: red = cut
-      // (negative), blue = fill (positive). NOTE this is the opposite hue
-      // for cut than the tint underneath (the client's map convention is
-      // cut BLUE) - the reference aerial's label convention, kept as
-      // specified; the panel row's title says which is which.
-      if (z.showNums && z.result && z.result.cell_labels
-          && z.result.cell_labels.length) {
-        const aPt2 = Math.abs(polyAreaPt(poly));
-        const bPt = Math.sqrt(aPt2 / z.result.cell_labels.length);
-        const fontPx = Math.max(bPt * fz * 0.30, 7 / k);
-        ctx.font = `600 ${fontPx}px "IBM Plex Sans", -apple-system, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.lineWidth = fontPx / 5;
-        ctx.strokeStyle = CV_LABEL_HALO;
-        for (const c of z.result.cell_labels) {
-          const dzv = c.dz === 0 ? 0 : c.dz;   // -0.0 reads as a cut of nothing
-          const t = (dzv > 0 ? "+" : "") + dzv.toFixed(1);
-          ctx.fillStyle = dzv < 0 ? CV_GZ_CUT_LAB : dzv > 0 ? CV_GZ_FILL_LAB : CV_GZ_ZERO_LAB;
-          ctx.strokeText(t, c.x * fz, c.y * fz);
-          ctx.fillText(t, c.x * fz, c.y * fz);
-        }
-      }
-      // centroid badge: name + the two volumes an estimator scans for
-      const [cx, cy] = gzCentroid(poly);
-      const j = z.result;
-      const txt = z.err ? `${z.name} · ${z.err}`
-        : j ? `${z.name} · cut ${gzK(j.cut_yd3)} / fill ${gzK(j.fill_yd3)} CY`
-        : `${z.name} · computing…`;
-      const fpx = 12 / k;
-      ctx.font = `600 ${fpx}px "IBM Plex Sans", -apple-system, sans-serif`;
-      const w = ctx.measureText(txt).width + 12 / k;
-      const h = fpx + 10 / k;
-      const bx = cx * fz - w / 2, by = cy * fz - h / 2;
-      ctx.fillStyle = z.err ? CV_GZ_BADGE_ERR : CV_GZ_BADGE_BG;
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(bx, by, w, h, 4 / k);
-      else ctx.rect(bx, by, w, h);
-      ctx.fill();
-      ctx.fillStyle = CV_GZ_BADGE_TXT;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(txt, cx * fz, cy * fz);
-      // pt-space hit box for the click-to-reopen
-      z._badge = [bx / fz, by / fz, (bx + w) / fz, (by + h) / fz];
-      ctx.restore();
-    }
-  }
   if (state.tool === "drawline" && state.drawPts.length) {
     const f2 = IMG_DPI / 72;
     ctx.beginPath();
@@ -18709,6 +16676,7 @@ function draw() {
     }
   }
   drawStructural(ctx, k);
+  drawFlooring(ctx, k);
   ctx.restore();
   // the card rides the sheet: a pan or a zoom moves the line under it, so its
   // anchor is recomputed on the same frame rather than drifting off the line
@@ -18760,7 +16728,7 @@ function cssColor(c, w) {
   // near-white linework draws as the faint grey it visually is on the
   // sheet - at EVERY weight. White ink is invisible on paper: rendering
   // heavy white strokes dark (tried 2026-08-20) painted phantom dash
-  // rows and squiggles along the Oncor boundary, because the white w3.3
+  // rows and squiggles along a substation boundary, because the white w3.3
   // family there is plotter-invisible linework, NOT an outlined core.
   // The truly bold lines (property line) are black ink and need no help.
   if (r > 225 && g > 225 && b > 225) return CV_FAM_NEARWHITE;
@@ -18776,12 +16744,6 @@ cv.addEventListener("mousedown", (e) => {
   if (state.tool === "wz-draw" && state.result) {
     const p = ptFromEvent(e);
     state.wzDrag = { a: p, b: p.slice() };
-    return;
-  }
-  // grading-zone box: same drag grammar as the work area
-  if (state.tool === "gz-box" && state.result) {
-    const p = ptFromEvent(e);
-    state.gzDrag = { a: p, b: p.slice() };
     return;
   }
   // marquee multi-select: Shift+drag boxes whole lines into a selection
@@ -18813,11 +16775,6 @@ cv.addEventListener("mousedown", (e) => {
 addEventListener("mousemove", (e) => {
   if (state.wzDrag) {
     state.wzDrag.b = ptFromEvent(e);
-    draw();
-    return;
-  }
-  if (state.gzDrag) {
-    state.gzDrag.b = ptFromEvent(e);
     draw();
     return;
   }
@@ -18853,23 +16810,6 @@ addEventListener("mousemove", (e) => {
   draw();
 });
 addEventListener("mouseup", (e) => {
-  if (state.gzDrag) {
-    const d = state.gzDrag;
-    state.gzDrag = null;
-    const x0 = Math.min(d.a[0], d.b[0]), x1 = Math.max(d.a[0], d.b[0]);
-    const y0 = Math.min(d.a[1], d.b[1]), y1 = Math.max(d.a[1], d.b[1]);
-    // a click is not a zone: same 2 pt floor as the work-area box
-    if (x1 - x0 < 2 || y1 - y0 < 2) {
-      setStatus("grading zone: DRAG a box (that was a click) — Esc exits the tool", "busy");
-      draw();
-      return;
-    }
-    state.tool = null;
-    syncCursor();
-    draw();
-    gzModalOpen(null, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
-    return;
-  }
   if (state.wzDrag) {
     const d = state.wzDrag;
     state.wzDrag = null;
@@ -18939,7 +16879,9 @@ function ptFromEvent(e) {
   const r = cv.getBoundingClientRect();
   const { x, y, k } = state.view;
   const f = IMG_DPI / 72;
-  return [((e.clientX - r.left) - x) / k / f, ((e.clientY - r.top) - y) / k / f];
+  // screen -> the rotated frame -> the page's own pixel frame -> pt
+  const [px, py] = rotToImg(((e.clientX - r.left) - x) / k, ((e.clientY - r.top) - y) / k);
+  return [px / f, py / f];
 }
 
 // index of the selected line's vertex under the cursor, or null
@@ -18961,7 +16903,7 @@ function vertexAt(e) {
 // MERGE. The detector breaks one physical run into several chains wherever
 // the sheet interrupts it - a label sitting in the line, or another line
 // crossing it, where the drafter leaves a real gap so the crossing reads.
-// Measured on SWR Guide Civil p8: 29 such breaks, 27 of them a genuinely
+// Measured on a residential civil set p8: 29 such breaks, 27 of them a genuinely
 // empty gap on the line's own layer. Bridging those automatically is a
 // separate job; this is the operator's version, for the ones automation will
 // not catch.
@@ -19011,7 +16953,7 @@ function mergeClick(px, py) {
 
 // end-to-end. ACROSS FAMILIES IN ONE PRESS since 2026-09-10: the detector
 // files the two halves of one contour under two families often enough that
-// Pierce's demo needed R then J on "all 50" of a sheet's contours. The
+// A contractor's demo needed R then J on "all 50" of a sheet's contours. The
 // other piece is moved into the SELECTED line's family (the one the
 // operator started from) and then merged - one gesture, one undo step -
 // and the status line says which family lost the footage, because a merge
@@ -19183,6 +17125,11 @@ function handleCanvasClick(e) {
     return;
   }
   if (state.tool === "measure") {
+    // RIGHT-CLICK REMOVES THE LAST POINT; it never adds one. The canvas
+    // treats a still mouseup of any button as a click, so a right-click
+    // used to extend the ruler (audit D31). Backspace and one Esc do the
+    // same; the context menu is suppressed while the ruler is armed.
+    if (e.button === 2) { measureDropLast(); return; }
     state.measurePts.push([px, py]);
     updateMeasureInfo();
     draw();
@@ -19263,6 +17210,16 @@ function handleCanvasClick(e) {
     return;
   }
   const best = chainHitAt(px, py);   // the same pick the Ctrl+click uses
+  // TRENCH: with the panel open, a click on a line that belongs to a pipe
+  // run picks that run (the mockup's "click the line", a contractor's ask). The
+  // ordinary selection below still happens, so the line card is unchanged.
+  if (best && !state.tool && state.tr && !$("trPanel").hidden && state.trRuns && state.trRuns.runs) {
+    const run = trRunAt(best.chain_id, px, py);
+    if (run) {
+      trSelectRun(run.id);
+      setStatus(`run ${run.name} picked: ${run.from} to ${run.to}, ${run.length_ft !== null ? trFmtFt(run.length_ft) + " LF" : Math.round(run.length_pt) + " pt"}`);
+    }
+  }
   state.selected = best && state.selected !== best.chain_id ? best.chain_id : null;
   state.selPt = null;
   state.clickPt = state.selected !== null ? [px, py] : null;
@@ -19486,8 +17443,6 @@ function snapTolPt(px) { return snapTolFrom(px, state.view.k, IMG_DPI); }
 // which is the half of the request that makes it predictable rather than
 // magic ("show the snap before the click").
 function polyActiveDraft() {
-  if (state.tool === "ew-bound-draw") return state.ewBoundDraft;
-  if (state.tool === "gz-draw") return state.gzDraft;
   if (state.tool === "st-draw") return (state.st && state.st.drawPts) || null;
   return null;
 }
@@ -19750,7 +17705,7 @@ $("splitBtn").onclick = splitSelected;
 // WHICH END GROWS. Until 2026-09-10 extendTo grew whichever end was nearer
 // the DESTINATION click, so a short line flipped ends depending on where
 // the operator pointed ("it goes to the closest end point... funky" -
-// Pierce call, on screen). The end is decided from what the operator did
+// contractor call, on screen). The end is decided from what the operator did
 // to the line, in this order: a picked vertex that IS an end; else the end
 // nearer where the line was clicked to select it; else (nothing known) the
 // end nearer the destination, as before. Returns 0 or last index.
@@ -19996,7 +17951,7 @@ $("flattenBtn").onclick = () => {
 // A CORNER IS NOT JITTER. Douglas-Peucker keeps every point that sits
 // further than `eps` off the chord through its neighbours, so a bend
 // survives and a wobble does not. 4.0 pt is measured, not chosen: across
-// Oncor C-04, Barn C3.0 and C2.1 (222,760 vertices) a 0.5 pt tolerance
+// a substation C-04, a civil C3.0 and C2.1 (222,760 vertices) a 0.5 pt tolerance
 // removes 78% of all vertices for 0.03-0.25% of the length - that whole
 // population is trace noise - while the same sheets lose 0.41-2.59% at
 // 3 pt, which is real shape, because contours are genuinely curved.
@@ -20196,7 +18151,7 @@ function drawFamAsk(lenPt) {
   const styles = [...state.result.styles]
     .sort((a, b) => styleLenPt(b) - styleLenPt(a));
   // Two families CAN carry the same familyName - a legend row that names
-  // several detected styles does exactly that (Oncor C-04 has three called
+  // several detected styles does exactly that (one substation C-04 has three called
   // "EXISTING CONTOUR (legend)"). Two identical rows in a picker whose whole
   // job is "never land in a family the operator did not pick" is a trap, so
   // where a name repeats, the pattern signature that distinguishes them is
@@ -20419,15 +18374,45 @@ $("faithfulBtn").onclick = () => {
   setStatus(state.faithful ? "drawing true line patterns" : "drawing bold uniform strokes");
   draw();
 };
+// a quarter turn of the view, clockwise (see rotateView: display only)
+if ($("rotateBtn")) $("rotateBtn").onclick = () => rotateView(90);
 
 $("measureBtn").onclick = () => {
   const on = state.tool === "measure";
   state.tool = on ? null : "measure";
   if (on) { state.measurePts = []; $("measureInfo").hidden = true; }
+  else if (state.selected !== null) {
+    // ARMING THE RULER CLEARS THE LINE SELECTION. With a line still
+    // selected, Backspace - the natural "undo the last point" key - ran the
+    // delete handler and removed the LINE from the takeoff while the ruler
+    // kept its points (audit D31, seen live on C8.0: "1 line(s) removed").
+    // The ruler owns the keys while it is armed; the selection returns when
+    // the operator clicks a line again.
+    state.selected = null; state.selPt = null; state.clickPt = null;
+    updateSelBar(null);
+  }
   $("measureBtn").classList.toggle("active", !on);
-  setStatus(on ? "" : "measure: click points on the sheet; Esc to finish");
+  setStatus(on ? "" : "measure: click points on the sheet — Backspace, right-click or Esc removes the last point; Esc with no points ends");
   draw();
 };
+// the ruler's "undo the last point": Backspace, right-click, or one Esc
+function measureDropLast() {
+  if (state.tool !== "measure") return false;
+  if (state.measurePts.length) {
+    state.measurePts.pop();
+    updateMeasureInfo();
+    setStatus(state.measurePts.length
+      ? `measure: ${state.measurePts.length} point(s) — last point removed`
+      : "measure: all points removed — Esc again ends", "busy");
+    draw();
+  }
+  return true;
+}
+// the browser's context menu never opens over an armed ruler: the right
+// button is its "remove the last point"
+cv.addEventListener("contextmenu", (e) => {
+  if (state.tool === "measure") e.preventDefault();
+});
 function updateMeasureInfo() {
   const info = $("measureInfo");
   if (state.measurePts.length < 2) { info.hidden = true; return; }
@@ -20439,7 +18424,7 @@ function updateMeasureInfo() {
     ? `${(pt / 72 * sc.ft_per_paper_inch).toFixed(1)} ft`
     : fmtLen(pt);
   info.appendChild(read);
-  // Calibrate the sheet from this line. Jeff Ellis (ECI Foundations,
+  // Calibrate the sheet from this line. A foundation contractor's
   // feedback 2026-08-27, BLOCKED): "The selected line should be 24' but is
   // showing 9'. I wonder if you can make it so that the scale can be entered
   // manually based on a selected line." The operator measures something whose
@@ -20497,383 +18482,6 @@ function distToSeg(px, py, a, b) {
   return Math.hypot(px-qx, py-qy);
 }
 
-// WHERE A CONTOUR'S ELEVATION CAME FROM, AND WHY THE CHIP HAS TO SAY.
-//
-// /earthwork/suggest tags every row with `how`. Only three of its five
-// values mean a label PRINTED ON THE SHEET was read:
-//   radius / inline  native PDF text sitting on (or in the break of) this
-//                    line - glyphs, exact
-//   gap-ocr          the label printed in this line's own break, read off
-//                    the raster because the drafter exploded it to vectors
-// The other two are the engine's own arithmetic and nothing on the sheet
-// states them:
-//   inherited        no label on this chain at all. The value was carried
-//                    across a <=60 pt end-to-end weld from another fragment
-//                    the engine believes is the same contour
-//                    (earthwork.suggest_elevations pass 2, dist 999)
-//   interval-infill  counted between two OTHER contours at the sheet's own
-//                    contour interval (earthwork.infill_intervals; the row
-//                    also carries inferred:true and a `src` sentence).
-//                    Those two ends are NOT necessarily labelled themselves
-//                    - the server words each end by what backs it
-//                    (earthwork._anchor) and the `src` sentence says which,
-//                    if any, the sheet prints a label for.
-//
-// MEASURED, Oncor Cloudcrest engine page index 3 = printed sheet C-04,
-// 2026-08-31: 150 rows - 89 printed (20 radius + 69 gap-ocr) and 61 not
-// (26 inherited + 35 interval-infill), 40.7% of them. The chip used to tell
-// the operator that all 150 were "read off the sheet's own printed labels".
-//
-// Anything else - a row with no `how`, or a value this function has not been
-// taught - is UNKNOWN and says so. Abstain, never guess a provenance
-// (CLAUDE.md §5: where no honest ranking exists, keep it visible).
-//
-// GLOSSARY: "contour interval" = the fixed height step between one contour
-// line and the next on a grading sheet (this sheet's is printed in its own
-// legend and the server quotes it back in `src`). Convention read off the
-// sheet, not assumed.
-// The visible mark a `radius` hit carries ON THE NUMBER.
-//
-// TAGGED NUMBERS. /earthwork/suggest reports `label_tag`: the ALL-CAPS
-// token printed on the same text row as the matched number ("BW", "TW",
-// "ME", "EW" on Oncor C-04). Those are spot annotations whose meanings the
-// sheet prints in its OWN legend - C-04's reads "BW 100.0  PROPOSED BOTTOM
-// OF WALL ELEVATION" - so a tagged number was placed for that annotation
-// and is almost certainly not this contour's elevation. The tag is shown
-// verbatim and never expanded: the sheet's legend is where its meaning
-// lives, and inventing an expansion is what CLAUDE.md §4 forbids.
-function elevRadiusMark(ev) {
-  const d = (ev && ev.dist !== null && ev.dist !== undefined) ? ev.dist : null;
-  const tg = ev && ev.tag ? String(ev.tag) : "";
-  if (tg)
-    return "“" + tg + "” label"
-      + (d === null ? " nearby" : " " + d + " pt away");
-  return d === null ? "label nearby, not in the break" : "label " + d + " pt away";
-}
-const ELEV_PROV = {
-  // A THIRD KIND, BECAUSE A RADIUS HIT IS NOT A LABEL READ.
-  // `radius` is the NEAREST printed number within 16 pt of the line - real
-  // text on the sheet, but nothing says it belongs to THIS contour.
-  // Measured on C-04 chain 168: the nearest number, 2.7 pt away, is
-  // "551.2 BW", and the sheet's own legend keys BW as PROPOSED BOTTOM OF
-  // WALL ELEVATION - a wall spot height, with a "550" contour leader a few
-  // points further off. The chip used to read a bare "EL 551.2" with a
-  // solid border, indistinguishable from a label read out of this line's
-  // own break, and the whole caveat lived in a tooltip. It is now ON THE
-  // NUMBER (elevRadiusMark above): the distance always, and the sheet's own
-  // tag whenever the matched token carries one.
-  radius: { kind: "nearby", cls: "nearby", tag: "", mark: elevRadiusMark,
-    why: "The number IS printed on this sheet, but not in this line’s own "
-       + "break — it is the nearest printed number to the line, and that it "
-       + "belongs to this contour is our assumption, not the sheet’s "
-       + "statement. A tagged number (“BW”, “TW”, “ME”…) is a spot "
-       + "annotation this sheet keys in its own legend, so it is placed for "
-       + "that annotation and probably is not a contour label at all — "
-       + "check the drawing before anything is priced on it." },
-  inline: { kind: "printed", cls: "", tag: "",
-    why: "Read off the label this sheet prints in the break in this contour "
-       + "— real text in the PDF, not a reading of ours." },
-  // A READING OF A PICTURE IS NOT A READING OF TEXT, AND THE CHIP HAS TO
-  // SHOW WHICH.
-  //
-  // `inline` and `gap-ocr` make the same claim about the SOURCE and it is
-  // true for both: the sheet prints a label in this contour's own break. It
-  // is NOT the same claim about the DIGITS - `inline` copies text out of the
-  // PDF, `gap-ocr` transcribes a picture, and a transcription can disagree
-  // with what is printed. So the tooltip says "a number", never "this
-  // number": chain 417 below is a live case where the two differ. gap-ocr
-  // keeps kind "printed" and keeps the SOLID border - the border in
-  // this vocabulary says where the number came from (solid = this line's own
-  // label, dotted = a number printed nearby, dashed = nothing printed it),
-  // and marking gap-ocr "inferred" would be a new lie in the other
-  // direction. What differs is not the SOURCE, it is the TRANSCRIPTION: the
-  // drafter exploded that label to vectors, so there is no text to read and
-  // the digits come out of an OCR pass over a raster.
-  //
-  // MEASURED live, Oncor Cloudcrest engine page index 3 = printed sheet C-04
-  // (job e183a0d44d89, fresh detect, 2026-09-01): gap-ocr is 69 of the 150
-  // rows - 46%, the largest bucket - and it is the ONE class where the digits
-  // themselves can be wrong. Confirmed wrong on that very sheet: chain 417,
-  // label_xy (2100.7, 1484.2), dist 0.5, returned z = 551.0. The 140x110 pt
-  // patch at that point, rendered from the source PDF at 600 dpi, prints a
-  // collapsed stack of contour labels reading 582 / 582 / 581 / 579 / 580 and
-  // no 551 anywhere (out/verify/2026-09-01/honesty-defect-zero/).
-  //
-  // Until now that caveat lived only in the tooltip and the chip read a bare
-  // "EL 545", byte-identical to an `inline` read. The number is what gets
-  // read and acted on, so the caveat now rides ON the number in the same
-  // grammar the chip already uses for "· inferred" and "· source unknown".
-  // `kind` answers "is a label printed on that line" - and for gap-ocr it
-  // is: the break holds a number, which is why this is "printed" and not
-  // "inferred". `machine` answers the OTHER question, the one the printed
-  // report and the basis line beside the volume actually ask: were these
-  // DIGITS read out of the sheet's own text, or produced by a recogniser
-  // that can be wrong? Until 2026-09-02 only `kind` existed, so 17
-  // machine-read elevations on the DEM outline sheet were counted as
-  // printed and the report note read word for word like a fully native
-  // sheet's - measured, with the volume it backed 44% low on cut and 49%
-  // high on fill. One axis could not answer both questions (CLAUDE.md s5).
-  "gap-ocr": { kind: "printed", machine: true, cls: "ocr",
-    tag: "read from a picture",
-    why: "The sheet DOES print a number in the break in this contour — that "
-       + "a label is there is not in doubt. But the drafter drew it as line "
-       + "work rather than text, so there is no text to read: the digits "
-       + "SHOWN HERE were read by machine off a picture of the sheet, and "
-       + "they can disagree with what is printed. Where several labels are "
-       + "crowded into one break this reader has already returned a number "
-       + "the sheet prints nowhere. It is the digits that are uncertain, not "
-       + "that a label is there. Check them against the drawing before "
-       + "anything is priced on them." },
-  inherited: { kind: "inferred", cls: "inferred", tag: "inferred",
-    why: "NOT printed on this line. Nothing is labelled on it; the engine "
-       + "joined it end to end to another piece of what it takes to be the "
-       + "same contour and carried that piece's elevation across. If the "
-       + "join is wrong so is this number — check it against the drawing "
-       + "before anything is priced on it." },
-  // THE CLIENT'S STATIC HALF MUST NOT CONTRADICT THE SERVER'S SENTENCE THAT
-  // FOLLOWS IT. This read "counted between two LABELLED contours" while
-  // elevProvenanceDetail appended the server's own `src` immediately after —
-  // and that sentence often says the opposite, e.g. "counted between 579
-  // (line 140, itself unlabelled) and 583 (line 282, itself unlabelled) …
-  // NEITHER end carries a printed label". MEASURED live on Oncor Cloudcrest
-  // engine page index 3 = printed sheet C-04 (job e183a0d44d89, fresh
-  // detect, 2026-09-01): 35 interval-infill rows — 22 counted between two
-  // ends the sheet does label, 2 with one labelled end, 11 with NEITHER end
-  // labelled. So 13 of 35 (37%) of these tooltips asserted "labelled" over a
-  // server sentence saying no such thing, in the same tooltip. The static
-  // half now states only what is always true — two OTHER contours — and
-  // hands the question of what backs each end to the server's sentence,
-  // which is the true part and is the half that must NOT be deleted.
-  "interval-infill": { kind: "inferred", cls: "inferred", tag: "inferred",
-    why: "NOT printed anywhere on the sheet. It was counted between two "
-       + "other contours at this sheet's contour interval. Those two ends "
-       + "are not necessarily labelled either — the sentence that follows "
-       + "is the reader's own account, and it names both ends and says "
-       + "which of them, if any, the sheet prints a label for. The same "
-       + "“inferred” row the earthwork panel lists on SKIP." },
-};
-const ELEV_PROV_UNKNOWN = { kind: "unknown", cls: "unknown",
-  tag: "source unknown",
-  why: "The elevation reader did not say where this number came from, so we "
-     + "cannot tell you whether the sheet prints it or whether we worked it "
-     + "out. Treat it as unconfirmed until you have checked the drawing." };
-function elevProvenance(how) {
-  return ELEV_PROV[how] || ELEV_PROV_UNKNOWN;
-}
-// The part of the sentence that is specific to THIS line rather than to the
-// method: how far the printed number was, or the server's own account of
-// which two contours an infilled row was counted between AND what backs
-// each of those two ends (they are frequently unlabelled themselves).
-function elevProvenanceDetail(ev) {
-  if (!ev || typeof ev !== "object") return "";
-  if (ev.how === "radius") {
-    const bits = [];
-    if (ev.dist !== null && ev.dist !== undefined)
-      bits.push(`The nearest printed number is ${ev.dist} pt from this line.`);
-    if (ev.tag)
-      bits.push(`On the sheet it is printed as “${ev.z} ${ev.tag}” — look up `
-        + `“${ev.tag}” in this sheet's own legend.`);
-    return bits.length ? " " + bits.join(" ") : "";
-  }
-  return ev.src ? " " + ev.src : "";
-}
-
-// The word (or phrase) the chip puts next to the number. Static for most
-// provenances; a `radius` hit computes it per row because the distance and
-// the sheet's own tag are what make it checkable.
-function elevChipTag(prov, ev) {
-  if (prov && typeof prov.mark === "function") {
-    const m = prov.mark(ev);
-    if (m) return m;
-  }
-  return (prov && prov.tag) || "";
-}
-
-// The sentence the operator gets when the elevation read fails. It names
-// BOTH ways back in, because both now work: selecting a line again re-asks
-// (ensureElev retries out of the `failed` state), and so does EARTHWORK.
-const ELEV_FAIL = "could not read this sheet's elevations — click the line "
-  + "again, or press EARTHWORK, to retry";
-
-// Page reset for the elevation state machine. One writer, so "what does a
-// fresh page look like" cannot drift between selectPage and loadResult.
-function elevReset() {
-  state.elev = { status: "idle", byChain: null };
-  state.suggestReq = null;   // a cached flight belongs to the old page
-}
-
-// CONTOUR ELEVATIONS FOR THE SELECTION CHIP.
-//
-// Read once per page off the sheet's own labels (the earthwork reader
-// already pairs them), so selecting a topo line shows its elevation without
-// opening any panel. The map's VALUE is an object, never a bare number: the
-// number alone cannot say where it came from, and shipping it alone is what
-// let the chip claim every one of them was printed.
-//
-// FOUR STATES, NOT A SENTINEL (see state.elev). The old version used `null`
-// for "in flight" and wrote `new Map()` in its catch, so a dropped
-// connection looked exactly like "this sheet labels no contours" - and,
-// because the guard was `if (state.elevMap !== undefined) return`, it was
-// PERMANENT: the elevation never came back for that page and the operator
-// had no way to ask again. Loading, empty-but-answered and failed are now
-// three different things, and failed is retryable.
-async function ensureElev() {
-  const st = state.elev;
-  if (st.status === "loading" || st.status === "ready") return;
-  state.elev = { status: "loading", byChain: null };
-  // The guard loadResult and poll already carry, which this never had.
-  // Chain ids are per page and collide NUMERICALLY across pages, so a
-  // suggest that lands after a page switch does not throw - it quietly
-  // labels a line on the new sheet with an elevation read off the old one.
-  // Reproduced live: switch page mid-fetch and the map ends up holding
-  // page 3's 150 rows while state.page is 2. That is this codebase's worst
-  // shape, a confident wrong number (CLAUDE.md §5).
-  const gen = state.gen, job = state.job, page = state.page;
-  const stale = () => gen !== state.gen || job !== state.job
-                   || page !== state.page;
-  let j;
-  try {
-    j = await suggestOnce();
-  } catch (err) {
-    if (stale()) return;          // elevReset() already owns this page
-    state.elev = { status: "failed", byChain: null };
-    // A read that never answered says so in its own words - the operator
-    // watching a frozen panel is asking "is it dead?", not "did it fail?"
-    setStatus(err && err.timeout ? EW_SUGGEST_TIMEOUT : ELEV_FAIL, "err");
-    // AND THE READOUT HAS TO HEAR ABOUT IT. suggestOnce's own settle handler
-    // repaints first, while this status is still `loading`, so without this
-    // line the box was left saying "reading this sheet's labels…" over a
-    // read that had already given up - measured live at T+720 s on the
-    // 12-minute deadline, every other surface correct and this one frozen.
-    //
-    // renderSelElev, NOT updateSelBar. updateSelBar re-asks out of the
-    // `failed` state - that is the operator's retry, and it is deliberate -
-    // so calling it from this catch is a retry loop that re-fires the read
-    // as fast as it can fail. Reproduced live on a dropped connection: the
-    // panel showed its failure sentence while state.elev sat on `loading`
-    // forever, one request per cycle. Only the readout is repainted here.
-    if (state.selected !== null) repaintSelElev(chainById(state.selected));
-    return;
-  }
-  if (stale()) return;
-  state.elev = { status: "ready", byChain: new Map(j.suggestions.map(
-    s => [s.chain_id, { z: s.z, how: s.how, src: s.src || "",
-                        dist: s.dist, tag: s.label_tag || null }])) };
-  if (state.selected !== null) updateSelBar(chainById(state.selected));
-}
-// THE ELEVATION READOUT — one number, one place, every time.
-//
-// REPORTED (screen share, 2026-09-02): "some of these you click and it says
-// the height and some it doesn't … I'm not seeing it anywhere obvious", and
-// then, when it finally appeared, "the elevation popped up on your thing.
-// It just moved … now it's on the bottom. So sometimes it hides."
-//
-// WHAT IT ACTUALLY WAS — measured live on Oncor Cloudcrest engine page
-// index 3 = printed C-04, 589 chains, 150 elevations:
-//
-//   NOT overflow. The chip was rendered at 100% of its width in all 24 of
-//   1280/1366/1440/1920 px x 100/110/125% zoom, with a 24-character family
-//   name, panel open and closed - down to a 1024 px CSS viewport, where
-//   .sel-txt was squeezed to 29.8 px and the chip still measured 166/166 px
-//   visible. Structurally it could not be the clipped one either: #selInfo
-//   overflows to the RIGHT and the chip was its second child, so the two
-//   things behind the ellipsis were "in list" and the colour swatch.
-//   NOT z-order: elementFromPoint at the chip's centre returned the chip.
-//
-//   IT MOVED, and half the time IT WAS NEVER BUILT.
-//   * Over 14 contours at 1536 px the chip's left edge ranged 920.4 ->
-//     1023.0 px, because the pill is CENTRED and its width changes with the
-//     description, the provenance wording and which controls are present.
-//   * Hovering any style row shows #ghostInfo in the same wrapping row:
-//     .canvas-status went 29.2 -> 75.2 px tall and the chip jumped 785.4 ->
-//     747.4 px. That is "it just moved … now it's on the bottom".
-//   * 439 of 589 chains - 110 of the 218 in a contour family - have no
-//     elevation at all, and the old code rendered NOTHING for them. Absence
-//     was silent, so "no elevation for this line" looked identical to "the
-//     read has not finished" and to "the chip is hiding somewhere".
-//   * And for the first 217.2 s after Detect on that sheet (measured, cold
-//     /earthwork/suggest) NO line has one, because the single read is still
-//     running. Every contour clicked in that window rendered nothing.
-//
-// SO: its own box, anchored to a corner of the sheet area, nothing else on
-// its line, a constant caption, and a sentence for every state - including
-// the two that used to render nothing. Its top/right are constants, so no
-// sibling's width, no window width and no zoom can move it.
-// THE READOUT MAY NOT CONTRADICT WHAT IS LOADED. renderSelElev takes the
-// reading as an argument, and three callers had only the chain, so they
-// passed none and the no-number branch printed "none printed for this
-// line" OVER a contour whose elevation was in byChain the whole time.
-// Measured live 2026-09-03 on Oncor C-04 chain 102: the box read "EL 558.5
-// · “BW” label 10.6 pt away", then pressing Tools > Earthwork with the same
-// line still selected turned it into "none printed for this line",
-// permanently, while state.elev.status was "ready" and byChain still held
-// 558.5. A false denial is worse than the blank it replaced (CLAUDE.md s5).
-// So the chain-only callers go through here and the reading is re-derived
-// from the one place that has it.
-function repaintSelElev(ch) {
-  if (!ch) return renderSelElev(null);
-  const ev = (state.elev && state.elev.byChain instanceof Map)
-    ? state.elev.byChain.get(ch.chain_id) : undefined;
-  renderSelElev(ch, ev, elevProvenance(ev && ev.how));
-}
-
-function renderSelElev(ch, ev, prov) {
-  const box = $("selElev");
-  if (!box) return;
-  box.textContent = "";
-  if (!ch || !state.result) { box.hidden = true; return; }
-  box.hidden = false;
-  const cap = document.createElement("span");
-  cap.className = "se-cap";
-  cap.textContent = "elevation";
-  box.appendChild(cap);
-  const z = (ev && typeof ev === "object") ? ev.z : ev;
-  if (z !== undefined && z !== null) {
-    // THE PROVENANCE TRAVELS WITH THE NUMBER, NOT IN A TOOLTIP.
-    // An elevation the sheet does NOT print is marked in the text itself -
-    // the same word, and the same reason, as the earthwork panel's per-row
-    // "inferred" badge. On C-04 that is 61 of 150. The tooltip carries the
-    // long form and, for an infilled row, the server's own sentence naming
-    // the two contours it was counted between.
-    const elc = document.createElement("span");
-    elc.className = "sel-el" + (prov && prov.cls ? " " + prov.cls : "");
-    const mark = elevChipTag(prov, ev);
-    elc.textContent = `EL ${z}` + (mark ? ` · ${mark}` : "");
-    elc.title = (prov ? prov.why : "") + elevProvenanceDetail(ev);
-    box.appendChild(elc);
-    return;
-  }
-  // NO NUMBER IS A STATE, NOT A BLANK. Which of the four it is decides
-  // whether the operator should wait, retry, or accept that this line has
-  // none - and rendering nothing answered none of those three questions.
-  const st = state.elev || {};
-  // A READ IS RUNNING whenever there is a request in flight, even one the
-  // EARTHWORK panel started - this readout must not say "not read yet" over
-  // a read the operator is already waiting on.
-  const ms = elevReadElapsed();
-  const busy = st.status === "loading" || ms !== null;
-  const note = document.createElement("span");
-  note.className = "se-none";
-  note.textContent =
-      busy ? "reading this sheet's labels…"
-             + (ms === null ? "" : " " + fmtElapsed(ms))
-    : st.status === "failed"  ? "read failed — click the line again to retry"
-    : st.status === "ready"   ? "none printed for this line"
-    :                           "not read yet";
-  note.title =
-      busy
-        ? "The sheet's elevation labels are being read. The first read of a "
-          + "page is slow (measured 217 s on Oncor C-04); every read after "
-          + "it on the same page is about a second."
-    : st.status === "failed" ? ELEV_FAIL
-    : st.status === "ready"
-        ? "The read finished and paired no elevation with this line — "
-          + "either the sheet prints none for it, or it is not a contour. "
-          + "It is not a line that is still loading."
-    : "No elevation read has been asked for on this sheet yet.";
-  box.appendChild(note);
-}
-
 // LINE-CARD ==================================================================
 // WHAT DID I JUST CLICK, WHERE I AM ALREADY LOOKING.
 //
@@ -20910,7 +18518,8 @@ function lineCardAnchor(ch) {
   const q = P[Math.floor(P.length / 2)];
   const { x, y, k } = state.view;
   const f = IMG_DPI / 72;
-  return [q[0] * f * k + x, q[1] * f * k + y];
+  const [u, v] = imgToRot(q[0] * f, q[1] * f);
+  return [u * k + x, v * k + y];
 }
 
 // The selection moved. A NEW line un-dismisses the card, because "hide this
@@ -20990,20 +18599,6 @@ function lineCardSync() {
     hv.textContent = "hidden by the eye";
     row.appendChild(hv);
   }
-  // the elevation, through the shared helpers so the two surfaces cannot word
-  // provenance differently
-  const ev = state.elev.byChain instanceof Map
-    ? state.elev.byChain.get(ch.chain_id) : undefined;
-  const z = (ev && typeof ev === "object") ? ev.z : ev;
-  if (z !== undefined && z !== null) {
-    const prov = elevProvenance(ev && typeof ev === "object" ? ev.how : undefined);
-    const mark = elevChipTag(prov, ev);
-    const ec = document.createElement("span");
-    ec.className = "lc-tag el" + (prov.cls ? " " + prov.cls : "");
-    ec.textContent = `EL ${z}` + (mark ? ` · ${mark}` : "");
-    ec.title = prov.why + elevProvenanceDetail(ev);
-    row.appendChild(ec);
-  }
   el.appendChild(row);
   el.hidden = false;
   lineCardPlace(ch);
@@ -21055,26 +18650,13 @@ function updateSelBar(ch) {
   // that suite belongs to the branch reworking this bar's elevation chip. A
   // typeof guard keeps this item additive to it - the same idiom draw() uses.
   if (typeof lineCardOnSelect === "function") lineCardOnSelect(ch);
-  if (!ch) { $("selInfo").textContent = ""; renderSelElev(null); return; }
+  if (!ch) { $("selInfo").textContent = ""; return; }
   const st = state.result.styles.find(s => s.style_id === ch.style_id);
   const label = state.chainLabels.get(ch.chain_id) ||
     state.labels.get(ch.style_id) || (st && st.suggested_label) || "";
   const pt = state.selPt !== null
     ? ` · point ${state.selPt + 1}/${ch.points.length} selected`
     : ` · ${ch.points.length} points`;
-  // Ask once per page - and ask AGAIN after a failure. A dropped connection
-  // must not retire this page's elevations for good; selecting a line is the
-  // operator's retry, and suggestOnce keeps it to one request in flight.
-  if (state.elev.status === "idle" || state.elev.status === "failed")
-    ensureElev();
-  // {z, how, src, dist} - see ELEV_PROV. A bare number would be an elevation
-  // with no provenance, which is the whole defect that shape exists to
-  // prevent; if one ever arrives it falls through to "source unknown" below
-  // rather than being shown as if the sheet printed it.
-  const ev = state.elev.byChain instanceof Map
-    ? state.elev.byChain.get(ch.chain_id) : undefined;
-  const z = (ev && typeof ev === "object") ? ev.z : ev;
-  const prov = elevProvenance(ev && typeof ev === "object" ? ev.how : undefined);
   // the length here is the line's GEOMETRY; when a work area is drawn and
   // this line crosses its edge, say what part of it actually counts
   const wf = wzChainFrac(ch);
@@ -21092,12 +18674,6 @@ function updateSelBar(ch) {
   // back; the elevation is not left to that (see the chip below).
   txt.title = txt.textContent;
   info.appendChild(txt);
-  // THE ELEVATION DOES NOT LIVE ON THIS PILL. See renderSelElev(): it is
-  // the number the operator acts on, and on this bar its screen position
-  // was a function of how long the description happened to be, of which of
-  // the pill's five children were present, and of whether the hover readout
-  // was sharing the row. It has a corner of the sheet area to itself now.
-  renderSelElev(ch, ev, prov);
   // family switcher, right on the bar: the SAME mutation the Reclassify
   // tool ends in (reclassCore), without the pick-click trip across the
   // canvas. Listed by footage so the family you want is near the top.
@@ -21152,7 +18728,7 @@ function deleteVertex() {
   // A line needs TWO points to exist, so a point can go from any line with
   // three or more. The guard sat at three (2026-09-10): a short line with a
   // bad kink refused the point delete, and the operator's next Delete, with
-  // no point picked, took the whole line (Pierce call, on screen).
+  // no point picked, took the whole line (contractor call, on screen).
   if (ch.points.length <= 2) {
     setStatus("a line needs two points — remove the whole line instead", "err");
     return true;
@@ -21185,7 +18761,7 @@ function refreshStyleRows() {
     const meta = row.querySelector(".style-meta");
     if (meta) {
       meta.textContent = `${fmtQty(styleLenPt(s))} · `
-        + `${styleLiveCount(s.style_id)} lines · ${s.signature}`;
+        + `${nWord(styleLiveCount(s.style_id), "line")} · ${s.signature}`;
       const wOut = styleLiveOut(s.style_id);
       if (wOut > 0.05)
         meta.textContent += ` · ${fmtQty(wOut)} outside work area`;
@@ -21265,7 +18841,7 @@ $("restoreBtn").onclick = () => {
 // anything, naming ONLY the chains it is about to touch - a snapshot is a
 // handful of deep-copied chain entries plus their membership in
 // state.excluded and state.chainLabels, never a copy of the whole sheet.
-// Measured on Barn C3.1 (1,638 chains): a single-chain snapshot is
+// Measured on a civil sheet C3.1 (1,638 chains): a single-chain snapshot is
 // 476 B min / 633 B median / 29.0 KB max (a 1,701-point contour), against
 // 1.49 MB for a whole-sheet copy per edit - the design this replaces.
 // Chains the edit CREATES need no listing: their ids are >= the snapshot's
@@ -22793,6 +20369,9 @@ addEventListener("keydown", (e) => {
   }
   if ((e.key === "Delete" || e.key === "Backspace") && !typing()) {
     e.preventDefault();
+    // an armed ruler owns Backspace: it removes the ruler's last point and
+    // never a line (audit D31)
+    if (state.tool === "measure") { measureDropLast(); return; }
     // a marquee selection outranks the single selection: the operator built
     // the set on purpose, and the bar's Delete all is the same action
     if (state.multiSel && state.multiSel.size) multiDeleteAll();
@@ -22863,6 +20442,9 @@ addEventListener("keydown", (e) => {
       return;
     }
     if (state.tool === "measure") {
+      // one Esc removes the last point; Esc with no points left ends the
+      // ruler - the same back-up-one-step grammar as draw
+      if (state.measurePts.length) { measureDropLast(); return; }
       state.tool = null; state.measurePts = [];
       $("measureBtn").classList.remove("active");
       $("measureInfo").hidden = true;
@@ -22967,10 +20549,10 @@ function sheetFactsText() {
   if (!state.result) return "";
   const sc = state.result.scale;
   const nsug = sc ? 0 : scaleSuggestions().length;
-  return `${state.result.chains.length} lines in ${state.result.styles.length} styles`
+  return `${nWord(state.result.chains.length, "line")} in ${nWord(state.result.styles.length, "style")}`
     + (sc ? ` · scale ${scaleShort(sc)} (${sc.source}`
         + (sc.agrees === true ? ", matches the drawn bar"
-          : sc.agrees === false ? `, but the drawn bar says ${sc.bar_ft_per_paper_inch} ft/in`
+          : sc.agrees === false ? `, but the drawn bar says ${cfScaleTxt(sc.bar_ft_per_paper_inch)} ft/in`
           : "") + ")"
       : nsug ? ` · no scale set — ${nsug} unchecked reading`
           + `${nsug === 1 ? "" : "s"} offered, none chosen`
@@ -22980,7 +20562,9 @@ function renderSheetFacts() {
   const el = $("sheetFacts"), seg = $("sbSheet");
   if (!el || !seg) return;
   const sc = state.result && state.result.scale;
-  seg.textContent = sheetFactsText();
+  // the legend's own sample bars, unticked at load (D05), said beside the
+  // sheet facts so the count on screen never hides why a family is short
+  seg.textContent = sheetFactsText() + swatchFactsText();
   // the same class setStatus() was given for this sentence, on the element
   // that now carries it
   el.className = "sb-facts" + (sc && sc.agrees === false ? " err" : "");
@@ -23004,9 +20588,1632 @@ function renderZoomFact() {
   el.textContent = pct === null ? "" : `zoom ${pct}%`;
 }
 
+// ---------- flooring calculator: rooms by floor type ----------
+// THE FLOORING TAKEOFF, as a flooring contractor does it by hand (via Christian,
+// 2026-09-02): draw each room, colour it by the flooring that goes in it,
+// add up the square feet per colour; trace the walls for base / molding
+// footage. Here:
+//   Pick rooms   click inside a room; the server fills to the walls of the
+//                line types you have SHOWING (the style checkboxes are the
+//                role assignment: hide the dimension strings and fixtures,
+//                keep the walls), bridging the doors the detector found.
+//                takeoff_engine/rooms.py has the method and its limits.
+//   Close a gap  two clicks across an opening the sheet leaves open (a cased
+//                opening, a partition drawn in no line style, a doorway the
+//                detector missed); the fill treats that line as wall.
+//   Draw outline click the corners yourself - the traced fallback.
+// Every room gets a floor TYPE; the type's colour paints the room on the
+// sheet (the colour is the estimator's convention, never the drawing's),
+// and the takeoff gets one "Flooring - <type>" SF row and one
+// "Base/molding - <type>" LF row per type, base = ring less the door
+// openings on it. Numbers come from the sheet scale; with none the panel
+// shows pt and prices nothing (same rule as the structure tool).
+// NO TRUTH DATA YET: the corpus is civil. The first real flooring plans with
+// the client's own marked-up takeoff are what score these numbers.
+SECTIONS.push(["flHead", ["flHint", "flTypes", "flBody", "flRows", "flActions"]]);
+{
+  const head = $("flHead");
+  head.querySelector("h2").onclick = () => {
+    const closed = head.classList.toggle("closed");
+    for (const cid of ["flHint", "flTypes", "flBody", "flRows", "flActions"]) $(cid).hidden = closed;
+  };
+}
+const FL_PALETTE = ["#4e9af1", "#f2a33a", "#4fc27a", "#e05c8a", "#b58cf5", "#e8d44d", "#49c7c9", "#c98b5a"];
+const FL_DEFAULT_TYPES = ["Carpet", "LVP", "Tile", "Hardwood"];
+const FL_UNASSIGNED = "#9aa3b2";
+const FL_CLOSE_COLOR = "#ff5d3b";
+const FL_LABEL_RX = /^(Flooring|Base\/molding|Waste|Wall area|Transition strips|Walls) \u2014 /;
+const FL_TOOLS = ["fl-pick", "fl-draw", "fl-close", "fl-deduct", "fl-edit"];
+// WHAT FLOORING STOPS AT. The engine lists every fixture-sized cell the
+// non-wall linework encloses inside a room (rooms.room_objects) and names
+// it from its CAD layer and size; this table says which kinds come out of
+// the flooring by default. Tubs and showers: yes - flooring stops at the
+// rim. Cabinets: NO (Koby, 2026-09-09: "not cabinets") - many crews run
+// the floor under base cabinets, and the switch is in the panel. Toilets,
+// appliances and furniture are floored under. A "shape" is a cell on a
+// sheet with no layer names - listed, never deducted on its own.
+const FL_DEDUCT_DEFAULTS = { tub: true, shower: true, cabinet: false, appliance: false,
+                             toilet: false, sink: false, plumbing: false, furniture: false,
+                             other: false, shape: false };
+const FL_KIND_GROUPS = [["tubs & showers", ["tub", "shower"]], ["cabinets & islands", ["cabinet"]],
+                        ["appliances & equipment", ["appliance"]], ["toilets & sinks", ["toilet", "sink", "plumbing"]],
+                        ["furniture", ["furniture"]], ["other shapes", ["other", "shape"]]];
+// 6'-8" is the standard residential door height - an INFERENCE from general
+// practice, not read off any sheet (the door schedule is the better source
+// when it prints heights). Used for one thing: taking a door opening out of
+// a wall's area, so the wall over the door still counts as wall.
+const FL_DOOR_HT_FT = 6.667;
+// What a wall line type is, from its CAD layer name or legend label. The
+// operator can overrule any of these from the panel (fl.wallClass).
+const FL_WALL_CLASSES = ["exterior", "interior", "shear", "wall (unclassified)", "not a wall"];
+const flFmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(v))
+  ? "?" : v.toLocaleString(undefined, { maximumFractionDigits: d });
+const flFtIn = (ft) => {
+  if (!Number.isFinite(ft)) return "?";
+  const f = Math.floor(ft), i = Math.round((ft - f) * 12 * 8) / 8;
+  const w = Math.floor(i), fr = i - w;
+  const frs = fr ? { 0.125: " 1/8", 0.25: " 1/4", 0.375: " 3/8", 0.5: " 1/2", 0.625: " 5/8", 0.75: " 3/4", 0.875: " 7/8" }[fr] || "" : "";
+  return `${f}'-${w}${frs}"`;
+};
+
+function flNewType(name, i, extra) {
+  return Object.assign({ name, color: FL_PALETTE[i % FL_PALETTE.length], sf_price: 0, lf_price: 0, waste_pct: 0 }, extra || {});
+}
+function flSync() {
+  if (!state.fl || state.fl.result !== state.result) {
+    state.fl = { result: state.result, types: FL_DEFAULT_TYPES.map((n, i) => flNewType(n, i)),
+                 rooms: [], closures: [], seq: 1, hot: null, busy: false, drawPts: [],
+                 hover: null, closeDraft: null, lastType: 0,
+                 // the outline being reshaped by hand: {room, drag, hover}
+                 edit: null,
+                 // a ceiling height for rooms whose label carries none (typed)
+                 default_ceiling_ft: null,
+                 // wall line types by class {style_id: class}; faces per wall
+                 // (1 or 2, null = as measured); whether the centreline rows
+                 // go into the takeoff
+                 wallClass: {}, wallFaces: null, wallRows: false, _faceCache: null,
+                 // the line types showing at the last room pick - the walls
+                 // the picks were made with, put back after a reload
+                 wallStyles: null,
+                 // which kinds of object come out of the flooring by default
+                 deductDefaults: Object.assign({}, FL_DEDUCT_DEFAULTS) };
+    if (FL_TOOLS.includes(state.tool)) state.tool = null;
+    $("flPanel").hidden = true;
+    $("flResult").textContent = "";
+    flApplySaved();
+  }
+  $("flBtn").hidden = !state.result;
+  return state.fl;
+}
+// ---- pure ----
+// what comes out of a room's flooring: the objects ticked to deduct (tubs
+// and showers by default) plus anything the operator clicked out
+function flDeductSf(r) {
+  let s = 0;
+  for (const o of (r && r.objects) || []) if (o.deduct) s += +o.area_sf || 0;
+  for (const d of (r && r.deductions) || []) s += +d.area_sf || 0;
+  return s;
+}
+// the room's flooring area: wall to wall, less what the flooring stops at
+function flNetSf(r) {
+  if (!r || r.area_sf === null || r.area_sf === undefined) return null;
+  return Math.max(0, r.area_sf - flDeductSf(r));
+}
+// the deductions in words: "tub 10.8 SF, shower 9.2 SF"
+function flDeductText(r) {
+  const parts = [];
+  for (const o of (r && r.objects) || []) if (o.deduct) parts.push(`${o.kind} ${flFmt(o.area_sf, 1)} SF`);
+  for (const d of (r && r.deductions) || []) parts.push(`${d.name || "clicked out"} ${flFmt(d.area_sf, 1)} SF`);
+  return parts.join(", ");
+}
+// wall footage for the base: the ring less the door openings on it
+function flWallLf(r) {
+  if (!r || r.perim_lf === null || r.perim_lf === undefined) return null;
+  return Math.max(0, r.perim_lf - (r.openings_lf || 0));
+}
+// the ceiling height in force for a room, and where it came from: the
+// note in the room's own label ("9'-1 1/8\" CEILING"), a height the operator
+// typed on the row, or the panel's default for rooms with no note
+function flCeiling(r, fl) {
+  if (r && Number.isFinite(+r.ceiling_ft) && +r.ceiling_ft > 0) return { ft: +r.ceiling_ft, by: r.ceiling_by || "sheet" };
+  if (fl && Number.isFinite(+fl.default_ceiling_ft) && +fl.default_ceiling_ft > 0) return { ft: +fl.default_ceiling_ft, by: "default" };
+  return null;
+}
+// wall area for drywall / paint: perimeter x ceiling height, less each door
+// opening at door height (the wall above a door is still wall). null when
+// there is no height or no scale.
+function flWallSf(r, fl) {
+  const c = flCeiling(r, fl);
+  if (!c || !r || r.perim_lf === null || r.perim_lf === undefined) return null;
+  const gross = r.perim_lf * c.ft;
+  const doors = Math.min(gross, (r.openings_lf || 0) * Math.min(c.ft, FL_DOOR_HT_FT));
+  return { gross, net: gross - doors, doors, ft: c.ft, by: c.by };
+}
+// per floor type: SF, base LF, room count, waste SF at the type's
+// percentage, wall SF of its rooms; rooms with no type are their own row
+// at the end so they are never silently outside the takeoff
+function flTotals(types, rooms, fl) {
+  const out = (types || []).map((t, i) => ({ i, name: t.name, color: t.color, sf: 0, lf: 0, rooms: 0,
+                                             waste_pct: +t.waste_pct || 0, waste_sf: 0, wall_sf: 0, wall_rooms: 0 }));
+  const un = { i: -1, name: "unassigned", color: FL_UNASSIGNED, sf: 0, lf: 0, rooms: 0, waste_pct: 0, waste_sf: 0, wall_sf: 0, wall_rooms: 0 };
+  for (const r of rooms || []) {
+    const t = Number.isInteger(r.type) && out[r.type] ? out[r.type] : un;
+    t.rooms += 1; t.sf += flNetSf(r) || 0; t.lf += flWallLf(r) || 0;
+    const w = flWallSf(r, fl);
+    if (w) { t.wall_sf += w.net; t.wall_rooms += 1; }
+  }
+  for (const t of out) t.waste_sf = t.sf * t.waste_pct / 100;
+  if (un.rooms) out.push(un);
+  return out;
+}
+// TRANSITION STRIPS: a doorway two picked rooms share, where the floor
+// changes type. Each room's boundary carries the door bridges the fill
+// used (hinge -> strike, r = the door width); the same bridge on two rooms
+// of different types is one transition, its width the door's. A doorway
+// whose other side is not picked yet is counted separately and said.
+// THE ROOMS ON EITHER SIDE ARE FOUND BY GEOMETRY, not by which fill
+// listed the bridge. A bridge is drawn as wall for every fill on the
+// sheet, so both rooms' outlines run along it - but a fill "uses" a bridge
+// only when its raster contour passes within 5 px of the bridge's
+// midpoint, and on a house set's A2.1 the PRIMARY BATH's bedroom door and the
+// HALL's BED #3 door each sat in one room's list only: 1 transition of the
+// sheet's 3-4, and the rest reported as doorways to rooms not picked yet.
+// Now every typed room's bridges and every hand-drawn closure (a cased
+// opening the sheet leaves open: W.I.C. to bath) are one list of openings,
+// and a room is on an opening's side when its outline comes within a wall's
+// thickness of the opening's midpoint. Two sides of different types = one
+// strip, the door's width; one side = a doorway to a room not picked yet.
+function flTransitions(rooms, types, closures) {
+  const out = [];
+  let open = 0;
+  const typed = (rooms || []).map((r, i) => ({ r, i }))
+    .filter(({ r }) => Number.isInteger(r.type) && types[r.type]);
+  if (!typed.length) return { transitions: out, open };
+  const openings = [];
+  const seen = new Map();          // opening key -> its record
+  const keyOf = (mx, my) => Math.round(mx / 3) + "," + Math.round(my / 3);
+  const put = (x0, y0, x1, y1, w, src, who) => {
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    const k = keyOf(mx, my);                                     // the same doorway once
+    let o = seen.get(k);
+    if (!o) { o = { mx, my, w, src, listed: new Set() }; seen.set(k, o); openings.push(o); }
+    if (who !== undefined) o.listed.add(who);                    // a room that used this bridge
+  };
+  for (const { r, i } of typed)
+    for (const b of (r.bridges || [])) put(+b.x0, +b.y0, +b.x1, +b.y1, +b.r, "door", i);
+  for (const c of (closures || []))
+    if (Array.isArray(c) && c.length === 4) put(+c[0], +c[1], +c[2], +c[3], Math.hypot(c[2] - c[0], c[3] - c[1]), "closure");
+  const edgeDist = (pts, x, y) => {
+    let best = Infinity;
+    for (let i = 0, n = pts.length; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n];
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+      let t = L2 ? ((x - a[0]) * dx + (y - a[1]) * dy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      best = Math.min(best, Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)));
+    }
+    return best;
+  };
+  // pt: a wall's thickness on the sheet. A bridge is drawn on ONE face of
+  // the wall and the room on the other side runs its outline on the OTHER
+  // face: a house set's A2.1 primary-bath door sits on the bath's face at
+  // x = 1263 and the bedroom's outline on x = 1269.4, 6.3 pt away, and
+  // the sheet's wall faces are up to 8.2 pt apart (1280.4 / 1288.6). At 6
+  // the bedroom-to-bath strip was missed; 9 covers this sheet's walls and
+  // is still a fraction of any door width (a 2'-0" door is 24 pt at 1/4").
+  const TOL = 9;
+  for (const o of openings) {
+    // on this opening's side: the fill listed the bridge, or the outline
+    // runs within a wall's thickness of it (a record with no outline can
+    // only be matched by its bridges)
+    const sides = typed.map(({ r, i }) => {
+      const geo = r.pts && r.pts.length >= 3 ? edgeDist(r.pts, o.mx, o.my) : Infinity;
+      return { i, type: r.type, d: o.listed.has(i) ? 0 : geo };
+    }).filter(s => s.d <= TOL).sort((p, q) => p.d - q.d);
+    if (sides.length < 2) { open += 1; continue; }
+    const a = sides[0], b = sides.find(s => s.type !== a.type);
+    if (!b) continue;                      // the same floor runs through
+    const ta = Math.min(a.type, b.type), tb = Math.max(a.type, b.type);
+    out.push({ a: a.i, b: b.i, ta, tb, width_pt: o.w, src: o.src });
+  }
+  return { transitions: out, open };
+}
+// the takeoff rows, each with the rooms behind it: per type one SF row
+// (+ a waste row when a percentage is set) and one base LF row; one wall
+// area row for every room with a ceiling height; one transition-strip row
+// per pair of types that meet at a doorway
+function flItems(types, rooms, fl) {
+  const items = [];
+  const fpp = fl && fl.result && fl.result.scale ? fl.result.scale.ft_per_paper_inch / 72 : null;
+  const named = (r, i) => r.name || ("Room " + (i + 1));
+  const tot = flTotals(types, rooms, fl);
+  for (const t of tot) {
+    if (t.i < 0 || !t.rooms) continue;
+    const ty = types[t.i];
+    const mine = rooms.map((r, i) => [r, i]).filter(([r]) => r.type === t.i);
+    if (t.sf > 0) {
+      items.push(Object.assign({ label: "Flooring \u2014 " + t.name, qty: Math.round(t.sf * 10) / 10, unit: "SF",
+                                 details: mine.map(([r, i]) => {
+                                   const ded = flDeductSf(r);
+                                   return { name: named(r, i), qty: Math.round((flNetSf(r) || 0) * 10) / 10, unit: "SF",
+                                            note: ded > 0 ? `${flFmt(r.area_sf, 1)} SF less ${flDeductText(r)}` : undefined };
+                                 }) },
+                               +ty.sf_price > 0 ? { unit_price: +ty.sf_price } : {}));
+      if (t.waste_pct > 0 && t.waste_sf > 0)
+        items.push(Object.assign({ label: `Waste \u2014 ${t.name} (${flFmt(t.waste_pct, 1)}%)`, qty: Math.round(t.waste_sf * 10) / 10, unit: "SF",
+                                   details: [{ name: `${flFmt(t.waste_pct, 1)}% of ${flFmt(t.sf, 1)} SF measured`, qty: Math.round(t.waste_sf * 10) / 10, unit: "SF" }] },
+                                 +ty.sf_price > 0 ? { unit_price: +ty.sf_price } : {}));
+    }
+    if (t.lf > 0)
+      items.push(Object.assign({ label: "Base/molding \u2014 " + t.name, qty: Math.round(t.lf * 10) / 10, unit: "LF",
+                                 details: mine.map(([r, i]) => ({ name: named(r, i), qty: Math.round((flWallLf(r) || 0) * 10) / 10, unit: "LF",
+                                                                 note: r.doors ? `${r.doors} door${r.doors === 1 ? "" : "s"} out` : undefined })) },
+                               +ty.lf_price > 0 ? { unit_price: +ty.lf_price } : {}));
+  }
+  // wall area: every room that has a height, whatever its floor type
+  const walls = rooms.map((r, i) => [r, i, flWallSf(r, fl)]).filter(([, , w]) => w && w.net > 0);
+  if (walls.length) {
+    const sum = walls.reduce((a, [, , w]) => a + w.net, 0);
+    items.push({ label: "Wall area \u2014 perimeter \u00d7 ceiling", qty: Math.round(sum * 10) / 10, unit: "SF",
+                 details: walls.map(([r, i, w]) => ({ name: named(r, i), qty: Math.round(w.net * 10) / 10, unit: "SF",
+                                                     note: `${flFmt(flWallLf(r) + (r.openings_lf || 0), 1)} LF \u00d7 ${flFtIn(w.ft)}`
+                                                       + (w.by === "sheet" ? " from the sheet" : w.by === "typed" ? " typed" : " default")
+                                                       + (w.doors > 0 ? `, \u2212${flFmt(w.doors)} SF of doors` : "") })) });
+  }
+  // transition strips per pair of floor types
+  const tr = flTransitions(rooms, types, fl && fl.closures);
+  const byPair = new Map();
+  for (const t of tr.transitions) {
+    const k = t.ta + ":" + t.tb;
+    if (!byPair.has(k)) byPair.set(k, []);
+    byPair.get(k).push(t);
+  }
+  for (const [k, list] of byPair) {
+    const [ta, tb] = k.split(":").map(Number);
+    items.push({ label: `Transition strips \u2014 ${types[ta].name} / ${types[tb].name}`, qty: list.length, unit: "EA",
+                 details: list.map(t => ({ name: `${named(rooms[t.a], t.a)} \u2194 ${named(rooms[t.b], t.b)}`, qty: 1, unit: "EA",
+                                           note: fpp ? `door ${flFtIn(t.width_pt * fpp)} wide` : `door ${flFmt(t.width_pt)} pt wide` })) });
+  }
+  return items;
+}
+// one room's line: what it measures and what was done to get it
+function flRoomLine(r, fl) {
+  if (r.area_sf === null || r.area_sf === undefined) return "no scale set \u2014 " + flFmt(r.area_pt2) + " pt\u00b2";
+  const ded = flDeductSf(r);
+  let s = (ded > 0 ? `${flFmt(r.area_sf)} SF \u2212 ${flDeductText(r)} = ${flFmt(flNetSf(r))} SF` : flFmt(r.area_sf) + " SF")
+    + " \u00b7 walls " + flFmt(flWallLf(r)) + " LF";
+  if (r.doors) s += " (" + r.doors + " door" + (r.doors === 1 ? "" : "s") + ", \u2212" + flFmt(r.openings_lf, 1) + " LF)";
+  const w = flWallSf(r, fl);
+  if (w) s += " \u00b7 wall area " + flFmt(w.net) + " SF at " + flFtIn(w.ft) + (w.by === "sheet" ? " (from the sheet)" : w.by === "typed" ? " (typed)" : " (default)");
+  else if (r.ceiling_text) s += " \u00b7 " + r.ceiling_text + " \u2014 no height read, type one";
+  if (r.holes_sf > 0) s += " \u00b7 " + flFmt(r.holes_sf) + " SF inside it not counted";
+  if (r.closures) s += " \u00b7 " + r.closures + " gap" + (r.closures === 1 ? "" : "s") + " closed by hand";
+  if (r.source === "drawn") s += " \u00b7 outline drawn by hand";
+  else if (r.source === "edited") s += " \u00b7 shape edited by hand";
+  s += flRoomScaleNote(r);
+  return s;
+}
+function flApplyItems() {
+  const fl = flSync();
+  state.extraItems = state.extraItems.filter(it => !FL_LABEL_RX.test(it.label));
+  const rows = flItems(fl.types, fl.rooms, fl);
+  if (fl.wallRows) for (const it of flWallRows(fl)) rows.push(it);
+  for (const it of rows) {
+    state.extraItems.push(it);
+    // THE PRICE TRAVELS THROUGH THE PRICE BOOK. The approve payload prices
+    // every extra item from store "price:<label>" (the itemized panel's
+    // own inputs) and ignores unit_price on the item - so a $/SF typed in
+    // this panel reached the report as "-" (a house-set export, headed,
+    // 2026-09-08). Writing it into the book is also the pricing memory
+    // the roadmap asks for: the next sheet's Carpet row opens priced.
+    if (it.unit_price > 0) store.setItem(priceKey(it.label), String(it.unit_price));
+  }
+  renderItemized();
+  state.calcFlApplied = true;
+  calcStateDirty();
+}
+// ---- WALLS BY TYPE ----
+// The CAD layers (a house set: A-wall, A-Exterior Wall Line) or the legend
+// (Belle: SHEAR WALL) already separate the wall kinds a builder prices
+// differently. Class by name; the operator can overrule per line type.
+function flWallClassOf(s, fl) {
+  const o = fl && fl.wallClass && fl.wallClass[s.style_id];
+  if (o && FL_WALL_CLASSES.includes(o)) return o;
+  const L = String(s.layer || "") + " | " + String(s.suggested_label || "");
+  // in the wall SET (it encloses rooms) but not a wall LINE: the hatch
+  // drawn between a wall's two faces, and the drafter's flooring
+  // boundaries (a house set's A-Wall Hatch 1,956 LF of hatch strokes, A-Flooring
+  // 1,257 LF of floor edges - neither is framing)
+  if (/hatch|floor/i.test(L)) return "not a wall";
+  if (/shear/i.test(L)) return "shear";
+  if (/ext(erior)?\b|exterior/i.test(L)) return "exterior";
+  if (/\bint(erior)?\b|partition/i.test(L)) return "interior";
+  if (/wall/i.test(L) && s.layer) return "interior";       // a layered sheet names its exterior walls
+  return "wall (unclassified)";
+}
+// The wall line types this panel reasons about: the "walls only" suggestion
+// plus anything the operator classified by hand.
+function flWallStyles(fl) {
+  if (!state.result) return [];
+  const { ids } = flWallStyleIds(state.result.styles);
+  const set = new Set(ids);
+  for (const k of Object.keys(fl.wallClass || {})) if (fl.wallClass[k] !== "not a wall") set.add(+k);
+  return state.result.styles.filter(s => set.has(s.style_id));
+}
+// HOW MANY FACES. A CAD wall is usually TWO parallel lines a few pt apart
+// (a house set: the A-wall pair with A-Wall Hatch between), so its line
+// footage is twice its length. Measured on the sheet, never assumed: the
+// share of wall-segment length that has a parallel partner 2-14 pt away
+// overlapping it by half. Over 50% = drawn as two faces.
+function flFaceShare(chains) {
+  const segs = [];
+  for (const ch of chains) {
+    const P = ch.points || [];
+    for (let i = 0; i + 1 < P.length; i++) {
+      const dx = P[i + 1][0] - P[i][0], dy = P[i + 1][1] - P[i][1];
+      const L = Math.hypot(dx, dy);
+      if (L < 10) continue;
+      const ang = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 180) % 180 / 5) * 5 % 180;
+      segs.push({ x0: P[i][0], y0: P[i][1], x1: P[i + 1][0], y1: P[i + 1][1], L, ang, ux: dx / L, uy: dy / L });
+    }
+  }
+  if (!segs.length) return { share: 0, n: 0 };
+  const byAng = new Map();
+  for (const s of segs) { if (!byAng.has(s.ang)) byAng.set(s.ang, []); byAng.get(s.ang).push(s); }
+  let paired = 0, total = 0;
+  for (const s of segs) {
+    total += s.L;
+    let hit = false;
+    for (const t of byAng.get(s.ang)) {
+      if (t === s) continue;
+      // perpendicular offset of t's midpoint from s's line
+      const mx = (t.x0 + t.x1) / 2 - s.x0, my = (t.y0 + t.y1) / 2 - s.y0;
+      const off = Math.abs(mx * s.uy - my * s.ux);
+      if (off < 2 || off > 14) continue;
+      // overlap along s
+      const a0 = (t.x0 - s.x0) * s.ux + (t.y0 - s.y0) * s.uy, a1 = (t.x1 - s.x0) * s.ux + (t.y1 - s.y0) * s.uy;
+      const lo = Math.max(0, Math.min(a0, a1)), hi = Math.min(s.L, Math.max(a0, a1));
+      if (hi - lo >= 0.5 * s.L) { hit = true; break; }
+    }
+    if (hit) paired += s.L;
+  }
+  return { share: total ? paired / total : 0, n: segs.length };
+}
+// per class: line footage (as measured), the face evidence, and the
+// centreline estimate the operator can put in the takeoff
+function flWallTypes(fl) {
+  if (!state.result) return [];
+  const sc = state.result.scale;
+  const fpp = sc && +sc.ft_per_paper_inch > 0 ? +sc.ft_per_paper_inch / 72 : null;
+  const styles = flWallStyles(fl);
+  const cls = new Map();
+  for (const s of styles) {
+    const c = flWallClassOf(s, fl);
+    if (c === "not a wall") continue;
+    if (!cls.has(c)) cls.set(c, { cls: c, styles: [], chains: [], pt: 0 });
+    const g = cls.get(c);
+    g.styles.push(s);
+  }
+  const bySid = new Map(styles.map(s => [s.style_id, flWallClassOf(s, fl)]));
+  for (const ch of state.result.chains) {
+    const c = bySid.get(ch.style_id);
+    if (!c || c === "not a wall" || state.excluded.has(ch.chain_id)) continue;
+    const g = cls.get(c);
+    g.chains.push(ch); g.pt += chainLenPt(ch);
+  }
+  const key = [...bySid].map(([a, b]) => a + ":" + b).join("|") + "#" + state.excluded.size;
+  if (!fl._faceCache || fl._faceCache.key !== key) {
+    const faces = {};
+    for (const [c, g] of cls) faces[c] = flFaceShare(g.chains);
+    fl._faceCache = { key, faces };
+  }
+  const out = [];
+  for (const [c, g] of cls) {
+    const fs = fl._faceCache.faces[c] || { share: 0, n: 0 };
+    const faces = fl.wallFaces || (fs.share > 0.5 ? 2 : 1);
+    out.push({ cls: c, styles: g.styles, n: g.chains.length, line_pt: g.pt,
+               line_lf: fpp ? g.pt * fpp : null, faces, face_share: fs.share,
+               wall_lf: fpp ? g.pt * fpp / faces : null });
+  }
+  const order = { exterior: 0, interior: 1, shear: 2, "wall (unclassified)": 3 };
+  out.sort((a, b) => (order[a.cls] ?? 9) - (order[b.cls] ?? 9));
+  return out;
+}
+// the centreline rows, only when the operator ticked them in: the measured
+// line rows above still list the same linework, and two priced rows for
+// one wall is a double count
+function flWallRows(fl) {
+  const items = [];
+  for (const w of flWallTypes(fl)) {
+    if (!w.wall_lf || w.wall_lf <= 0) continue;
+    items.push({ label: `Walls \u2014 ${w.cls} (centreline)`, qty: Math.round(w.wall_lf * 10) / 10, unit: "LF",
+                 details: [{ name: "line footage measured on the sheet", qty: Math.round(w.line_lf * 10) / 10, unit: "LF" },
+                           { name: "faces per wall", qty: w.faces, unit: "",
+                             note: `${Math.round(w.face_share * 100)}% of the linework has a parallel partner` }] });
+  }
+  return items;
+}
+// relabel the wall line types by class, so the measured rows themselves
+// read "Wall - exterior" / "Wall - interior" / "Wall - shear"
+function flLabelWalls(fl) {
+  let n = 0;
+  for (const s of flWallStyles(fl)) {
+    const c = flWallClassOf(s, fl);
+    if (c === "not a wall") continue;
+    const name = "Wall \u2014 " + c;
+    if (state.labels.get(s.style_id) === name) continue;
+    state.labels.set(s.style_id, name);
+    memSave(s); n += 1;
+  }
+  colorBust();
+  renderStyles(); renderItemized(); renderMiniLegend();
+  setStatus(n ? `${n} wall line type${n === 1 ? "" : "s"} relabelled by class \u2014 the footage rows now read Wall \u2014 exterior / interior / shear` : "the wall line types already carry their class names", "ok");
+}
+// ---- persistence (calcstate sidecar, additive key "fl") ----
+function flSavePayload(fl) {
+  return {
+    types: fl.types.map(t => ({ name: t.name, color: t.color, sf_price: +t.sf_price || 0, lf_price: +t.lf_price || 0,
+                                waste_pct: +t.waste_pct || 0 })),
+    rooms: fl.rooms.map(r => ({
+      name: r.name, pts: r.pts.map(p => [p[0], p[1]]), area_sf: r.area_sf, area_pt2: r.area_pt2,
+      perim_lf: r.perim_lf, perim_pt: r.perim_pt, openings_lf: r.openings_lf, holes_sf: r.holes_sf,
+      doors: r.doors || 0, closures: r.closures || 0, type: r.type, source: r.source, click: r.click || null,
+      // the scale this room was measured at, when it is not the sheet's
+      scale_ft_per_in: +r.scale_ft_per_in > 0 ? +r.scale_ft_per_in : null,
+      scale_by: r.scale_by || null,
+      // the ceiling height and where it came from; the door bridges on the
+      // ring (for transitions: two rooms sharing one bridge)
+      ceiling_ft: Number.isFinite(+r.ceiling_ft) && +r.ceiling_ft > 0 ? +r.ceiling_ft : null,
+      ceiling_text: r.ceiling_text || null, ceiling_by: r.ceiling_by || null,
+      bridges: (r.bridges || []).map(b => ({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, r: b.r })),
+      // the fixtures inside, with the decision on each, and the clicked-out shapes
+      objects: (r.objects || []).map(o => ({ kind: o.kind, layer: o.layer, area_sf: o.area_sf, w_ft: o.w_ft, h_ft: o.h_ft,
+                                              guessed: !!o.guessed, deduct: !!o.deduct, manual: !!o.manual,
+                                              pts: (o.pts || []).map(p => [p[0], p[1]]) })),
+      deductions: (r.deductions || []).map(d => ({ name: d.name, area_sf: d.area_sf, pts: (d.pts || []).map(p => [p[0], p[1]]) })),
+    })),
+    closures: fl.closures.map(c => c.map(v => Math.round(v * 100) / 100)),
+    seq: fl.seq,
+    deductDefaults: Object.assign({}, fl.deductDefaults || {}),
+    default_ceiling_ft: Number.isFinite(+fl.default_ceiling_ft) && +fl.default_ceiling_ft > 0 ? +fl.default_ceiling_ft : null,
+    wallClass: Object.assign({}, fl.wallClass || {}),
+    wallFaces: fl.wallFaces === 1 || fl.wallFaces === 2 ? fl.wallFaces : null,
+    wallRows: !!fl.wallRows,
+    wallStyles: Array.isArray(fl.wallStyles) && fl.wallStyles.length ? fl.wallStyles.slice() : null,
+  };
+}
+function flApplySaved() {
+  if (state.calcFlApplied || !state.calcSavedLoaded) return;
+  if (!state.fl || state.fl.result !== state.result) return;
+  state.calcFlApplied = true;
+  const sv = (state.calcSaved || {}).fl;
+  if (!sv) return;
+  const fl = state.fl;
+  if (Array.isArray(sv.types) && sv.types.length)
+    fl.types = sv.types.map((t, i) => flNewType(String((t && t.name) || ("Type " + (i + 1))), i, {
+      color: (t && t.color) || FL_PALETTE[i % FL_PALETTE.length],
+      sf_price: calcNum(t && t.sf_price) || 0, lf_price: calcNum(t && t.lf_price) || 0,
+      waste_pct: Math.max(0, calcNum(t && t.waste_pct) || 0) }));
+  if (Array.isArray(sv.rooms) && !fl.rooms.length) {
+    for (const r of sv.rooms) {
+      if (!r || !Array.isArray(r.pts) || r.pts.length < 3) continue;
+      const cf = calcNum(r.ceiling_ft);
+      fl.rooms.push({
+        name: String(r.name || ("Room " + (fl.rooms.length + 1))), pts: r.pts.map(p => [p[0], p[1]]),
+        area_sf: calcNum(r.area_sf), area_pt2: calcNum(r.area_pt2) || 0,
+        perim_lf: calcNum(r.perim_lf), perim_pt: calcNum(r.perim_pt) || 0,
+        openings_lf: calcNum(r.openings_lf) || 0, holes_sf: calcNum(r.holes_sf) || 0,
+        doors: calcNum(r.doors) || 0, closures: calcNum(r.closures) || 0,
+        type: Number.isInteger(r.type) ? r.type : null,
+        source: r.source === "drawn" || r.source === "edited" ? r.source : "click", click: Array.isArray(r.click) ? r.click : null,
+        scale_ft_per_in: calcNum(r.scale_ft_per_in) > 0 ? +r.scale_ft_per_in : null,
+        scale_by: r.scale_by ? String(r.scale_by) : null,
+        ceiling_ft: cf !== null && cf > 0 ? cf : null,
+        ceiling_text: r.ceiling_text ? String(r.ceiling_text) : null,
+        ceiling_by: r.ceiling_by === "typed" ? "typed" : (cf !== null && cf > 0 ? "sheet" : null),
+        bridges: Array.isArray(r.bridges)
+          ? r.bridges.filter(b => b && ["x0", "y0", "x1", "y1", "r"].every(k => calcNum(b[k]) !== null))
+                     .map(b => ({ x0: +b.x0, y0: +b.y0, x1: +b.x1, y1: +b.y1, r: +b.r }))
+          : [],
+        objects: Array.isArray(r.objects)
+          ? r.objects.filter(o => o && calcNum(o.area_sf) !== null)
+                     .map(o => ({ kind: String(o.kind || "shape"), layer: o.layer || null, area_sf: +o.area_sf,
+                                  w_ft: calcNum(o.w_ft) || 0, h_ft: calcNum(o.h_ft) || 0, guessed: !!o.guessed,
+                                  deduct: !!o.deduct, manual: !!o.manual,
+                                  pts: Array.isArray(o.pts) ? o.pts.map(p => [+p[0], +p[1]]) : [] }))
+          : [],
+        deductions: Array.isArray(r.deductions)
+          ? r.deductions.filter(d => d && calcNum(d.area_sf) !== null)
+                        .map(d => ({ name: String(d.name || "clicked out"), area_sf: +d.area_sf,
+                                     pts: Array.isArray(d.pts) ? d.pts.map(p => [+p[0], +p[1]]) : [] }))
+          : [],
+      });
+    }
+  }
+  if (sv.deductDefaults && typeof sv.deductDefaults === "object")
+    for (const k of Object.keys(FL_DEDUCT_DEFAULTS))
+      if (typeof sv.deductDefaults[k] === "boolean") fl.deductDefaults[k] = sv.deductDefaults[k];
+  if (Array.isArray(sv.closures))
+    fl.closures = sv.closures.filter(c => Array.isArray(c) && c.length === 4 && c.every(v => calcNum(v) !== null));
+  if (calcNum(sv.seq) !== null) fl.seq = sv.seq;
+  {
+    const dc = calcNum(sv.default_ceiling_ft);
+    fl.default_ceiling_ft = dc !== null && dc > 0 ? dc : null;
+    fl.wallClass = {};
+    if (sv.wallClass && typeof sv.wallClass === "object")
+      for (const k of Object.keys(sv.wallClass))
+        if (FL_WALL_CLASSES.includes(sv.wallClass[k]) && Number.isInteger(+k)) fl.wallClass[k] = sv.wallClass[k];
+    fl.wallFaces = sv.wallFaces === 1 || sv.wallFaces === 2 ? sv.wallFaces : null;
+    fl.wallRows = !!sv.wallRows;
+  }
+  // THE WALLS THE PICKS WERE MADE WITH come back too. The style ticks are
+  // the room pick's role assignment ("what is showing is a wall"), and a
+  // reload restored 49 of a house set A2.1's 86 line types from the
+  // per-family memory - furniture and cabinets among them - so the next
+  // pick of the PRIMARY BEDROOM returned a 25 SF furniture cell (audit
+  // D27). The set showing at the last pick is saved with the rooms and
+  // put back here, after the per-family memory has had its say.
+  let wallsBack = 0;
+  if (Array.isArray(sv.wallStyles) && sv.wallStyles.length && state.result && state.result.styles) {
+    const keep = new Set(sv.wallStyles.map(Number).filter(Number.isInteger));
+    const have = new Set(state.result.styles.map(s => s.style_id));
+    const ids = [...keep].filter(id => have.has(id));
+    if (ids.length) {
+      for (const s of state.result.styles) setFamVis(s.style_id, keep.has(s.style_id));
+      if (state.isolate !== null) state.isolate = null;
+      fl.wallStyles = ids;
+      wallsBack = ids.length;
+      renderStyles();
+    }
+  }
+  if (fl.rooms.length) {
+    flApplyItems();
+    if (!$("flPanel").hidden) renderFl();
+    setStatus(fl.rooms.length + " room" + (fl.rooms.length === 1 ? "" : "s") + " restored from this page's saved record"
+      + (wallsBack ? ` — the ${wallsBack} wall line types the picks were made with are showing again` : ""));
+    draw();
+  }
+}
+// ---- the three tools ----
+function flArm(mode) {
+  const fl = flSync();
+  if (!state.result) return setStatus("run Detect first", "err");
+  if (state.tool === "drawline") cancelDraw();
+  else if (state.tool === "measure") $("measureBtn").click();
+  else if (state.tool === "cutspan") cancelCut();
+  else if (state.tool === "reclass") $("reclassBtn").onclick();
+  else if (state.tool === "st-pick" || state.tool === "st-draw") stDisarm("");
+  state.tool = mode; fl.drawPts = []; fl.hover = null; fl.closeDraft = null;
+  if (mode !== "fl-edit") fl.edit = null;
+  else if (!fl.edit) fl.edit = { room: null, drag: null, hover: null };
+  polySnapClear();
+  setStatus(mode === "fl-edit"
+    ? (fl.edit.room !== null
+        ? `edit shape: ${fl.rooms[fl.edit.room].name} \u2014 drag a corner, press on an edge to add one there, double-click or Delete removes a corner (Esc exits)`
+        : "edit shape: click inside a picked room to select it, then drag its corners; press on an edge to add a corner there (Esc exits)")
+    : mode === "fl-pick"
+    ? "flooring: click inside a room \u2014 only the line types you have showing count as walls (Esc exits)"
+    : mode === "fl-close"
+    ? "close a gap: click one side of the opening, then the other \u2014 the fill treats that line as wall"
+    : mode === "fl-deduct"
+    ? "deduct: click a fixture inside a picked room \u2014 a listed object toggles, anything else enclosed by lines comes out of that room's flooring (Esc exits)"
+    : "flooring: click each corner of the room" + POLY_CLOSE_HINT, "busy");
+  renderFl(); draw();
+}
+function flDisarm(msg) {
+  const fl = flSync();
+  state.tool = null; fl.drawPts = []; fl.hover = null; fl.closeDraft = null; fl.edit = null;
+  polySnapClear();
+  if (msg !== undefined) setStatus(msg);
+  renderFl(); draw();
+}
+// WHICH LINE TYPES ARE WALLS - a suggestion the operator can overrule with
+// the checkboxes. Two sources, in confidence order:
+//   1. CAD LAYER NAMES, when the sheet carries them (a client's house
+//      set A2.1: A-wall, A-Exterior Wall Line, A-Wall Hatch, and
+//      A-Flooring - the drafter's own flooring boundaries, which is exactly
+//      where a room's floor stops at a doorway). Anything named wall,
+//      exterior or floor(ing) is in; door, window, dim, text, furniture,
+//      cabinet, border and everything else is out.
+//   2. otherwise WEIGHT: a legend label saying WALL, or a solid line type
+//      at least 1 pt wide with at least 3 lines (Belle A1.00: 17 / 0 / 31 /
+//      23 plus the two SHEAR WALL legend styles) - dimension strings and
+//      leaders are thin, hatches are dashed or dotted.
+// Returns {ids, by} so the status line can say which rule spoke.
+function flWallStyleIds(styles) {
+  const list = (styles || []).filter(s => s && Number.isInteger(s.style_id));
+  const layered = list.filter(s => s.layer && String(s.layer).trim());
+  if (layered.length >= 3) {
+    const ids = list.filter(s => /wall|exterior|floor/i.test(String(s.layer || ""))
+                                 && !/door|window|glaz/i.test(String(s.layer || "")))
+                    .map(s => s.style_id);
+    return { ids, by: "layer name" };
+  }
+  const ids = list.filter(s => /\bwall\b/i.test(String(s.suggested_label || ""))
+                            || (/^solid/.test(String(s.class || "")) && (s.width || 0) >= 1.0 && (s.n || 0) >= 3))
+                  .map(s => s.style_id);
+  return { ids, by: "line weight" };
+}
+function flShowWallsOnly() {
+  if (!state.result) return;
+  const { ids, by } = flWallStyleIds(state.result.styles);
+  if (!ids.length) return setStatus("no line type on this sheet reads as a wall by " + by + " \u2014 tick the walls yourself", "err");
+  const keep = new Set(ids);
+  for (const s of state.result.styles) setFamVis(s.style_id, keep.has(s.style_id));
+  if (state.isolate !== null) state.isolate = null;
+  renderStyles(); draw();
+  setStatus(`walls only: ${ids.length} of ${state.result.styles.length} line types kept, chosen by ${by} \u2014 adjust the checkboxes if a wall is missing, then Pick rooms`, "ok");
+}
+// the role assignment: what is showing is a wall
+function flVisibleStyles() {
+  return (state.result.styles || []).map(s => s.style_id).filter(id => famShown(id));
+}
+// THE SCALE ON SCREEN, for a room pick: whatever the sheet header shows -
+// the engine's reading, the reviewer's caption pick or the typed box (all
+// three land in state.result.scale). null when the sheet has none; the
+// server then answers in pt only and says so.
+function flScreenScale() {
+  const sc = state.result && state.result.scale;
+  return sc && +sc.ft_per_paper_inch > 0 ? +sc.ft_per_paper_inch : null;
+}
+// feet per pt for ONE room: the scale it was measured at when the server
+// named one (an inset's caption), else the sheet's
+function flRoomFpp(r) {
+  return r && +r.scale_ft_per_in > 0 ? +r.scale_ft_per_in / 72 : stFtPerPt();
+}
+// THE ROOMS FOLLOW THE SCALE IN FORCE. A room measured at an inset's own caption keeps that
+// scale (the caption is printed beside the inset). Every other room was measured at the
+// sheet's scale of the moment: when the scale is typed, picked or put back it is measured
+// again from its own outline (pt) at the scale now in force - square feet by the square of
+// the ratio, feet by the ratio. Returns how many rooms moved. (Check 4B, 2026-09-27: rooms
+// picked at 1/4", the sheet corrected to 1/8", the bedroom stayed 177.9 SF where 711.6
+// follows, while the status said every quantity on the sheet was recalculated.)
+function flRescale() {
+  if (!state.result) return 0;
+  const now = flScreenScale();
+  if (!now) return 0;
+  if (!state.fl || state.fl.result !== state.result) {
+    // a session that never opened the Flooring panel: the rooms are in the job's record.
+    // Bring the panel's state up (not the panel) so they can be measured again.
+    const has = state.extraItems.some(it => FL_LABEL_RX.test(it.label));
+    if (!has || !state.calcSavedLoaded) return 0;
+    flSync();
+  }
+  const fl = state.fl;
+  if (!fl || !Array.isArray(fl.rooms) || !fl.rooms.length) return 0;
+  const fpp = now / 72;
+  let n = 0;
+  for (const r of fl.rooms) {
+    if (/^inset/.test(String(r.scale_by || ""))) continue;      // its own caption governs it
+    if (!(+r.area_pt2 > 0)) continue;
+    // the scale its feet stand on: the one recorded, else the one its own numbers imply
+    const was = +r.scale_ft_per_in > 0 ? +r.scale_ft_per_in
+      : (+r.area_sf > 0 ? Math.sqrt(+r.area_sf / +r.area_pt2) * 72 : null);
+    if (was && Math.abs(was - now) <= 1e-9 * Math.max(1, now)) {
+      r.scale_ft_per_in = now; if (!r.scale_by) r.scale_by = "on screen";
+      continue;
+    }
+    const k = was ? now / was : null;
+    // by the RATIO when the room says which scale its feet stand on (so 4 -> 8 -> 4 returns the
+    // very numbers the pick gave: the outline times the scale differs from the server's own
+    // feet in the last digit, and a wall-area line came back 0.3 SF off), else from the outline
+    if (k && +r.scale_ft_per_in > 0 && +r.area_sf > 0) {
+      r.area_sf = +r.area_sf * k * k;
+      if (+r.perim_lf > 0) r.perim_lf = +r.perim_lf * k;
+    } else {
+      r.area_sf = +r.area_pt2 * fpp * fpp;
+      if (+r.perim_pt > 0) r.perim_lf = +r.perim_pt * fpp;
+    }
+    if (k) {
+      // kept in feet only: the door openings, the holes, the fixtures, the clicked-out shapes
+      r.openings_lf = (+r.openings_lf || 0) * k;
+      r.holes_sf = (+r.holes_sf || 0) * k * k;
+      for (const o of r.objects || []) {
+        o.area_sf = (+o.area_sf || 0) * k * k; o.w_ft = (+o.w_ft || 0) * k; o.h_ft = (+o.h_ft || 0) * k;
+      }
+      for (const d of r.deductions || []) d.area_sf = (+d.area_sf || 0) * k * k;
+    }
+    r.scale_ft_per_in = now; r.scale_by = "on screen";
+    n += 1;
+  }
+  if (n) {
+    flApplyItems();
+    const panel = $("flPanel");
+    if (panel && !panel.hidden) renderFl();
+  }
+  return n;
+}
+// a room measured at a scale other than the sheet's says so on its line
+function flRoomScaleNote(r) {
+  if (!r || !(+r.scale_ft_per_in > 0) || !r.scale_by) return "";
+  if (!/^inset/.test(String(r.scale_by))) return "";
+  return ` · measured at the inset's own scale (${String(r.scale_by).replace(/^inset caption\s*/, "")})`;
+}
+function flAddRoom(room) {
+  const fl = flSync();
+  if (!room.name) room.name = "Room " + fl.seq;
+  if (!Number.isInteger(room.type)) room.type = fl.lastType;
+  fl.rooms.push(room); fl.seq += 1;
+  flApplyItems(); renderFl(); draw();
+}
+async function flPickAt(px, py) {
+  const fl = flSync();
+  if (fl.busy) return;
+  // a click inside a room already on the list names that room instead of
+  // adding it twice (seen live on a house set's A2.1: DINING and GREAT ROOM are
+  // one open space, and the second click listed it again)
+  const dup = fl.rooms.findIndex(r => r.pts && flPointIn(r.pts, px, py));
+  if (dup >= 0) {
+    const r = fl.rooms[dup];
+    setStatus(`that point is inside ${r.name || "a room"} already on the list (${Math.round(r.area_sf)} SF) — click a space that is not listed yet, or remove that row first`, "warn");
+    return;
+  }
+  fl.busy = true;
+  setStatus("finding the room\u2026", "busy");
+  try {
+    const r = await fetch(`/api/job/${state.job}/page/${state.page}/rooms/pick`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      // the scale ON SCREEN travels with the click: a typed scale lives only
+      // in this browser until Approve, and the server's own record is the
+      // reviewer's pick, then the engine's reading (server _room_pick_scale)
+      body: JSON.stringify({ x: px, y: py, styles: flVisibleStyles(), closures: fl.closures,
+                             scale_ft_per_in: flScreenScale() }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { setStatus(j.detail || `room lookup failed (${r.status})`, "err"); return; }
+    if (!j.ok) { setStatus(j.why, "err"); return; }
+    const cl = j.ceiling || null;
+    const room = { name: j.name || null, pts: j.polygon, area_sf: j.area_sf, area_pt2: j.area_pt2,
+                   perim_lf: j.perim_lf, perim_pt: j.perim_pt, openings_lf: j.openings_lf || 0,
+                   holes_sf: j.holes_sf || 0, doors: (j.bridges_used || []).length,
+                   closures: j.closures_used || 0, type: fl.lastType, source: "click", click: [px, py],
+                   // the scale this room's square feet were computed at and
+                   // who set it - an inset's own caption when the click sat
+                   // in one (a house set's A2.1 FLOORING PLAN at 1/8" beside the
+                   // 1/4" plan), else the scale in force on the sheet
+                   scale_ft_per_in: +j.scale_ft_per_in > 0 ? +j.scale_ft_per_in : null,
+                   scale_by: j.scale_by || null,
+                   // the ceiling note read inside the room, if the sheet prints one
+                   ceiling_ft: cl && +cl.ft > 0 ? +cl.ft : null, ceiling_text: cl ? cl.text : null,
+                   ceiling_by: cl && +cl.ft > 0 ? "sheet" : null,
+                   bridges: (j.bridges_used || []).map(b => ({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, r: b.r })),
+                   // the fixtures the engine found inside the fill; whether
+                   // each comes out of the flooring is the panel's default
+                   // for its kind until the operator ticks it by hand
+                   objects: (j.objects || []).map(o => flObjFrom(o, fl)),
+                   deductions: [] };
+    // the walls this pick was made with travel with the rooms (restored
+    // after a reload by flApplySaved)
+    fl.wallStyles = flVisibleStyles();
+    flAddRoom(room);
+    setStatus(`${room.name}: ${flRoomLine(room, fl)} \u2014 pick its floor type in the panel, or click the next room`, "ok");
+  } catch (e) {
+    setStatus("room lookup failed \u2014 the server did not answer", "err");
+  } finally {
+    fl.busy = false;
+  }
+}
+function flDrawClick(px, py) {
+  const fl = flSync();
+  if (polyCloseHit(fl.drawPts, px, py, polyCloseTolPt())) { polySnapClear(); return flFinishDraw(); }
+  const last = fl.drawPts[fl.drawPts.length - 1];
+  if (last && Math.hypot(px - last[0], py - last[1]) < 0.5) return;
+  fl.drawPts.push([px, py]);
+  const fpp = stFtPerPt();
+  const n = fl.drawPts.length;
+  setStatus(`room outline: ${n} corner(s)` + (n >= 3 && fpp ? ` \u00b7 so far ${flFmt(stPolyArea(fl.drawPts) * fpp * fpp)} SF` : "") + POLY_CLOSE_HINT, "busy");
+  draw();
+}
+function flFinishDraw() {
+  const fl = flSync();
+  const pts = [];
+  for (const q of fl.drawPts)
+    if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.5) pts.push(q);
+  if (pts.length >= 2 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 0.5) pts.pop();
+  if (pts.length < 3) return setStatus(`an outline needs at least 3 corners (have ${pts.length}) \u2014 keep clicking, or Esc to cancel`, "err");
+  const fpp = stFtPerPt();
+  const area_pt2 = stPolyArea(pts), perim_pt = stPolyPerim(pts);
+  const room = { name: null, pts, area_sf: fpp ? area_pt2 * fpp * fpp : null, area_pt2,
+                 perim_lf: fpp ? perim_pt * fpp : null, perim_pt, openings_lf: 0, holes_sf: 0,
+                 doors: 0, closures: 0, type: fl.lastType, source: "drawn", click: null,
+                 ceiling_ft: null, ceiling_text: null, ceiling_by: null, bridges: [],
+                 scale_ft_per_in: null, scale_by: null,
+                 objects: [], deductions: [] };
+  fl.drawPts = []; fl.hover = null; polySnapClear(); state.tool = null;
+  flAddRoom(room);
+  setStatus(`${room.name}: ${flRoomLine(room, fl)}`, "ok");
+  // An outline traced inside an INSET is at the inset's scale, not the
+  // sheet's: ask the server which caption governs the outline's centre
+  // (the same decision a click pick makes) and re-measure when it differs.
+  flInsetRemeasure(room);
+}
+async function flInsetRemeasure(room) {
+  if (!state.job || !room || !room.pts || room.pts.length < 3) return;
+  let cx = 0, cy = 0;
+  for (const p of room.pts) { cx += p[0]; cy += p[1]; }
+  cx /= room.pts.length; cy /= room.pts.length;
+  const sc = flScreenScale();
+  const q = `x=${cx.toFixed(2)}&y=${cy.toFixed(2)}` + (sc ? `&scale_ft_per_in=${sc}` : "");
+  try {
+    const resp = await fetch(`/api/job/${state.job}/page/${state.page}/scale/at?${q}`);
+    if (!resp.ok) return;
+    const j = await resp.json();
+    if (!j || !(+j.ft_per_paper_inch > 0) || !/^inset/.test(String(j.scale_by || ""))) return;
+    const fl = flSync();
+    if (!fl.rooms.includes(room)) return;
+    room.scale_ft_per_in = +j.ft_per_paper_inch; room.scale_by = j.scale_by;
+    const fpp = room.scale_ft_per_in / 72;
+    room.area_sf = room.area_pt2 * fpp * fpp;
+    room.perim_lf = room.perim_pt * fpp;
+    flApplyItems(); renderFl(); draw();
+    setStatus(`${room.name}: ${flRoomLine(room, fl)}`, "ok");
+  } catch (e) { /* the sheet's scale stands */ }
+}
+function flCloseClick(px, py) {
+  const fl = flSync();
+  if (!fl.closeDraft) {
+    fl.closeDraft = [px, py];
+    setStatus("close a gap: now click the other side of the opening", "busy");
+    draw();
+    return;
+  }
+  const seg = [fl.closeDraft[0], fl.closeDraft[1], px, py];
+  fl.closeDraft = null;
+  if (Math.hypot(seg[2] - seg[0], seg[3] - seg[1]) < 0.5) return;
+  fl.closures.push(seg);
+  state.calcFlApplied = true;
+  calcStateDirty();
+  state.tool = "fl-pick";
+  setStatus(`gap closed (${fl.closures.length} on this sheet) \u2014 now click inside the room`, "ok");
+  renderFl(); draw();
+}
+// an object record as the panel keeps it: the engine's fixture, plus
+// whether it comes out (the panel default for its kind) and whether a
+// person decided that (a changed default then leaves it alone)
+function flObjFrom(o, fl) {
+  const kind = String(o.kind || "shape");
+  const dflt = fl && fl.deductDefaults ? fl.deductDefaults : FL_DEDUCT_DEFAULTS;
+  return { kind, layer: o.layer || null, area_sf: +o.area_sf || 0,
+           w_ft: +o.w_ft || 0, h_ft: +o.h_ft || 0, guessed: !!o.guessed,
+           pts: Array.isArray(o.polygon) ? o.polygon.map(p => [p[0], p[1]]) : [],
+           deduct: !!dflt[kind] && !o.guessed, manual: false };
+}
+// ray cast, pt space
+function flPointIn(pts, x, y) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// a changed default reaches every object of that kind nobody ticked by hand
+function flApplyDeductDefaults(fl) {
+  for (const r of fl.rooms)
+    for (const o of (r.objects || []))
+      if (!o.manual) o.deduct = !!fl.deductDefaults[o.kind] && !o.guessed;
+}
+// DEDUCT BY CLICK. Inside a picked room: a listed object under the click
+// toggles; anything else is asked of the engine with EVERY line type as a
+// wall, so the cell the click sits in (a tub drawn on no layer, a hearth)
+// comes back as its own polygon and is taken out of that room. A cell
+// bigger than half the room is the room itself, and is refused.
+async function flDeductClick(px, py) {
+  const fl = flSync();
+  const ri = fl.rooms.findIndex(r => r.pts && r.pts.length >= 3 && flPointIn(r.pts, px, py));
+  if (ri < 0) return setStatus("deduct: click inside a room you have already picked", "err");
+  const r = fl.rooms[ri];
+  const oi = (r.objects || []).findIndex(o => o.pts && o.pts.length >= 3 && flPointIn(o.pts, px, py));
+  if (oi >= 0) {
+    const o = r.objects[oi];
+    o.deduct = !o.deduct; o.manual = true;
+    flApplyItems(); renderFl(); draw();
+    return setStatus(`${r.name}: ${o.kind} ${flFmt(o.area_sf, 1)} SF ${o.deduct ? "taken out of" : "back in"} the flooring — ${flRoomLine(r, fl)}`, "ok");
+  }
+  const di = (r.deductions || []).findIndex(d => d.pts && d.pts.length >= 3 && flPointIn(d.pts, px, py));
+  if (di >= 0) {
+    r.deductions.splice(di, 1);
+    flApplyItems(); renderFl(); draw();
+    return setStatus(`${r.name}: that deduction is back in the flooring — ${flRoomLine(r, fl)}`, "ok");
+  }
+  if (fl.busy) return;
+  fl.busy = true;
+  setStatus("finding the shape under the click…", "busy");
+  try {
+    const all = (state.result.styles || []).map(s => s.style_id);
+    const resp = await fetch(`/api/job/${state.job}/page/${state.page}/rooms/pick`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x: px, y: py, styles: all, closures: fl.closures,
+                             scale_ft_per_in: flScreenScale() }),
+    });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok) return setStatus(j.detail || `lookup failed (${resp.status})`, "err");
+    if (!j.ok) return setStatus(j.why, "err");
+    if (!(j.area_sf > 0)) return setStatus("no scale set — nothing can be deducted in square feet", "err");
+    if (j.area_sf >= 0.5 * (r.area_sf || 0))
+      return setStatus(`that click is not inside a fixture — the lines around it enclose ${flFmt(j.area_sf)} SF, most of the room`, "err");
+    r.deductions = r.deductions || [];
+    r.deductions.push({ name: "clicked out", area_sf: j.area_sf, pts: j.polygon });
+    flApplyItems(); renderFl(); draw();
+    setStatus(`${r.name}: ${flFmt(j.area_sf, 1)} SF taken out of the flooring — ${flRoomLine(r, fl)}`, "ok");
+  } catch (e) {
+    setStatus("lookup failed — the server did not answer", "err");
+  } finally {
+    fl.busy = false;
+  }
+}
+
+// ---- THE POINT EDITOR (2026-09-09) ----
+// Rooms the engine cannot fill right - a bay the walls-only fill missed, a
+// closet the sheet leaves open, a fireplace jog - get fixed by hand on the
+// outline itself instead of redrawn: drag any corner, press on an edge to
+// put a new corner there, double-click (or Delete) a corner to remove it.
+// Area and perimeter are recomputed from the polygon on every change; the
+// door openings, the ceiling note and the fixtures inside stay as picked,
+// and the room line says "shape edited by hand". The handlers run in the
+// CAPTURE phase on the window so the sheet's own pan / vertex-drag never
+// sees a press the editor took.
+function flEditTolPt() { return 7 / state.view.k / (IMG_DPI / 72) + 1.5; }
+// nearest corner of pts within tol, or -1
+function flEditVertexAt(pts, x, y, tol) {
+  let best = -1, bd = tol;
+  pts.forEach((q, i) => { const d = Math.hypot(x - q[0], y - q[1]); if (d < bd) { bd = d; best = i; } });
+  return best;
+}
+// nearest edge within tol: {i, at:[x,y], t} for the edge pts[i]->pts[i+1], or null
+function flEditEdgeAt(pts, x, y, tol) {
+  let best = null, bd = tol;
+  for (let i = 0, n = pts.length; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+    if (L2 < 1e-9) continue;
+    let t = ((x - a[0]) * dx + (y - a[1]) * dy) / L2;
+    t = Math.max(0, Math.min(1, t));
+    const px = a[0] + t * dx, py = a[1] + t * dy;
+    const d = Math.hypot(x - px, y - py);
+    if (d < bd) { bd = d; best = { i, at: [px, py], t }; }
+  }
+  return best;
+}
+// the room's numbers from its polygon; everything else stays as picked
+function flEditRecompute(r, fpp) {
+  r.area_pt2 = stPolyArea(r.pts);
+  r.perim_pt = stPolyPerim(r.pts);
+  r.area_sf = fpp ? r.area_pt2 * fpp * fpp : null;
+  r.perim_lf = fpp ? r.perim_pt * fpp : null;
+  r.source = "edited";
+  return r;
+}
+function flEditSelect(k) {
+  const fl = flSync();
+  if (state.tool !== "fl-edit") flArm("fl-edit");
+  fl.edit = { room: k, drag: null, hover: null };
+  fl.hot = k;
+  setStatus(`edit shape: ${fl.rooms[k].name} — drag a corner, press on an edge to add one there, double-click or Delete removes a corner (Esc exits)`, "busy");
+  renderFl(); draw();
+}
+function flEditRoom() {
+  const fl = state.fl;
+  if (!fl || !fl.edit || fl.edit.room === null) return null;
+  const r = fl.rooms[fl.edit.room];
+  return r && r.pts && r.pts.length >= 3 ? r : null;
+}
+function flEditRemoveVertex(i) {
+  const fl = flSync();
+  const r = flEditRoom();
+  if (!r || i < 0 || i >= r.pts.length) return;
+  if (r.pts.length <= 3) return setStatus("a room keeps at least 3 corners", "err");
+  r.pts.splice(i, 1);
+  flEditRecompute(r, flRoomFpp(r));
+  fl.edit.hover = null;
+  flApplyItems(); renderFl(); draw();
+  setStatus(`${r.name}: corner removed — ${flRoomLine(r, fl)}`, "ok");
+}
+addEventListener("mousedown", (e) => {
+  if (state.tool !== "fl-edit" || e.target !== cv || e.button !== 0) return;
+  const fl = flSync();
+  const r = flEditRoom();
+  if (!r) return;                      // no room selected yet: the click selects one
+  const [x, y] = ptFromEvent(e);
+  const tol = flEditTolPt();
+  let vi = flEditVertexAt(r.pts, x, y, tol);
+  if (vi < 0) {
+    const ed = flEditEdgeAt(r.pts, x, y, tol);
+    if (!ed) return;                   // off the outline: pan, or select another room
+    r.pts.splice(ed.i + 1, 0, ed.at);  // a new corner on the edge, under the cursor
+    vi = ed.i + 1;
+  }
+  fl.edit.drag = { i: vi, moved: false };
+  e.preventDefault(); e.stopImmediatePropagation();
+  draw();
+}, true);
+addEventListener("mousemove", (e) => {
+  if (state.tool !== "fl-edit") return;
+  const fl = flSync();
+  const r = flEditRoom();
+  if (!r) return;
+  if (fl.edit.drag) {
+    r.pts[fl.edit.drag.i] = ptFromEvent(e);
+    fl.edit.drag.moved = true;
+    e.stopImmediatePropagation();
+    draw();
+    return;
+  }
+  if (e.target !== cv) return;
+  const [x, y] = ptFromEvent(e);
+  const tol = flEditTolPt();
+  const vi = flEditVertexAt(r.pts, x, y, tol);
+  let hover = null;
+  if (vi >= 0) hover = { v: vi };
+  else { const ed = flEditEdgeAt(r.pts, x, y, tol); if (ed) hover = { e: ed.i, at: ed.at }; }
+  const was = fl.edit.hover;
+  fl.edit.hover = hover;
+  if (JSON.stringify(was) !== JSON.stringify(hover)) draw();
+}, true);
+addEventListener("mouseup", (e) => {
+  if (state.tool !== "fl-edit") return;
+  const fl = flSync();
+  const r = flEditRoom();
+  if (!r || !fl.edit.drag) return;
+  const d = fl.edit.drag;
+  fl.edit.drag = null;
+  e.stopImmediatePropagation();
+  flEditRecompute(r, flRoomFpp(r));
+  flApplyItems(); renderFl(); draw();
+  setStatus(`${r.name}: ${d.moved ? "corner moved" : "corner set"} — ${flRoomLine(r, fl)}`, "ok");
+}, true);
+cv.addEventListener("dblclick", (e) => {
+  if (state.tool !== "fl-edit") return;
+  const r = flEditRoom();
+  if (!r) return;
+  const [x, y] = ptFromEvent(e);
+  const vi = flEditVertexAt(r.pts, x, y, flEditTolPt());
+  if (vi >= 0) { e.preventDefault(); flEditRemoveVertex(vi); }
+});
+function flEditClick(px, py) {
+  const fl = flSync();
+  const k = fl.rooms.findIndex(r => r.pts && r.pts.length >= 3 && flPointIn(r.pts, px, py));
+  if (k < 0) return setStatus("edit shape: click inside a room you have picked or drawn", "err");
+  if (fl.edit && fl.edit.room === k) return;
+  flEditSelect(k);
+}
+function flCanvasClick(e) {
+  const [px, py] = ptFromEvent(e);
+  if (state.tool === "fl-pick") flPickAt(px, py);
+  else if (state.tool === "fl-draw") flDrawClick(px, py);
+  else if (state.tool === "fl-close") flCloseClick(px, py);
+  else if (state.tool === "fl-deduct") flDeductClick(px, py);
+  else if (state.tool === "fl-edit") flEditClick(px, py);
+}
+const _flClickBefore = handleCanvasClick;
+handleCanvasClick = function (e) {
+  if (FL_TOOLS.includes(state.tool)) return flCanvasClick(e);
+  return _flClickBefore(e);
+};
+addEventListener("mousemove", (e) => {
+  if (panning || !state.fl) return;
+  if (state.tool === "fl-draw" && state.fl.drawPts.length) {
+    state.fl.hover = ptFromEvent(e);
+    polySnapHover(state.fl.hover[0], state.fl.hover[1]);
+    draw();
+  } else if (state.tool === "fl-close" && state.fl.closeDraft) {
+    state.fl.hover = ptFromEvent(e);
+    draw();
+  }
+});
+cv.addEventListener("dblclick", () => { if (state.tool === "fl-draw") flFinishDraw(); });
+addEventListener("keydown", (e) => {
+  if (typing()) return;
+  if (!FL_TOOLS.includes(state.tool)) return;
+  if ((e.key === "Delete" || e.key === "Backspace") && state.tool === "fl-edit") {
+    const fl = flSync();
+    if (fl.edit && fl.edit.hover && fl.edit.hover.v !== undefined) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      flEditRemoveVertex(fl.edit.hover.v);
+    }
+    return;
+  }
+  if (e.key === "Enter" && state.tool === "fl-draw") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    flFinishDraw();
+    return;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault(); e.stopImmediatePropagation();
+    const fl = flSync();
+    if (state.tool === "fl-draw" && fl.drawPts.length) {
+      fl.drawPts.pop(); polySnapClear();
+      setStatus(fl.drawPts.length ? `room outline: ${fl.drawPts.length} corner(s) \u2014 Esc again removes another`
+                                  : "all corners removed \u2014 Esc again exits", "busy");
+      draw();
+    } else if (state.tool === "fl-close" && fl.closeDraft) {
+      fl.closeDraft = null;
+      setStatus("close a gap: first point cleared \u2014 Esc again exits", "busy");
+      draw();
+    } else {
+      flDisarm("flooring: tool released");
+    }
+  }
+}, true);
+
+// ---- the panel ----
+function renderFl() {
+  const fl = flSync();
+  const types = $("flTypes"), body = $("flBody"), rows = $("flRows");
+  types.innerHTML = ""; body.innerHTML = ""; rows.innerHTML = "";
+  if (!state.result) { body.textContent = "run Detect first"; return; }
+  const mk = (tag, cls, txt) => { const d = document.createElement(tag); if (cls) d.className = cls; if (txt !== undefined) d.textContent = txt; return d; };
+  const fpp = stFtPerPt();
+  const tot = flTotals(fl.types, fl.rooms, fl);
+
+  // floor types: colour, name, prices, waste, what they hold
+  const tbl = mk("div", "fl-types-tbl");
+  for (const h of ["floor type", "$/SF", "$/LF base", "waste %", ""]) tbl.appendChild(mk("div", "fl-th", h));
+  fl.types.forEach((t, i) => {
+    const sw = document.createElement("input");
+    sw.type = "color"; sw.value = t.color; sw.className = "fl-swatch";
+    sw.title = "the colour this floor type paints on the sheet";
+    sw.oninput = () => { t.color = sw.value; draw(); calcStateDirty(); };
+    const nm = document.createElement("input");
+    nm.value = t.name; nm.className = "fl-name"; nm.placeholder = "floor type";
+    nm.oninput = () => { t.name = nm.value; flApplyItems(); };
+    const cell = mk("div", "fl-td fl-td-name"); cell.append(sw, nm);
+    const num = (key) => {
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "0.01"; inp.min = "0"; inp.className = "fl-num";
+      inp.value = t[key] || "";
+      inp.oninput = () => { t[key] = +inp.value || 0; flApplyItems(); };
+      const c = mk("div", "fl-td"); c.appendChild(inp); return c;
+    };
+    const tt = tot[i];
+    // what this type holds, on its own line under the name: the name and
+    // the two prices already fill a 350 px panel, and squeezed into a
+    // fifth column the name read "Car" / "Har" (Belle capture, 2026-09-08)
+    const totc = mk("div", "fl-td fl-tot ew-meta", tt.rooms
+      ? `${flFmt(tt.sf)} SF \u00b7 ${flFmt(tt.lf)} LF base \u00b7 ${tt.rooms} room${tt.rooms === 1 ? "" : "s"}`
+        + (tt.waste_pct > 0 ? ` \u00b7 +${flFmt(tt.waste_sf)} SF waste` : "")
+        + (tt.wall_rooms ? ` \u00b7 ${flFmt(tt.wall_sf)} SF wall area` : "")
+      : "no rooms yet");
+    const rm = mk("button", "mini", "\u00d7");
+    rm.title = "remove this floor type (its rooms become unassigned)";
+    rm.onclick = () => {
+      fl.types.splice(i, 1);
+      for (const r of fl.rooms) { if (r.type === i) r.type = null; else if (r.type > i) r.type -= 1; }
+      if (fl.lastType >= fl.types.length) fl.lastType = 0;
+      flApplyItems(); renderFl(); draw();
+    };
+    const rmc = mk("div", "fl-td"); rmc.appendChild(rm);
+    const waste = num("waste_pct");
+    waste.firstChild.step = "0.5"; waste.firstChild.max = "50";
+    waste.firstChild.title = "Waste allowance for this floor type, as a percentage of the measured square feet. Becomes its own row (\"Waste \u2014 Carpet (10%)\") so the measured figure stays visible. Typical allowances run 5-15% by material and layout; this panel does not assume one.";
+    tbl.append(cell, num("sf_price"), num("lf_price"), waste, rmc, totc);
+  });
+  types.appendChild(tbl);
+  const add = mk("button", "mini", "+ floor type");
+  add.onclick = () => { fl.types.push(flNewType("Type " + (fl.types.length + 1), fl.types.length)); renderFl(); calcStateDirty(); };
+  types.appendChild(add);
+  const un = tot.find(t => t.i < 0);
+  if (un) types.appendChild(mk("div", "ew-meta fl-unassigned",
+    `${un.rooms} room${un.rooms === 1 ? "" : "s"} with no floor type yet \u2014 ${flFmt(un.sf)} SF not in the takeoff`));
+
+  // modes
+  const modes = mk("div", "st-modes");
+  const mode = (label, tool, title) => {
+    const b = mk("button", "mini", label);
+    b.title = title;
+    b.classList.toggle("active", state.tool === tool);
+    b.onclick = () => state.tool === tool ? flDisarm("") : flArm(tool);
+    return b;
+  };
+  const wallsBtn = mk("button", "mini", "Show walls only");
+  wallsBtn.title = "Tick the line types that read as walls (by CAD layer name when the sheet has them, else by line weight) and untick the rest. A suggestion: the checkboxes stay yours.";
+  wallsBtn.onclick = () => { flShowWallsOnly(); renderFl(); };
+  modes.appendChild(wallsBtn);
+  modes.append(
+    mode("Pick rooms", "fl-pick", "Click inside a room: the engine fills to the walls of the line types you have showing, bridging the doors it detected"),
+    mode("Close a gap", "fl-close", "Two clicks across an opening the sheet leaves open; the fill treats that line as wall"),
+    mode("Draw outline", "fl-draw", "Click each corner of the room yourself"),
+    mode("Deduct", "fl-deduct", "Click a fixture inside a picked room: a listed object toggles in or out of the flooring; any other shape the lines enclose (a tub drawn on no layer, a hearth) comes out of that room"),
+    mode("Edit shape", "fl-edit", "Fix an outline by hand: click a room, then drag its corners; press on an edge to add a corner there; double-click or Delete removes one. Area and walls follow the new shape."));
+  const b3 = mk("button", "mini", "3D view");
+  b3.title = "Stand the picked rooms up: floors in each type's material and colour, walls to the ceiling height, fixtures cut out. Orbit with the mouse.";
+  b3.disabled = !fl.rooms.length;
+  b3.onclick = flOpen3d;
+  modes.appendChild(b3);
+  modes.appendChild(mk("span", "ew-meta", fpp ? `scale ${state.result.scale.text}` : "NO SCALE SET \u2014 pt only"));
+  body.appendChild(modes);
+
+  // CEILING HEIGHT for rooms whose label carries none: one typed default.
+  // Rooms with a note on the sheet keep the sheet's number (each row says
+  // which); wall area = perimeter x height, door openings out at 6'-8".
+  {
+    const row = mk("div", "fl-ceil");
+    row.appendChild(mk("span", "ew-meta", "ceiling height for rooms with no note on the sheet:"));
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.step = "0.25"; inp.min = "0"; inp.className = "fl-num";
+    inp.placeholder = "ft"; inp.value = fl.default_ceiling_ft || "";
+    inp.title = "Feet. Applies only to rooms whose label prints no ceiling height; a room's own note (\"9'-1 1/8\\\" CEILING\") always wins, and each room's line says which was used.";
+    inp.oninput = () => { const v = +inp.value; fl.default_ceiling_ft = v > 0 ? v : null; flApplyItems(); renderFl(); };
+    row.appendChild(inp);
+    const n = fl.rooms.filter(r => flWallSf(r, fl)).length;
+    row.appendChild(mk("span", "ew-meta", n ? `${n} of ${fl.rooms.length} room${fl.rooms.length === 1 ? "" : "s"} have a height \u2192 wall area rows` : (fl.rooms.length ? "no room has a height yet" : "")));
+    body.appendChild(row);
+  }
+
+  // WHAT COMES OUT OF THE FLOORING, by kind: the defaults for every object
+  // the engine lists inside a room. Tubs and showers on, cabinets off
+  // (crews differ; Koby's call), the rest floored under. A changed default
+  // reaches every object of that kind nobody ticked by hand.
+  {
+    const box = mk("div", "fl-deduct");
+    box.appendChild(mk("span", "ew-meta", "take out of the flooring by default:"));
+    for (const [label, kinds] of FL_KIND_GROUPS) {
+      const lab = document.createElement("label");
+      lab.className = "fl-deduct-k";
+      const ck = document.createElement("input"); ck.type = "checkbox";
+      ck.checked = kinds.every(k => !!fl.deductDefaults[k]);
+      ck.onchange = () => { for (const k of kinds) fl.deductDefaults[k] = ck.checked; flApplyDeductDefaults(fl); flApplyItems(); renderFl(); draw(); };
+      lab.append(ck, document.createTextNode(" " + label));
+      lab.title = kinds.includes("cabinet")
+        ? "Off by default: many crews run the floor under base cabinets. Turn it on if yours stops at the toe kick."
+        : kinds.includes("tub")
+        ? "On by default: flooring stops at a tub's rim and a shower pan."
+        : "Off by default: flooring runs under these (they are pulled or reset)." ;
+      box.appendChild(lab);
+    }
+    const n = fl.rooms.reduce((a, r) => a + (r.objects || []).length, 0);
+    const nd = fl.rooms.reduce((a, r) => a + (r.objects || []).filter(o => o.deduct).length + (r.deductions || []).length, 0);
+    box.appendChild(mk("span", "ew-meta", n || nd ? `${n} object${n === 1 ? "" : "s"} found inside the rooms, ${nd} taken out` : ""));
+    body.appendChild(box);
+  }
+
+  // WALLS BY TYPE: the wall line types, classed by CAD layer / legend name,
+  // their line footage, the face evidence, and the centreline estimate.
+  {
+    const wt = flWallTypes(fl);
+    const box = mk("div", "fl-walls");
+    const head = mk("div", "fl-walls-head");
+    head.appendChild(mk("b", null, "Walls by type"));
+    const lab = mk("button", "mini", "Label wall lines by type");
+    lab.title = "Rename the wall line types to Wall \u2014 exterior / interior / shear, so the measured footage rows in the takeoff split the same way.";
+    lab.onclick = () => { flLabelWalls(fl); renderFl(); };
+    head.appendChild(lab);
+    box.appendChild(head);
+    if (!wt.length) {
+      box.appendChild(mk("div", "ew-meta", "no line type on this sheet reads as a wall \u2014 tick the walls, then classify them here"));
+    } else {
+      const t = mk("div", "fl-walls-tbl");
+      for (const h of ["class", "lines", "line LF", "faces", "wall LF"]) t.appendChild(mk("div", "fl-th", h));
+      for (const w of wt) {
+        t.appendChild(mk("div", "fl-td", w.cls));
+        t.appendChild(mk("div", "fl-td", String(w.n)));
+        t.appendChild(mk("div", "fl-td", w.line_lf !== null ? flFmt(w.line_lf) : flFmt(w.line_pt) + " pt"));
+        const fc = mk("div", "fl-td");
+        fc.textContent = `${w.faces} (${Math.round(w.face_share * 100)}% paired)`;
+        fc.title = `${Math.round(w.face_share * 100)}% of this class's linework has a parallel partner 2-14 pt away: ${w.face_share > 0.5 ? "drawn as two face lines, so the line footage is twice the wall length" : "mostly single lines"}. Override below.`;
+        t.appendChild(fc);
+        t.appendChild(mk("div", "fl-td", w.wall_lf !== null ? flFmt(w.wall_lf) : "\u2014"));
+      }
+      box.appendChild(t);
+      // which line type is which class - one row per line type in the wall
+      // set (the "walls only" suggestion plus anything classed by hand),
+      // folded away by default: a sheet has a dozen of them
+      const det = document.createElement("details");
+      det.className = "fl-walls-classify";
+      const sm = document.createElement("summary");
+      sm.className = "ew-meta";
+      sm.textContent = `classify the ${flWallStyles(fl).length} wall line types`;
+      det.appendChild(sm);
+      for (const s of flWallStyles(fl)) {
+        const row = mk("div", "fl-walls-style");
+        row.appendChild(mk("span", "ew-meta", (s.layer || s.suggested_label || ("style " + s.style_id)).slice(0, 26)));
+        const sel = document.createElement("select");
+        sel.className = "fl-sel fl-wall-sel";
+        for (const c of FL_WALL_CLASSES) {
+          const o = document.createElement("option"); o.value = c; o.textContent = c;
+          if (flWallClassOf(s, fl) === c) o.selected = true;
+          sel.appendChild(o);
+        }
+        sel.onchange = () => { fl.wallClass[s.style_id] = sel.value; fl._faceCache = null; flApplyItems(); renderFl(); };
+        row.appendChild(sel);
+        det.appendChild(row);
+      }
+      box.appendChild(det);
+      const opts = mk("div", "fl-walls-opts");
+      const faces = document.createElement("select");
+      faces.className = "fl-sel";
+      for (const [v, txt] of [["", "faces: as measured"], ["1", "faces: 1 (single lines)"], ["2", "faces: 2 (double lines)"]]) {
+        const o = document.createElement("option"); o.value = v; o.textContent = txt;
+        if (String(fl.wallFaces || "") === v) o.selected = true;
+        faces.appendChild(o);
+      }
+      faces.onchange = () => { fl.wallFaces = faces.value ? +faces.value : null; flApplyItems(); renderFl(); };
+      opts.appendChild(faces);
+      const cb = document.createElement("label");
+      cb.className = "ew-meta";
+      const ck = document.createElement("input"); ck.type = "checkbox"; ck.checked = !!fl.wallRows;
+      ck.onchange = () => { fl.wallRows = ck.checked; flApplyItems(); renderFl(); };
+      cb.append(ck, document.createTextNode(" add centreline wall LF rows to the takeoff"));
+      cb.title = "Off by default: the measured line rows already list this linework, and a priced centreline row beside a priced line row is the same wall twice. Tick it when the line rows are unpriced.";
+      opts.appendChild(cb);
+      box.appendChild(opts);
+    }
+    body.appendChild(box);
+  }
+  if (fl.closures.length) {
+    const c = mk("div", "ew-meta", `${fl.closures.length} gap${fl.closures.length === 1 ? "" : "s"} closed by hand on this sheet `);
+    const clr = mk("button", "mini", "clear");
+    clr.onclick = () => { fl.closures = []; calcStateDirty(); renderFl(); draw(); };
+    c.appendChild(clr);
+    body.appendChild(c);
+  }
+
+  // rooms
+  fl.rooms.forEach((r, k) => {
+    const row = mk("div", "st-row fl-row");
+    const top = mk("div", "fl-row-top");
+    const dot = mk("span", "fl-dot");
+    dot.style.background = Number.isInteger(r.type) && fl.types[r.type] ? fl.types[r.type].color : FL_UNASSIGNED;
+    const nm = document.createElement("input");
+    nm.value = r.name; nm.className = "fl-name";
+    // A RENAME REACHES THE TAKEOFF. The rows' detail lines carry the room
+    // names, and they were only rebuilt on the next pick or type change -
+    // so LINEN renamed HALL stayed LINEN in the export and on the printed
+    // report (audit D27). Rebuild the rows on every edit; the panel itself
+    // is not re-rendered here, which would replace this input mid-word.
+    nm.title = r.name || "";
+    nm.oninput = () => { r.name = nm.value; nm.title = nm.value; flApplyItems(); };
+    const sel = document.createElement("select");
+    sel.className = "fl-sel";
+    const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "\u2014 floor type \u2014"; sel.appendChild(o0);
+    fl.types.forEach((t, i) => {
+      const o = document.createElement("option"); o.value = String(i); o.textContent = t.name;
+      if (r.type === i) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => {
+      r.type = sel.value === "" ? null : +sel.value;
+      if (Number.isInteger(r.type)) fl.lastType = r.type;
+      flApplyItems(); renderFl(); draw();
+    };
+    const ed = mk("button", "mini", "edit");
+    ed.title = "reshape this room's outline by hand: drag corners, add one on an edge, remove with a double-click";
+    ed.classList.toggle("active", state.tool === "fl-edit" && !!fl.edit && fl.edit.room === k);
+    ed.onclick = () => (state.tool === "fl-edit" && fl.edit && fl.edit.room === k) ? flDisarm("edit shape: done") : flEditSelect(k);
+    const rm = mk("button", "mini", "\u00d7");
+    rm.title = "remove this room";
+    rm.onclick = () => { if (fl.edit && fl.edit.room === k) fl.edit = null; fl.rooms.splice(k, 1); flApplyItems(); renderFl(); draw(); };
+    // the ceiling height: the sheet's note prefilled, a typed number wins
+    const clg = document.createElement("input");
+    clg.type = "number"; clg.step = "0.01"; clg.min = "0"; clg.className = "fl-num fl-clg";
+    clg.placeholder = "clg ft";
+    clg.value = r.ceiling_ft ? String(Math.round(r.ceiling_ft * 100) / 100) : "";
+    clg.classList.toggle("from-sheet", r.ceiling_by === "sheet");
+    clg.title = (r.ceiling_by === "sheet" ? `Ceiling height read in this room: ${r.ceiling_text}. ` : r.ceiling_text ? `The room says "${r.ceiling_text}" but prints no height. ` : "No ceiling note read in this room. ")
+      + "Feet; type to override. Wall area = perimeter \u00d7 height, door openings out.";
+    clg.oninput = () => {
+      const v = +clg.value;
+      if (v > 0) { r.ceiling_ft = v; r.ceiling_by = "typed"; }
+      else { r.ceiling_ft = null; r.ceiling_by = null; }
+      clg.classList.remove("from-sheet");
+      flApplyItems(); renderFl();
+    };
+    top.append(dot, nm, sel, clg, ed, rm);
+    row.appendChild(top);
+    row.appendChild(mk("div", "ew-meta", flRoomLine(r, fl)));
+    // the fixtures inside this room, each with its own tick: what the
+    // engine found, named from the sheet's layers and its size, and what
+    // the operator clicked out
+    const objs = r.objects || [], deds = r.deductions || [];
+    if (objs.length || deds.length) {
+      const det = document.createElement("details");
+      det.className = "fl-objs";
+      det.open = objs.some(o => o.deduct) || deds.length > 0;
+      const sm = document.createElement("summary");
+      sm.className = "ew-meta";
+      const nOut = objs.filter(o => o.deduct).length + deds.length;
+      sm.textContent = `${objs.length + deds.length} object${objs.length + deds.length === 1 ? "" : "s"} inside` + (nOut ? `, ${nOut} taken out` : "");
+      det.appendChild(sm);
+      objs.forEach((o, oi) => {
+        const lab = document.createElement("label");
+        lab.className = "fl-obj";
+        const ck = document.createElement("input"); ck.type = "checkbox"; ck.checked = !!o.deduct;
+        ck.title = "ticked = taken out of this room's flooring";
+        ck.onchange = () => { o.deduct = ck.checked; o.manual = true; flApplyItems(); renderFl(); draw(); };
+        const txt = `${o.kind}${o.guessed ? "?" : ""} ${flFmt(o.area_sf, 1)} SF · ${o.w_ft.toFixed(1)}×${o.h_ft.toFixed(1)} ft` + (o.layer ? ` · ${o.layer}` : "");
+        lab.append(ck, document.createTextNode(" " + txt));
+        lab.onmouseenter = () => { fl.hotObj = [k, oi]; draw(); };
+        lab.onmouseleave = () => { fl.hotObj = null; draw(); };
+        det.appendChild(lab);
+      });
+      deds.forEach((d, di) => {
+        const lab = document.createElement("div");
+        lab.className = "fl-obj";
+        lab.appendChild(document.createTextNode(`${d.name} ${flFmt(d.area_sf, 1)} SF `));
+        const x = mk("button", "mini", "×"); x.title = "put this back into the flooring";
+        x.onclick = () => { r.deductions.splice(di, 1); flApplyItems(); renderFl(); draw(); };
+        lab.appendChild(x);
+        det.appendChild(lab);
+      });
+      row.appendChild(det);
+    }
+    row.onmouseenter = () => { fl.hot = k; draw(); };
+    row.onmouseleave = () => { fl.hot = null; draw(); };
+    rows.appendChild(row);
+  });
+  const assigned = tot.filter(t => t.i >= 0 && t.rooms);
+  const tr = flTransitions(fl.rooms, fl.types, fl.closures);
+  const wallSf = fl.rooms.reduce((a, r) => { const w = flWallSf(r, fl); return a + (w ? w.net : 0); }, 0);
+  $("flResult").textContent = fl.rooms.length
+    ? `${fl.rooms.length} room${fl.rooms.length === 1 ? "" : "s"} \u00b7 ` + assigned.map(t => `${t.name} ${flFmt(t.sf)} SF / ${flFmt(t.lf)} LF`).join(" \u00b7 ")
+      + (wallSf > 0 ? ` \u00b7 wall area ${flFmt(wallSf)} SF` : "")
+      + (tr.transitions.length ? ` \u00b7 ${tr.transitions.length} transition${tr.transitions.length === 1 ? "" : "s"}` : "")
+      + (tr.open ? ` \u00b7 ${tr.open} doorway${tr.open === 1 ? "" : "s"} to rooms not picked yet` : "")
+    : "";
+}
+$("flBtn").onclick = () => {
+  flSync();
+  const panel = $("flPanel");
+  if (!panel.hidden) {
+    panel.hidden = true;
+    if (FL_TOOLS.includes(state.tool)) flDisarm("");
+    draw();
+    return;
+  }
+  panel.hidden = false;
+  panel.scrollIntoView({ block: "start", behavior: "smooth" });
+  renderFl(); draw();
+};
+$("flClose").onclick = () => {
+  $("flPanel").hidden = true;
+  if (FL_TOOLS.includes(state.tool)) flDisarm("");
+  draw();
+};
+// THE 3D VIEW. webui/fl3d.js (and the vendored three.js under it) load on
+// the first press, not with the page; the view reads the rooms' polygons,
+// types and ceiling heights and draws them - nothing in the takeoff moves.
+let _fl3dLoading = null;
+function flOpen3d() {
+  const fl = flSync();
+  if (!fl.rooms.length) return setStatus("3D: pick or draw a room first", "err");
+  const go = () => window.fl3dOpen(fl, {
+    fpp: stFtPerPt(),
+    dark: document.documentElement.dataset.theme !== "light",
+    wallH: fl.default_ceiling_ft || 9,
+  });
+  if (window.fl3dOpen) return go();
+  if (!_fl3dLoading) _fl3dLoading = new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "fl3d.js?v=5"; s.onload = res; s.onerror = () => rej(new Error("fl3d.js did not load"));
+    document.head.appendChild(s);
+  });
+  setStatus("loading the 3D view\u2026", "busy");
+  _fl3dLoading.then(() => { setStatus(""); go(); }).catch(e => { _fl3dLoading = null; setStatus(e.message, "err"); });
+}
+// canvas: every room filled in its type's colour, closures as short bars,
+// the draft outline / gap while drawing
+function drawFlooring(ctx, k) {
+  const fl = flSync();
+  const armed = FL_TOOLS.includes(state.tool);
+  if ($("flPanel").hidden && !armed) return;
+  const f = IMG_DPI / 72;
+  const rgba = (hex, a) => {
+    const n = parseInt(String(hex).slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  };
+  fl.rooms.forEach((r, i) => {
+    const pts = r.pts;
+    if (!pts || pts.length < 3) return;
+    const color = Number.isInteger(r.type) && fl.types[r.type] ? fl.types[r.type].color : FL_UNASSIGNED;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0] * f, pts[0][1] * f);
+    for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0] * f, pts[j][1] * f);
+    ctx.closePath();
+    ctx.fillStyle = rgba(color, fl.hot === i ? 0.55 : 0.35);
+    ctx.fill();
+    ctx.lineWidth = (fl.hot === i ? 3 : 1.6) / k;
+    ctx.strokeStyle = color;
+    ctx.setLineDash([]);
+    ctx.stroke();
+    // what comes out of this room's flooring: hatched, in the room's own
+    // colour, so a tub reads as a cut-out and not as another room. Objects
+    // still in the floor get a faint outline while the deduct tool is armed
+    // (that is what the click can hit) or when the row's line is hovered.
+    const hatch = (pts) => {
+      if (!pts || pts.length < 3) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0] * f, pts[0][1] * f);
+      for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0] * f, pts[j][1] * f);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.fill();
+      ctx.clip();
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of pts) { x0 = Math.min(x0, p[0] * f); y0 = Math.min(y0, p[1] * f); x1 = Math.max(x1, p[0] * f); y1 = Math.max(y1, p[1] * f); }
+      ctx.strokeStyle = color; ctx.lineWidth = 1.2 / k; ctx.setLineDash([]);
+      const step = 7 / k;
+      ctx.beginPath();
+      for (let d = x0 - (y1 - y0); d < x1; d += step) { ctx.moveTo(d, y1); ctx.lineTo(d + (y1 - y0), y0); }
+      ctx.stroke();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0] * f, pts[0][1] * f);
+      for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0] * f, pts[j][1] * f);
+      ctx.closePath();
+      ctx.lineWidth = 1.6 / k; ctx.strokeStyle = color; ctx.stroke();
+    };
+    (r.objects || []).forEach((o, oi) => {
+      const hot = fl.hotObj && fl.hotObj[0] === i && fl.hotObj[1] === oi;
+      if (o.deduct) hatch(o.pts);
+      else if ((armed && state.tool === "fl-deduct") || hot) {
+        if (!o.pts || o.pts.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(o.pts[0][0] * f, o.pts[0][1] * f);
+        for (let j = 1; j < o.pts.length; j++) ctx.lineTo(o.pts[j][0] * f, o.pts[j][1] * f);
+        ctx.closePath();
+        ctx.lineWidth = (hot ? 2.2 : 1.2) / k; ctx.setLineDash([4 / k, 3 / k]); ctx.strokeStyle = color; ctx.stroke(); ctx.setLineDash([]);
+      }
+    });
+    for (const d of (r.deductions || [])) hatch(d.pts);
+  });
+  for (const c of fl.closures) {
+    ctx.beginPath(); ctx.moveTo(c[0] * f, c[1] * f); ctx.lineTo(c[2] * f, c[3] * f);
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = FL_CLOSE_COLOR; ctx.setLineDash([]); ctx.stroke();
+  }
+  // the editor: every corner of the selected room as a handle, the hovered
+  // corner lit, the spot on a hovered edge where a press would add one
+  if (state.tool === "fl-edit" && fl.edit && fl.edit.room !== null && fl.rooms[fl.edit.room]) {
+    const r = fl.rooms[fl.edit.room];
+    const P = r.pts, hv = fl.edit.hover, dg = fl.edit.drag;
+    ctx.beginPath();
+    ctx.moveTo(P[0][0] * f, P[0][1] * f);
+    for (let j = 1; j < P.length; j++) ctx.lineTo(P[j][0] * f, P[j][1] * f);
+    ctx.closePath();
+    ctx.lineWidth = 2.2 / k; ctx.setLineDash([]); ctx.strokeStyle = CV_VERTEX_ON; ctx.stroke();
+    P.forEach((q, j) => {
+      const on = (dg && dg.i === j) || (hv && hv.v === j);
+      ctx.beginPath(); ctx.arc(q[0] * f, q[1] * f, (on ? 5.5 : 4) / k, 0, Math.PI * 2);
+      ctx.fillStyle = on ? CV_VERTEX_ON : CV_VERTEX; ctx.fill();
+      ctx.lineWidth = 1.4 / k; ctx.strokeStyle = on ? CV_VERTEX_ON_RG : "#333"; ctx.stroke();
+    });
+    if (!dg && hv && hv.e !== undefined && hv.at) {
+      ctx.beginPath(); ctx.arc(hv.at[0] * f, hv.at[1] * f, 4.5 / k, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,212,0,0.45)"; ctx.fill();
+      ctx.lineWidth = 1.4 / k; ctx.setLineDash([3 / k, 2 / k]); ctx.strokeStyle = CV_VERTEX_ON_RG; ctx.stroke(); ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(hv.at[0] * f - 3 / k, hv.at[1] * f); ctx.lineTo(hv.at[0] * f + 3 / k, hv.at[1] * f);
+      ctx.moveTo(hv.at[0] * f, hv.at[1] * f - 3 / k); ctx.lineTo(hv.at[0] * f, hv.at[1] * f + 3 / k);
+      ctx.lineWidth = 1.2 / k; ctx.strokeStyle = CV_VERTEX_ON_RG; ctx.stroke();
+    }
+  }
+  if (state.tool === "fl-close" && fl.closeDraft) {
+    ctx.beginPath(); ctx.arc(fl.closeDraft[0] * f, fl.closeDraft[1] * f, 4 / k, 0, Math.PI * 2);
+    ctx.fillStyle = FL_CLOSE_COLOR; ctx.fill();
+    if (fl.hover) {
+      ctx.beginPath(); ctx.moveTo(fl.closeDraft[0] * f, fl.closeDraft[1] * f); ctx.lineTo(fl.hover[0] * f, fl.hover[1] * f);
+      ctx.lineWidth = 2 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.strokeStyle = FL_CLOSE_COLOR; ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  if (state.tool === "fl-draw" && fl.drawPts.length) {
+    const P = fl.drawPts;
+    ctx.beginPath();
+    ctx.moveTo(P[0][0] * f, P[0][1] * f);
+    for (let j = 1; j < P.length; j++) ctx.lineTo(P[j][0] * f, P[j][1] * f);
+    if (fl.hover && !state.polySnap) ctx.lineTo(fl.hover[0] * f, fl.hover[1] * f);
+    if (P.length >= 2) ctx.lineTo(P[0][0] * f, P[0][1] * f);
+    ctx.lineWidth = 2 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.strokeStyle = ST_DRAFT_COLOR; ctx.stroke(); ctx.setLineDash([]);
+    for (const q of P) {
+      ctx.beginPath(); ctx.arc(q[0] * f, q[1] * f, 3.5 / k, 0, Math.PI * 2);
+      ctx.fillStyle = CV_VERTEX; ctx.fill();
+      ctx.lineWidth = 1.2 / k; ctx.strokeStyle = ST_DRAFT_COLOR; ctx.stroke();
+    }
+    if (state.polySnap) drawPolyCloseRing(P[0], ST_DRAFT_COLOR);
+  }
+}
+
 // ---------- structure calculator: footprint dig + perimeter layback ----------
-// The excavator's bid-sheet formulas (client_meet/beaumont, "Bid sheet" p1,
-// handwritten; FINDINGS-2026-08-21 F52):
+// The excavator's bid-sheet formulas (a client's "Bid sheet" p1,
+// marked by hand; FINDINGS-2026-08-21 F52):
 //   Mass Excavation CY      = footprint SF x depth / 27
 //   Structure Excavation CY = wall length LF x depth x layback width / 27
 //   Structure Backfill CY   = the same trench, filled back in ("I'm doing
@@ -23048,7 +22255,11 @@ function stSync() {
   if (!state.st || state.st.result !== state.result) {
     state.st = { result: state.result, items: [], draft: null, drawPts: [], hover: null,
                  hot: null, seq: 1, depth_ft: 8, fill_depth_ft: NaN, footing_ft: 0,
-                 footing_w_ft: 2, layback_hv: 1, wall_in: 8, datum_ft: NaN };
+                 footing_w_ft: 2, layback_hv: 1, wall_in: 8, datum_ft: NaN,
+                 // walls by footing elevation: what the printed parenthetical is (bottom of the
+                 // footing, as read; or its top, one schedule thickness higher), the existing
+                 // ground typed per group and the ground the civil surface gave per group
+                 printed_is: "bottom", groupE: {}, groupGrade: {}, groupsAdded: false };
     if (state.tool === "st-pick" || state.tool === "st-draw") state.tool = null;
     $("stPanel").hidden = true;
     $("stResult").textContent = "";
@@ -23076,7 +22287,7 @@ function stPolyPerim(pts) {  // closed ring length, pt
 // Perimeter of the ring offset INWARD by t (pt), mitred corners: a convex
 // corner of turning angle phi loses 2 t tan(phi/2), a concave one gains it.
 // A rectangle loses 8 t. Mirror of server._inset_perim - the Radon row is
-// the inside face of the exterior walls (Beaumont, 2026-09-15, 32:49).
+// the inside face of the exterior walls (excavator call, 2026-09-15, 32:49).
 function stPolyInsetPerim(pts, t) {
   const n = pts.length;
   if (n < 3) return 0;
@@ -23117,7 +22328,7 @@ function stCalc(it) {
   const assumed = !(isFinite(+it.fill_depth_ft) && it.fill_depth_ft !== null && it.fill_depth_ft !== "");
   const fdep = assumed ? d : Math.max(0, +it.fill_depth_ft);
   out.mass_cy = out.area_sf * d / 27;
-  // BEAUMONT'S RULE (2026-09-15, 28:00-31:17; bid sheet items 8 and 9): the
+  // THE EXCAVATOR'S RULE (2026-09-15, 28:00-31:17; bid sheet items 8 and 9): the
   // trench outside the wall goes to the BOTTOM OF THE FOOTING (dig depth
   // plus whatever the footing sits below the slab) with the sides laid
   // back at hv:1, so the section per foot of wall is depth x (footing
@@ -23290,46 +22501,6 @@ addEventListener("mousemove", (e) => {
 });
 cv.addEventListener("dblclick", () => { if (state.tool === "st-draw") stFinishDraw(); });
 
-// same interception grammar for the hand-drawn limit of work
-const _ewbClickBefore = handleCanvasClick;
-handleCanvasClick = function (e) {
-  if (state.tool === "ew-bound-draw") {
-    const [px, py] = ptFromEvent(e);
-    return ewBoundDrawClick(px, py);
-  }
-  return _ewbClickBefore(e);
-};
-cv.addEventListener("dblclick", () => {
-  if (state.tool === "ew-bound-draw") ewBoundDrawFinish();
-});
-addEventListener("mousemove", (e) => {
-  if (state.tool !== "ew-bound-draw" || panning || !state.ewBoundDraft.length) return;
-  state.ewBoundHover = ptFromEvent(e);
-  polySnapHover(state.ewBoundHover[0], state.ewBoundHover[1]);
-  draw();
-});
-addEventListener("keydown", (e) => {
-  if (typing()) return;
-  if (state.tool !== "ew-bound-draw") return;
-  if (e.key === "Enter") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    ewBoundDrawFinish();
-    return;
-  }
-  if (e.key === "Escape") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    if (state.ewBoundDraft.length) {
-      state.ewBoundDraft.pop();
-      polySnapClear();     // a pop can take the draft below 3, where nothing closes
-      setStatus(state.ewBoundDraft.length
-        ? `limit of work: ${state.ewBoundDraft.length} corner(s) ` + '—' + " Esc again removes another"
-        : "all corners removed " + '—' + " Esc again exits", "busy");
-      draw();
-    } else {
-      ewBoundDrawCancel("limit of work: drawing cancelled");
-    }
-  }
-}, true);
 // capture phase so the generic Esc (clear selection) never sees these keys
 // while the structure tool owns them
 addEventListener("keydown", (e) => {
@@ -23407,7 +22578,7 @@ function stDatumBlock(st) {
   const lab = stMk("div", "ew-meta", "Datum: 100\u2032-0\u2033 on the structural sheets equals (civil ft)");
   const inp = document.createElement("input");
   inp.type = "number"; inp.step = "0.01"; inp.name = "st-datum_ft"; inp.className = "gz-num";
-  inp.placeholder = "e.g. 7732";
+  inp.placeholder = "e.g. 5000";
   inp.value = Number.isFinite(+st.datum_ft) ? String(st.datum_ft) : "";
   inp.oninput = () => {
     const v = parseFloat(inp.value);
@@ -23429,7 +22600,9 @@ function stDatumBlock(st) {
   if (f.err) { box.appendChild(stMk("div", "ew-meta", "datum notes: " + f.err)); return box; }
   const notes = (f.data && f.data.notes) || [];
   if (!notes.length) {
-    box.appendChild(stMk("div", "ew-meta", "this set prints no datum statement or FFE summary - the civil set usually does ([100'=7732'] on Barn C3.0); type the value here"));
+    // no client job named on screen (audit D40): the example is the FORM a
+    // civil sheet's datum note takes, not a sheet it was read from
+    box.appendChild(stMk("div", "ew-meta", "this set prints no datum statement or FFE summary - the civil set usually does (a note like [100' = 5000'] on the grading sheet); type the value here"));
     return box;
   }
   const row = stMk("div", "st-chips");
@@ -23466,8 +22639,8 @@ async function stFetchDatum() {
   renderSt();
 }
 // ---- walls grouped by bottom of footing (Wave 2 item 3) ----------------------------
-// Beaumont colours every wall by the elevation its footing bottoms at, because
-// the dig depth differs per group (Barn S1-1.3: cyan 96', red 85'-2", magenta
+// One excavator colours every wall by the elevation its footing bottoms at, because
+// the dig depth differs per group (a structural sheet S1-1.3: cyan 96', red 85'-2", magenta
 // 84'-2", blue 83'). Two readings, both suggestions and both from the sheet's
 // own callouts: the sheet-wide groups (every line within reach of a callout
 // joins it; the footing family's length per group is AS DRAWN, so a footing
@@ -23537,22 +22710,44 @@ function stGroupsTable(st, d) {
     + g.reach_ft + " ft of a callout joins that callout's group"
     + (fs ? `; footing line = ${fs.label || ("family " + fs.style_id)} (${Math.round((fs.share || 0) * 100)}% of the callouts sit on it)` : "")
     + "; " + g.outline_note + ". Hover a row to light its lines."));
+  // THE PRINTED ELEVATION: bottom of the footing (as read) or its top, one schedule thickness
+  // higher - the set's own symbols key decides; until the estimator says, it is a setting
+  const ctl = stMk("div", "ew-meta st-groups-ctl");
+  const pis = document.createElement("select"); pis.name = "st-printed_is"; pis.className = "mini";
+  for (const [v, txt] of [["bottom", "bottom of the footing"], ["top", "top of the footing (dig one thickness deeper)"]]) {
+    const o = document.createElement("option"); o.value = v; o.textContent = txt; pis.appendChild(o);
+  }
+  pis.value = st.printed_is === "top" ? "top" : "bottom";
+  pis.onchange = () => { st.printed_is = pis.value; calcStateDirty(); if (st.groupsAdded) stGroupsApply(st, d); renderSt(); };
+  ctl.append("the printed elevation (83\u2032-0\u2033) is the ", pis);
+  const civ = stMk("button", "mini", "existing ground from the civil surface");
+  civ.title = "Ask the cut / fill engine for the existing ground under each group's walls: open Cut / fill, read the grading sheet, align it to this sheet with two matching points";
+  civ.onclick = () => stFetchGroupGrades(st, d);
+  ctl.append(" \u00b7 ", civ);
+  box.appendChild(ctl);
   const t = stMk("table");
   const hd = stMk("tr");
   const lfHead = g.once ? "one run" : "footing line";
-  for (const h of ["BOF", "callouts", "width", lfHead, "outline"])
-    hd.appendChild(stMk("th", ["width", lfHead, "outline"].includes(h) ? "num" : "", h));
+  // eight columns do not fit the panel: the outline column only exists while an outline is drawn
+  const heads = ["BOF \u00b7 width", "callouts", lfHead].concat(st.draft ? ["outline"] : []).concat(["existing", "dig ft \u2192 CY"]);
+  for (const h of heads)
+    hd.appendChild(stMk("th", [lfHead, "outline", "existing", "dig ft \u2192 CY"].includes(h) ? "num" : "", h));
   t.appendChild(hd);
   const spBy = {};
   if (sp) for (const r of sp.groups || []) spBy[r.bof_ft] = r;
+  const calc = stGroupsCalc(st, d);
   for (const r of g.groups) {
     const tr = stMk("tr");
     // swatch inside the BOF cell; BOF and callouts wrap so five columns fit the panel
     const bc = stMk("td", "st-wrap"); const dot = stMk("span", "st-sw"); dot.style.background = r.colour;
     bc.append(dot, ` ${r.bof_ft}\u2032` + (dat != null ? ` (${stCivil(r.bof_ft, dat)} civil)` : ""));
+    const wtxt = r.width_ft != null ? stFt(r.width_ft) + (r.width_from === "schedule" ? "" : " ?") + " wide" : "width \u2014";
+    bc.append(document.createElement("br"), stMk("span", "ew-meta", wtxt));
     tr.appendChild(bc);
-    tr.appendChild(stMk("td", "st-wrap", `${r.callouts}: ` + Object.entries(r.marks || {}).map(([m, n]) => n > 1 ? `${m} \u00d7${n}` : m).join(", ")));
-    tr.appendChild(stMk("td", "num", r.width_ft != null ? stFt(r.width_ft) + (r.width_from === "schedule" ? "" : " ?") : "\u2014"));
+    const marksAll = Object.entries(r.marks || {}).map(([m, n]) => n > 1 ? `${m} \u00d7${n}` : m);
+    const mc = stMk("td", "st-wrap", `${r.callouts}: ` + marksAll.slice(0, 2).join(", ") + (marksAll.length > 2 ? ` +${marksAll.length - 2}` : ""));
+    mc.title = marksAll.join(", ");
+    tr.appendChild(mc);
     const lf = stMk("td", "num", r.lf_ft ? `${Math.round(r.lf_ft).toLocaleString()} ft` : "none");
     lf.title = (g.once && r.lf_drawn_ft != null
         ? `one run per footing: ${Math.round(r.lf_ft)} ft (as drawn, both edges: ${Math.round(r.lf_drawn_ft)} ft)\n`
@@ -23561,14 +22756,45 @@ function stGroupsTable(st, d) {
     tr.appendChild(lf);
     const s = spBy[r.bof_ft];
     // a group the outline never touches reads "-" once the split is in; "..." only while it loads
-    tr.appendChild(stMk("td", "num", s ? `${Math.round(s.lf_ft).toLocaleString()} ft (${Math.round(s.share * 100)}%)`
-      : (st.draft && !sp ? (st.split && st.split.err ? "?" : "\u2026") : "\u2014")));
+    if (st.draft) tr.appendChild(stMk("td", "num", s ? `${Math.round(s.lf_ft).toLocaleString()} ft (${Math.round(s.share * 100)}%)`
+      : (!sp ? (st.split && st.split.err ? "?" : "\u2026") : "\u2014")));
+    // existing ground under this group's walls: the civil surface's answer, or typed (typed wins)
+    const gk = String(r.bof_ft);
+    const ge = st.groupGrade[gk];
+    const ec = stMk("td", "num");
+    const ein = document.createElement("input");
+    ein.type = "number"; ein.step = "0.1"; ein.name = "st-groupE-" + gk; ein.className = "gz-num"; ein.style.width = "64px";
+    ein.placeholder = ge && ge.mean_ft != null ? String(ge.mean_ft) : "civil ft";
+    ein.value = Number.isFinite(+st.groupE[gk]) ? st.groupE[gk] : "";
+    ein.title = ge && ge.mean_ft != null
+      ? `civil surface: ${ge.mean_ft} ft average over ${ge.n} of ${ge.of} points along the walls (min ${ge.min_ft}, max ${ge.max_ft}); type a value to override`
+      : "existing ground at these walls in civil feet: from the civil surface (button above) or typed";
+    ein.onchange = () => { const v = parseFloat(ein.value); if (Number.isFinite(v)) st.groupE[gk] = v; else delete st.groupE[gk]; calcStateDirty(); if (st.groupsAdded) stGroupsApply(st, d); renderSt(); };
+    ec.appendChild(ein);
+    if (ge && ge.mean_ft != null && !Number.isFinite(+st.groupE[gk])) ec.appendChild(stMk("span", "ew-meta", " civil"));
+    tr.appendChild(ec);
+    const c = calc.groups[gk];
+    const dg = stMk("td", "num", c && c.depth_ft != null ? `${stFmt(c.depth_ft, 2)} \u2192 ${stFmt(Math.round(c.cy), 0)}` : "\u2014");
+    dg.title = c && c.depth_ft != null
+      ? `${c.existing_ft} existing - ${stFmt(c.dig_to_ft, 2)} dig bottom (${c.dig_to_note}) = ${stFmt(c.depth_ft, 2)} ft; ${Math.round(c.lf_ft)} ft x ${stFmt(c.depth_ft, 2)} x (${c.width_ft} + 0.5 x ${c.hv} x ${stFmt(c.depth_ft, 2)}) / 27 = ${stFmt(stR1(c.cy))} CY`
+      : "needs the datum and the existing ground";
+    tr.appendChild(dg);
     tr.onmouseenter = () => { state.stHotChains = new Set(r.chain_ids || []); draw(); };
     tr.onmouseleave = () => { state.stHotChains = null; draw(); };
     t.appendChild(tr);
   }
   box.appendChild(t);
   const foot = [];
+  if (calc.total_cy != null) {
+    foot.push(`groups with a depth: ${calc.n_with} of ${g.groups.length} \u2192 Structure Excavation ${stFmt(stR1(calc.total_cy))} CY`
+      + (calc.n_without ? ` (${calc.n_without} group${calc.n_without === 1 ? "" : "s"} with no ground yet, left out)` : ""));
+  } else foot.push("dig depth per group = existing ground - the footing bottom in civil feet: set the datum and the ground (civil surface or typed)");
+  if (ge_source(st)) foot.push(ge_source(st));
+  const addB = stMk("button", "mini", st.groupsAdded ? "Remove the groups' row from the takeoff" : "Add the groups' excavation to the takeoff");
+  addB.disabled = calc.total_cy == null;
+  addB.title = "One Structure Excavation row from the walls by footing elevation (LF x depth x (width + half the depth at the layback) / 27, per group). The outline tool's own rows stay separate.";
+  addB.onclick = () => { st.groupsAdded = !st.groupsAdded; stGroupsApply(st, d); calcStateDirty(); renderSt(); };
+  box.appendChild(addB);
   if (g.unassigned_ft) foot.push(`${Math.round(g.unassigned_ft).toLocaleString()} ft of lines sit near no callout`);
   if (sp) foot.push(`this outline: ${Math.round(sp.perimeter_ft).toLocaleString()} ft`
     + (sp.unassigned_ft ? `, ${Math.round(sp.unassigned_ft).toLocaleString()} ft of it beside no callout` : ", all of it beside a callout"));
@@ -23581,6 +22807,119 @@ function stGroupsTable(st, d) {
   tog.append(cb, " colour the walls on the sheet by group");
   box.appendChild(tog);
   return box;
+}
+// ---- walls by footing elevation -> the takeoff, with a dig depth per group ---------------------
+// The estimator colours every wall by the elevation its footing bottoms at because the dig depth
+// differs per group: existing ground minus the footing bottom, in civil feet (the structural
+// sheet's 100'-0" datum plus the typed civil value). The footing bottom is the printed elevation,
+// or one schedule thickness under it when the set prints the TOP of the footing (a setting).
+function stThicknessOf(d, r) {
+  const marks = Object.entries(r.marks || {}).sort((a, b) => b[1] - a[1]);
+  for (const [m] of marks) {
+    const s = ((d.by_mark || {})[m] || {}).schedule || {};
+    if (s.depth_ft != null) return +s.depth_ft;
+  }
+  return null;
+}
+function stGroupsCalc(st, d) {
+  const g = (d && d.groups) || {};
+  const dat = stDatumOf(st);
+  const hv = Number.isFinite(+st.layback_hv) ? +st.layback_hv : 1;
+  const out = { groups: {}, total_cy: null, n_with: 0, n_without: 0, hv, datum_ft: dat, printed_is: st.printed_is === "top" ? "top" : "bottom" };
+  for (const r of g.groups || []) {
+    const gk = String(r.bof_ft);
+    const typed = Number.isFinite(+st.groupE[gk]) ? +st.groupE[gk] : null;
+    const ge = st.groupGrade[gk];
+    const E = typed != null ? typed : (ge && ge.mean_ft != null ? +ge.mean_ft : null);
+    const th = stThicknessOf(d, r);
+    const row = { bof_ft: r.bof_ft, lf_ft: r.lf_ft || 0, width_ft: r.width_ft != null ? +r.width_ft : 2, hv, existing_ft: E,
+                  existing_from: typed != null ? "typed" : (E != null ? "civil surface" : null), thickness_ft: th };
+    if (dat != null) {
+      const printed_civil = dat + (r.bof_ft - 100);
+      row.dig_to_ft = out.printed_is === "top" ? printed_civil - (th != null ? th : 0) : printed_civil;
+      row.dig_to_note = out.printed_is === "top" ? `printed ${stFmt(printed_civil, 2)} is the top of the footing, ${th != null ? th : 0} ft thick` : `the printed elevation, bottom of the footing`;
+    }
+    if (dat != null && E != null && row.lf_ft > 0) {
+      row.depth_ft = Math.max(0, E - row.dig_to_ft);
+      row.cy = row.lf_ft * row.depth_ft * (row.width_ft + 0.5 * hv * row.depth_ft) / 27;
+      out.n_with += 1;
+      out.total_cy = (out.total_cy || 0) + row.cy;
+    } else out.n_without += 1;
+    out.groups[gk] = row;
+  }
+  return out;
+}
+function ge_source(st) {
+  const ks = Object.keys(st.groupGrade || {});
+  if (!ks.length) return "";
+  const any = st.groupGrade[ks[0]];
+  return any && any.source ? "existing ground from " + any.source : "";
+}
+const ST_GROUPS_LABEL = "Structure Excavation (by footing elevation)";
+function stGroupsApply(st, d) {
+  state.extraItems = state.extraItems.filter(it => it.label !== ST_GROUPS_LABEL);
+  if (st.groupsAdded) {
+    const c = stGroupsCalc(st, d);
+    if (c.total_cy != null) {
+      state.extraItems.push({ label: ST_GROUPS_LABEL, qty: stR1(c.total_cy), unit: "CY" });
+      if (!store.getItem(tradeKey(ST_GROUPS_LABEL))) store.setSession(tradeKey(ST_GROUPS_LABEL), "Earthwork & Grading");
+      if (state.extraItems.some(it => it.label === "Structure Excavation"))
+        setStatus("the outline tool's Structure Excavation row is also in the takeoff: keep one of the two", "err");
+    } else st.groupsAdded = false;
+  }
+  renderItemized(); calcSave();
+}
+// sample points every ~10 ft along a group's footing lines (this sheet's detected chains)
+function stGroupSamples(r) {
+  const fpp = stFtPerPt(); const step = fpp ? 10 / fpp : 40;
+  const pts = [];
+  for (const id of (r.chain_ids || [])) {
+    const ch = chainById(id); if (!ch || !ch.points || ch.points.length < 2) continue;
+    let carry = 0;
+    for (let i = 1; i < ch.points.length; i++) {
+      const a = ch.points[i - 1], b = ch.points[i];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]); if (L < 1e-6) continue;
+      for (let s = carry; s <= L; s += step) { const t = s / L; pts.push([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]); }
+      carry = ((L - carry) % step === 0) ? 0 : step - ((L - carry) % step);
+    }
+    if (!pts.length) pts.push(ch.points[0]);
+  }
+  return pts;
+}
+async function stFetchGroupGrades(st, d) {
+  const g = (d && d.groups) || {};
+  if (!g.groups || !g.groups.length) return;
+  setStatus("asking the cut / fill engine for the existing ground under the walls…", "busy");
+  const gen = state.gen;
+  const all = []; const owner = [];
+  for (const r of g.groups) { const p = stGroupSamples(r); for (const q of p) { all.push(q); owner.push(String(r.bof_ft)); } }
+  if (!all.length) return setStatus("no footing lines to sample: run Detect first", "err");
+  try {
+    const resp = await fetch(`/api/job/${state.job}/page/${state.page}/cutfill/grade`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pts: all, surface: "existing" }) });
+    const j = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(j.detail || resp.statusText);
+    if (j.error) throw new Error(j.error);
+    if (gen !== state.gen || state.st !== st) return;
+    const by = {};
+    j.z.forEach((z, i) => { const k = owner[i]; const b = by[k] || (by[k] = { zs: [], of: 0 }); b.of += 1; if (z != null) b.zs.push(z); });
+    st.groupGrade = {};
+    let found = 0;
+    for (const [k, b] of Object.entries(by)) {
+      if (!b.zs.length) { st.groupGrade[k] = { mean_ft: null, n: 0, of: b.of }; continue; }
+      found += 1;
+      const mean = b.zs.reduce((a, v) => a + v, 0) / b.zs.length;
+      st.groupGrade[k] = { mean_ft: Math.round(mean * 100) / 100, min_ft: Math.round(Math.min(...b.zs) * 100) / 100, max_ft: Math.round(Math.max(...b.zs) * 100) / 100,
+        n: b.zs.length, of: b.of, source: `the cut / fill engine's existing surface (shown on sheet ${j.display_page}, this sheet mapped by ${j.transform})` };
+    }
+    calcStateDirty();
+    if (st.groupsAdded) stGroupsApply(st, d);
+    renderSt();
+    setStatus(found ? `existing ground under ${found} of ${g.groups.length} groups from the civil surface (sheet ${j.display_page}, mapping: ${j.transform}); typed values win`
+      : `the existing surface does not reach these walls: align this sheet to the civil grading sheet in Cut / fill (Sheet alignment card) and try again`, found ? "" : "err");
+  } catch (e) {
+    setStatus("existing ground: " + String((e && e.message) || e) + " — open Cut / fill, read the civil grading sheet (link the civil set if it is another plan set) and align it to this sheet", "err");
+  }
 }
 function stPaintSplit(ctx, k, f, st) {
   const sp = st.draft ? stSplitOf(st) : null;
@@ -23609,6 +22948,9 @@ function stFootingsBlock(st) {
   if (!f || f.job !== state.job || f.page !== state.page) {
     st.footings = { job: state.job, page: state.page, loading: true, data: null, err: null };
     stFetchFootings();
+    // the panel's groups count one run per footing on the server; the same
+    // pairing is fetched here so the "once" switches appear on the rows
+    if (!state.twins) twinsLoad(state.gen);
     box.appendChild(stMk("div", "ew-meta", "reading the footing marks on this sheet\u2026"));
     return box;
   }
@@ -23632,9 +22974,15 @@ function stFootingsBlock(st) {
     const s = m.schedule || {};
     const chip = stMk("button", "mini st-chip");
     const dims = s.kind === "spread" && s.length_ft != null ? `${stFt(s.length_ft)} \u00d7 ${stFt(s.width_ft)}` : `${stFt(s.width_ft)} wide`;
-    const depth = s.depth_ft != null ? ` \u00d7 ${stFt(s.depth_ft)} deep` : "";
+    // the schedule's third dimension is the footing's THICKNESS (its own
+    // height), not a depth below the slab: a 2'-0" x 1'-0" continuous
+    // footing is a foot thick, and where its top sits is the plan's datum
+    const depth = s.depth_ft != null ? ` \u00d7 ${stFt(s.depth_ft)} thick` : "";
     const bof = Object.entries(m.bof || {}).map(([z, n]) => `${z}\u2032${dat != null ? ` (${stCivil(+z, dat)} civil)` : ""}${n > 1 ? " \u00d7" + n : ""}`).join(", ");
-    chip.textContent = `${mark} \u00d7${m.count} \u00b7 ${dims}${depth}` + (bof ? ` \u00b7 BOF ${bof}` : "");
+    // the bracketed value beside a callout ([94'-6"]: the top of the wall) shown as printed
+    const tows = [...new Set((d.callouts || []).filter(c => c.mark === mark && c.tow_text).map(c => c.tow_text))];
+    chip.textContent = `${mark} \u00d7${m.count} \u00b7 ${dims}${depth}` + (bof ? ` \u00b7 ${st.printed_is === "top" ? "TOF" : "BOF"} ${bof}` : "")
+      + (tows.length ? ` \u00b7 top of wall ${tows.slice(0, 3).join(", ")}${tows.length > 3 ? "\u2026" : ""}` : "");
     chip.title = (s.from === "schedule" ? `from the footing schedule (page ${(s.page || 0) + 1})` : "no schedule row: width from the mark's digits, depth unknown")
       + (s.reinf ? ` \u00b7 ${s.reinf}` : "") + (m.unpaired ? ` \u00b7 ${m.unpaired} with no elevation beside it` : "");
     if (s.from !== "schedule") chip.classList.add("st-chip-guess");
@@ -23672,7 +23020,9 @@ function stApplyFooting(mark, s) {
   $("stResult").textContent = stResultText(stCalc(d));
   renderSt();
   setStatus(`${mark}: footing ${stFt(s && s.width_ft)} wide, `
-    + (s && s.depth_ft != null ? `${stFt(s.depth_ft)} below the slab` : "depth not in the schedule \u2014 type it")
+    + (s && s.depth_ft != null
+        ? `${stFt(s.depth_ft)} thick \u2014 used as the depth the trench goes past the slab (Footing below slab); change it if the footing sits deeper`
+        : "thickness not in the schedule \u2014 type the depth below the slab")
     + (s && s.from === "schedule" ? " (from the footing schedule)" : " (from the mark's digits, no schedule row)"));
 }
 function renderSt() {
@@ -23699,16 +23049,16 @@ function renderSt() {
     fpp ? `scale ${state.result.scale.text}` : "NO SCALE SET — pt only");
   modes.appendChild(scaleNote);
   body.appendChild(modes);
-  // FOOTING MARKS ON THIS SHEET (Beaumont, call 2026-09-15 28:00-31:17:
-  // "CF3.0 vs CF7.5 doubles the dig"; Jeff Ellis: footings by schedule
+  // FOOTING MARKS ON THIS SHEET (excavator, call 2026-09-15 28:00-31:17:
+  // "CF3.0 vs CF7.5 doubles the dig"; a foundation contractor: footings by schedule
   // mark). The sheet's own marks, each with its schedule row, offered as
   // chips: a click sets the draft's footing width and depth, the typed
   // number always wins, and a mark with no schedule row says its width
   // came from its digits.
   body.appendChild(stFootingsBlock(st));
-  // THE ARCHITECTURAL DATUM (Beaumont, call 2026-09-15: "the arch 100 datum
+  // THE ARCHITECTURAL DATUM (excavator, call 2026-09-15: "the arch 100 datum
   // can differ per building; typed per structure, read only as a
-  // suggestion, never blind"). The set's own [100'=7732'] / FFE SUMMARY /
+  // suggestion, never blind"). The set's own [100'=NNNN'] / FFE SUMMARY /
   // datum note as chips; the typed value is the only thing that applies.
   body.appendChild(stDatumBlock(st));
 
@@ -23935,7 +23285,6 @@ function wzChanged() {
   calcStateDirty();
   renderStyles(); renderChips(); renderItemized(); renderMiniLegend();
   // the earthwork panel lists and integrates only what is inside the boxes
-  if (state.ew && $("ewPanel") && !$("ewPanel").hidden) { renderEw(); renderEwBound(); }
   draw();
 }
 
@@ -23975,8 +23324,8 @@ $("wzBtn").onclick = () => {
   state.tool = "wz-draw";
   setStatus("work area: drag a box around the part of the sheet that should "
     + "count — the takeoff lists then count only length inside your boxes. "
-    + "Drag more boxes to add; Esc finishes. (Earthwork and trench keep "
-    + "their own limit-of-work boundary.)", "busy");
+    + "Drag more boxes to add; Esc finishes. (Cut / fill and Trench keep "
+    + "their own limit of work.)", "busy");
 };
 
 $("wzClearBtn").onclick = () => {
@@ -24053,871 +23402,11 @@ document.addEventListener("click", (e) => {
   if (kh.contains(e.target) || (e.target.closest && e.target.closest("#kbdBtn"))) return;
   kh.hidden = true;
 });
-// ====================== GRADING ZONES ======================================
-// Declared-design regions (F: EXCAVATION-PLAN.md section 25, the Stice
-// case): the sheet does not draw a full proposed surface, so the estimator
-// outlines a region and DECLARES its design - "pad at 2716.0", "1.5% plane
-// toward 90 deg", "balance it", "strip 8 inches" - and the engine computes
-// that declared design against the detected existing ground inside the
-// polygon only (POST /earthwork/zone). Reference UX: the AGTEK-style
-// region workflow - a per-cell dz aerial with a perimeter summary card.
-//
-// Consent is the app's standard one: the modal's live numbers are LOOKING;
-// a zone's rows reach the priced takeoff only through its own "Add to
-// takeoff" button (exact-label replacement, the trench pattern). Zones
-// persist through the calcstate sidecar (additive key "gzones") as INPUTS
-// only; every restore recomputes through the endpoint.
-
-// GZ-GEOM-BEGIN
-// Pure geometry (no DOM, no state.*) so tests/test_grading_zone_geom.js can
-// eval just this block - same discipline as WZ-MATH / TRENCH-MATH.
-
-// even-odd ray cast, the same rule the server's _points_in_poly applies -
-// the modal's "N contours + M spots in zone" line and the server's grid
-// must agree on what "inside" means
-function gzPtInPoly(x, y, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i][0], yi = poly[i][1];
-    const xj = poly[j][0], yj = poly[j][1];
-    if ((yi > y) !== (yj > y)) {
-      const dy = (yj - yi) || 1e-12;
-      const xc = (xj - xi) * (y - yi) / dy + xi;
-      if (x < xc) inside = !inside;
-    }
-  }
-  return inside;
-}
-
-// area centroid (shoelace); vertex mean when the ring is degenerate.
-// Mirrors the server's _zone_centroid, which anchors the plane mode.
-function gzCentroid(poly) {
-  let a = 0, cx = 0, cy = 0;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const cross = poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
-    a += cross;
-    cx += (poly[j][0] + poly[i][0]) * cross;
-    cy += (poly[j][1] + poly[i][1]) * cross;
-  }
-  if (Math.abs(a) < 1e-9) {
-    let sx = 0, sy = 0;
-    for (const q of poly) { sx += q[0]; sy += q[1]; }
-    return [sx / poly.length, sy / poly.length];
-  }
-  return [cx / (3 * a), cy / (3 * a)];
-}
-
-// does any vertex of this polyline fall inside the polygon? Vertex test on
-// purpose: the summary line counts which assigned contours contribute
-// inside the zone, and a contour clipping a corner between two vertices is
-// a display nicety, not a volume input (the server samples the TIN, not
-// this list).
-function gzChainTouches(points, poly) {
-  for (const p of points) if (gzPtInPoly(p[0], p[1], poly)) return true;
-  return false;
-}
-// GZ-GEOM-END
-
-// 5,800 -> "5.8k": the badge has one line of room on the canvas
-function gzK(v) {
-  v = Math.round(Number(v) || 0);
-  if (Math.abs(v) >= 1000) {
-    const s = (v / 1000).toFixed(1).replace(/\.0$/, "");
-    return s + "k";
-  }
-  return v.toLocaleString();
-}
-
-var gzModalZone = null;   // the zone being edited, or null for a new one
-var gzModalPoly = null;   // the polygon under the modal
-var gzModalTimer = null;  // 400 ms debounce for the live result block
-var gzModalSeq = 0;       // drops stale live responses
-
-// both page-switch chokepoints call this (selectPage AND loadResult), like
-// ewBoundDraft: drafts, saved zones and the open modal all belong to ONE
-// sheet. The new page's own zones come back via gzApplySaved.
-function gzPageReset() {
-  state.gzones = [];
-  state.gzDraft = []; state.gzHover = null; state.gzDrag = null;
-  state.gzSeq = 1;
-  const m = $("gzModal");
-  if (m) m.hidden = true;
-  gzModalZone = null; gzModalPoly = null;
-  if (gzModalTimer) { clearTimeout(gzModalTimer); gzModalTimer = null; }
-  gzModalSeq++;
-  for (const id of ["gzDraw", "gzBox"]) {
-    const b = $(id);
-    if (b) b.classList.remove("active");
-  }
-  renderGz();
-}
-
-// the existing ground a zone computes against: exactly what the panel has
-// assigned to EXISTING (rows with a finite elevation), plus the active
-// spot grades when the panel sends those to the existing side - the same
-// split ewBody uses, so the zone and the whole-sheet calculator can never
-// disagree about what "existing" means
-function gzExistingRows() {
-  if (!state.ew) return [];
-  return state.ew.rows.filter(r => r.surface === "existing" && isFinite(r.z));
-}
-function gzExistingPoints() {
-  if (!state.ew) return [];
-  return ewSpotsSplit().existing;
-}
-// mode "proposed": the sheet's own design surface, the same rows the
-// whole-sheet cut/fill uses for PROPOSED
-function gzProposedRows() {
-  if (!state.ew) return [];
-  return state.ew.rows.filter(r => r.surface === "proposed" && isFinite(r.z));
-}
-function gzProposedPoints() {
-  if (!state.ew) return [];
-  return ewSpotsSplit().proposed;
-}
-
-// client-side count for the modal header line: which of the assigned
-// existing rows/spots actually sit inside this polygon
-function gzZoneSummary(poly) {
-  let nC = 0, nS = 0;
-  const zs = [];
-  const chains = state.result
-    ? new Map(state.result.chains.map(c => [c.chain_id, c])) : new Map();
-  for (const r of gzExistingRows()) {
-    const ch = chains.get(r.chain_id);
-    if (ch && gzChainTouches(ch.points, poly)) { nC++; zs.push(r.z); }
-  }
-  for (const g of gzExistingPoints())
-    if (gzPtInPoly(g.x, g.y, poly)) { nS++; zs.push(g.z); }
-  const mean = zs.length ? zs.reduce((a, b) => a + b, 0) / zs.length : null;
-  return { nContours: nC, nSpots: nS, mean };
-}
-
-// the zone's base course as the route's proposed_layers row (one layer per
-// zone: thickness in inches + a name; 0 = none)
-function gzBase(z) {
-  const t = +z.base_in;
-  return { name: (z.base_name || "Base").trim().slice(0, 30) || "Base",
-           thickness_in: isFinite(t) && t > 0 ? t : 0 };
-}
-function gzBody(polygon, design, strip_in, base) {
-  const b = base && isFinite(+base.thickness_in) && +base.thickness_in > 0
-    ? [{ name: base.name || "Base", thickness_in: +base.thickness_in }] : [];
-  return {
-    polygon: polygon.map(q => [q[0], q[1]]),
-    design: design,
-    strip_in: isFinite(strip_in) && strip_in > 0 ? strip_in : 0,
-    proposed_layers: b,
-    existing_rows: gzExistingRows().map(r => ({ chain_id: r.chain_id, z: r.z })),
-    existing_points: gzExistingPoints(),
-    proposed_rows: gzProposedRows().map(r => ({ chain_id: r.chain_id, z: r.z })),
-    proposed_points: gzProposedPoints(),
-  };
-}
-
-// ---- compute (shared by save, edit and restore) --------------------------
-async function gzCompute(z, gen) {
-  if (gen == null) gen = state.gen;
-  // only a zone JUST DRAWN may take the name printed inside it (below): one
-  // restored from the sidecar or recomputed never renames itself - the
-  // first run of this renamed a restored "Zone 1" whose takeoff rows kept
-  // the old name
-  const fresh = !!z.autoName; delete z.autoName;
-  z.err = null; z.result = null; z.img = null;
-  renderGz(); draw();
-  try {
-    const r = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/zone`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(gzBody(z.polygon, z.design, z.strip_in, gzBase(z))),
-    });
-    if (gen !== state.gen) return;
-    if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      if (gen !== state.gen) return;
-      // The refusal detail is an OBJECT on the volume floor's paths
-      // (/earthwork, /earthwork/map and now /earthwork/zone all answer the
-      // same shape). Reading it as a string printed "[object Object]" - a
-      // refusal the operator cannot act on is barely better than a wrong
-      // number, and this route's refusal names which surface is flat.
-      z.err = ewDetailText(e.detail) || ("failed (" + r.status + ")");
-    } else {
-      const j = await r.json();
-      if (gen !== state.gen) return;
-      z.result = j;
-      // AUTO-LABEL: the biggest text inside the polygon names the zone,
-      // but only while it still wears "Zone N" - a typed name is never
-      // overwritten, and the zone remembers where its name came from
-      if (fresh && !z.added && j.suggested_name && /^Zone \d+$/.test(z.name || "")) {
-        z.name = String(j.suggested_name).slice(0, 40);
-        z.named_from = "text";
-        calcStateDirty();
-      }
-      const img = new Image();
-      img.onload = () => { if (gen === state.gen) { z.img = img; draw(); } };
-      img.src = "data:image/png;base64," + j.map_png_base64;
-      // consent already given for THIS zone: refresh its rows in place so a
-      // superseded number never stays priced (same rule as ewCalc)
-      if (z.added) { gzApplyItems(z); renderItemized(); }
-    }
-  } catch (err) {
-    if (gen !== state.gen) return;
-    z.err = "server unreachable";
-  }
-  renderGz(); draw();
-}
-
-// ---- restore from the calcstate sidecar ----------------------------------
-// Synchronous half: zones into state BEFORE the first snapshot, so the
-// payload round-trips. Results stay null here - they are never staged.
-function gzApplySaved() {
-  const saved = state.calcSaved || {};
-  state.gzones = [];
-  let seq = 1;
-  for (const s of (Array.isArray(saved.gzones) ? saved.gzones : [])) {
-    if (!s || !Array.isArray(s.polygon) || s.polygon.length < 3) continue;
-    const poly = s.polygon.filter(q => Array.isArray(q) && q.length >= 2)
-                          .map(q => [+q[0], +q[1]]);
-    if (poly.length < 3) continue;
-    state.gzones.push({
-      id: String(s.id || ("z" + seq)),
-      name: String(s.name || ("Zone " + seq)).slice(0, 40),
-      polygon: poly,
-      design: (s.design && typeof s.design === "object") ? s.design : { mode: "pad" },
-      strip_in: isFinite(+s.strip_in) ? Math.max(+s.strip_in, 0) : 0,
-      base_in: isFinite(+s.base_in) ? Math.max(+s.base_in, 0) : 0,
-      base_name: String(s.base_name || "Base").slice(0, 30),
-      // absent (or true) prints them; only an explicit off stays off
-      added: !!s.added, showNums: s.show_nums !== false,
-      named_from: s.named_from === "text" ? "text" : null,
-      result: null, img: null, err: null,
-    });
-    seq++;
-  }
-  state.gzSeq = state.gzones.length + 1;
-  renderGz();
-}
-
-// Async half, AFTER the snapshot: every restored zone recomputes through
-// the endpoint. The endpoint takes the panel's existing rows as input, so
-// the suggest data loads first (ewEnsure) even when the panel is closed.
-async function gzRestoreCompute() {
-  if (!state.gzones.length) return;
-  const gen = state.gen;
-  // This runs UNPROMPTED from calcStateLoad on any page with saved zones,
-  // and it is the same 94-204 s suggest - previously with the panel closed
-  // and zero indication anywhere. Say so, and only while we are the ones
-  // waiting (state.ew already set = the panel loaded it, nothing to say).
-  const speak = !state.ew;
-  if (speak) setStatus(EW_SUGGEST_BUSY + " — your saved grading zones will recompute when it lands", "busy");
-  const ok = await ewEnsure();
-  if (gen !== state.gen) return;      // selectPage owns the bar now
-  if (!ok) {
-    // NOT "run Detect first" - detect has run; this is a failed or missing
-    // elevation read, and the operator can retry it from the panel.
-    const why = state.ewFailed ? ewFailMsg()
-                               : "open the EARTHWORK panel to read this sheet's elevations";
-    for (const z of state.gzones) z.err = why;
-    if (speak) setStatus(why + " — grading zones did not recompute", "err");
-    renderGz();
-    return;
-  }
-  if (speak) setStatus("");
-  if (gen !== state.gen) return;
-  for (const z of state.gzones) {
-    if (gen !== state.gen) return;
-    await gzCompute(z, gen);
-  }
-}
-
-// ---- takeoff rows (consent + exact-label replacement) ---------------------
-// Three rows per zone, named by the zone so several zones coexist: the
-// trench calculator's exact-label pattern, for the same reason (a prefix
-// filter once silently deleted another system's rows).
-function gzRowLabels(z) {
-  return [`${z.name} cut`, `${z.name} fill`, `${z.name} topsoil strip`,
-          `${z.name} place ${gzBase(z).name}`];
-}
-function gzClearItems(z) {
-  const mine = new Set((z.labels && z.labels.length) ? z.labels : gzRowLabels(z));
-  state.extraItems = state.extraItems.filter(it => !mine.has(it.label));
-}
-function gzApplyItems(z) {
-  gzClearItems(z);
-  const j = z.result;
-  if (!j) return;
-  z.labels = gzRowLabels(z);
-  const rows = [];
-  if (j.cut_yd3 > 0) rows.push({ label: z.labels[0], qty: ewR(j.cut_yd3), unit: "CY" });
-  if (j.fill_yd3 > 0) rows.push({ label: z.labels[1], qty: ewR(j.fill_yd3), unit: "CY" });
-  if (j.strip_yd3 > 0) rows.push({ label: z.labels[2], qty: ewR(j.strip_yd3), unit: "CY" });
-  // the base course: zone area x thickness, one row (one layer per zone)
-  const baseCY = (j.layers || []).reduce((a, l) => a + Math.max(+l.volume_yd3 || 0, 0), 0);
-  if (baseCY > 0) rows.push({ label: z.labels[3], qty: ewR(baseCY), unit: "CY" });
-  for (const r of rows) {
-    state.extraItems.push(r);
-    // tradeFor() would file "Zone 1 cut" under General; seed the trade the
-    // way the balance rows do - session default only, the reviewer's pick wins
-    if (!store.getItem(tradeKey(r.label)))
-      store.setSession(tradeKey(r.label), "Earthwork & Grading");
-  }
-}
-
-// ---- the panel list -------------------------------------------------------
-function renderGz() {
-  const box = $("gzRows"), tbl = $("gzTable"), st = $("gzState");
-  gzGate();
-  if (!box) return;
-  const zs = state.gzones || [];
-  if (st) st.textContent = zs.length
-    ? `${zs.length} zone${zs.length === 1 ? "" : "s"}` : "none";
-  const sec = $("gzSection");
-  if (sec) sec.classList.toggle("on", zs.length > 0);
-  box.innerHTML = "";
-  for (const z of zs) {
-    const row = document.createElement("div");
-    row.className = "gz-row" + (z.added ? " added" : "");
-    const name = document.createElement("input");
-    name.className = "gz-name";
-    name.value = z.name;
-    name.title = z.named_from === "text"
-      ? "named from the text printed inside it - type to rename (its takeoff rows follow the name)"
-      : "zone name - its takeoff rows are named after it";
-    name.onchange = () => {
-      const v = name.value.trim().slice(0, 40) || z.name;
-      if (v === z.name) { name.value = z.name; return; }
-      // the old name's rows are cleared by their recorded labels, then the
-      // new name reapplies - rename can never leave orphan rows behind
-      if (z.added) gzClearItems(z);
-      z.name = v; z.labels = null;
-      if (z.added && z.result) gzApplyItems(z);
-      calcStateDirty(); renderGz(); renderItemized(); draw();
-    };
-    const sum = document.createElement("span");
-    sum.className = "gz-sum";
-    sum.textContent = gzDesignSummary(z);
-    const cyf = document.createElement("span");
-    cyf.className = "gz-cyf";
-    if (z.err) { cyf.innerHTML = `<span class="gz-err">${z.err}</span>`; }
-    else if (z.result) {
-      const bCY = gzBaseCY(z);
-      cyf.innerHTML = `cut <b>${ewCY(z.result.cut_yd3 > 0 ? z.result.cut_yd3 : 0)}</b>`
-        + ` · fill <b>${ewCY(z.result.fill_yd3 > 0 ? z.result.fill_yd3 : 0)}</b> CY`
-        + (z.result.strip_yd3 > 0 ? ` · strip ${ewCY(z.result.strip_yd3)} CY` : "")
-        + (bCY > 0 ? ` · base ${ewCY(bCY)} CY` : "");
-    } else cyf.textContent = "computing…";
-    const nums = document.createElement("button");
-    nums.className = "mini" + (z.showNums ? " on" : "");
-    nums.textContent = "123";
-    nums.title = "show the per-cell elevation change on the sheet "
-      + "(red = cut, blue = fill - note the tint underneath uses the map "
-      + "palette, cut blue / fill orange)";
-    nums.onclick = () => { z.showNums = !z.showNums; calcStateDirty(); renderGz(); draw(); };
-    const edit = document.createElement("button");
-    edit.className = "mini";
-    edit.textContent = "edit";
-    edit.title = "reopen this zone's design (clicking its badge on the sheet does the same)";
-    edit.onclick = () => gzModalOpen(z);
-    const add = document.createElement("button");
-    add.className = "mini" + (z.added ? " on" : "");
-    add.textContent = z.added ? "Remove from takeoff" : "Add to takeoff";
-    add.title = z.added
-      ? "remove this zone's rows from the itemized takeoff"
-      : "put this zone's cut / fill / strip rows in the itemized takeoff - "
-        + "nothing prices until this is pressed";
-    add.onclick = () => {
-      if (!z.added && !z.result) {
-        setStatus(z.err ? `${z.name}: ${z.err}` : `${z.name} is still computing — try again in a moment`, "err");
-        return;
-      }
-      z.added = !z.added;
-      if (z.added) gzApplyItems(z);
-      else gzClearItems(z);
-      calcStateDirty(); renderGz(); renderItemized();
-      setStatus(z.added
-        ? `${z.name} added to the takeoff — its rows price, export and print like any other`
-        : `${z.name} removed from the takeoff`);
-    };
-    const del = document.createElement("button");
-    del.className = "mini x";
-    del.textContent = "×";
-    del.title = "delete this zone" + (z.added ? " (its takeoff rows go with it)" : "");
-    del.onclick = () => {
-      const wasAdded = z.added;
-      if (wasAdded) gzClearItems(z);
-      state.gzones = state.gzones.filter(q => q !== z);
-      calcStateDirty(); renderGz(); renderItemized(); draw();
-      setStatus(wasAdded
-        ? `${z.name} deleted — its takeoff rows were removed with it`
-        : `${z.name} deleted`);
-    };
-    row.append(name, sum, cyf, nums, edit, add, del);
-    box.appendChild(row);
-  }
-  if (tbl) gzRenderTable(tbl, zs);
-}
-
-// ZONE TABLE - one line per computed zone, Beaumont's own five columns
-// (2026-09-15): area, cut, fill, net (fill - cut: + brings dirt in, - hauls
-// it out), total (cut + fill: the dirt moved). An all-zones row once there
-// are two. The strip and the base course sit on each zone's row line and in
-// its takeoff rows; the note under the table carries their all-zones sums.
-// Five numeric columns are what fits the panel (seven overflowed it -
-// measured 2026-09-16, net / total / base hidden behind a scrollbar).
-// Numbers come from each zone's own result; nothing here is a stored figure.
-function gzBaseCY(z) {
-  return ((z.result && z.result.layers) || []).reduce((a, l) => a + Math.max(+l.volume_yd3 || 0, 0), 0);
-}
-function gzZoneCells(z) {
-  const r = z.result;
-  const cut = Math.max(r.cut_yd3, 0), fill = Math.max(r.fill_yd3, 0);
-  return [Number(r.zone_area_sf || r.area_sf || 0), cut, fill, fill - cut, cut + fill];
-}
-const GZ_TABLE_COLS = ["area", "cut", "fill", "net", "total"];   // SF, then CY - the note says so
-function gzEsc(s) {
-  return String(s).replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
-}
-function gzNet(v) {
-  return (v > 0.5 ? "+" : v < -0.5 ? "\u2212" : "") + ewCY(Math.abs(v));
-}
-function gzRenderTable(tbl, zs) {
-  const done = zs.filter(z => z.result);
-  if (!done.length) { tbl.hidden = true; tbl.innerHTML = ""; return; }
-  tbl.hidden = false;
-  const tot = GZ_TABLE_COLS.map(() => 0);
-  const line = (name, c, cls) => `<tr${cls ? ` class="${cls}"` : ""}><td title="${gzEsc(name)}">${gzEsc(name)}</td>`
-    + c.map((v, i) => `<td class="num">${i === 3 ? gzNet(v) : ewCY(v)}</td>`).join("") + `</tr>`;
-  let rows = "", strip = 0, base = 0;
-  for (const z of done) {
-    const c = gzZoneCells(z);
-    c.forEach((v, i) => { tot[i] += v; });
-    strip += Math.max(z.result.strip_yd3 || 0, 0);
-    base += gzBaseCY(z);
-    rows += line(z.name, c);
-  }
-  if (done.length > 1) rows += line("all zones", tot, "gz-tot");
-  const missing = zs.length - done.length;
-  tbl.innerHTML = `<table><thead><tr><th>zone</th>`
-    + GZ_TABLE_COLS.map(h => `<th class="num">${h}</th>`).join("") + `</tr></thead><tbody>${rows}</tbody></table>`
-    + `<div class="gz-m-note">area in SF, the rest in CY \u00b7 net = fill \u2212 cut (+ brings dirt in, \u2212 hauls it out) \u00b7 total = cut + fill, the dirt moved`
-    + (done.length > 1 && (strip > 0 || base > 0)
-        ? ` \u00b7 all zones: strip ${ewCY(strip)} CY \u00b7 base ${ewCY(base)} CY (each zone's own on its row)` : "")
-    + (missing > 0 ? ` \u00b7 <span class="gz-err">${missing} zone${missing === 1 ? "" : "s"} not computed - not in this table</span>` : "")
-    + `</div>`;
-}
-
-function gzDesignSummary(z) {
-  const d = z.design || {};
-  let s;
-  if (d.mode === "pad") s = `pad @ ${d.elev_ft}`;
-  else if (d.mode === "plane")
-    s = `plane ${d.slope_pct || 0}% @ ${d.azimuth_deg || 0}°, ${d.elev_ft} @ centre`;
-  else if (d.mode === "balance")
-    s = (z.result && z.result.balance_elev_ft !== undefined)
-      ? `balance @ ${z.result.balance_elev_ft}` : "balance";
-  else if (d.mode === "proposed")
-    s = "proposed contours" + ((z.result && isFinite(z.result.coverage) && z.result.coverage < 0.995)
-      ? ` (${Math.round(z.result.coverage * 100)}% reached)` : "");
-  else s = "strip only";
-  if (z.strip_in > 0) s += ` · strip ${z.strip_in}"`;
-  if (z.base_in > 0) s += ` · base ${z.base_in}" ${gzBase(z).name}`;
-  return s;
-}
-
-// The section is greyed while the sheet's elevations are still being read:
-// the buttons refused the click with a status line that scrolled away, so
-// the panel looked broken rather than busy. Same conditions as ewNotReady,
-// said in the panel instead of the status bar.
-function gzGate() {
-  const sec = $("gzSection");
-  if (!sec) return;
-  let why = "";
-  if (!state.result) why = "Detect the sheet first \u2014 zones need its lines.";
-  else if (state.ewLoading) why = "Reading this sheet\u2019s elevations. Zones open when that finishes.";
-  else if (state.ew && typeof ewIsThisPage === "function" && !ewIsThisPage())
-    why = "These elevations are another page\u2019s. Press EARTHWORK to read this sheet.";
-  else if (!state.ew && state.ewFailed) why = "This sheet\u2019s elevations did not read. Press EARTHWORK to try again.";
-  else if (!state.ew) why = "Press EARTHWORK to read this sheet\u2019s elevations first.";
-  sec.classList.toggle("gz-wait", !!why);
-  let n = $("gzWait");
-  if (!n) {
-    n = document.createElement("div");
-    n.id = "gzWait";
-    n.className = "gz-wait-note";
-    sec.appendChild(n);
-  }
-  n.textContent = why;
-  n.hidden = !why;
-}
-
-// ---- the two arming buttons ------------------------------------------------
-$("gzDraw").onclick = () => {
-  if (!state.result) return setStatus("run Detect first", "err");
-  if (ewNotReady("grading zones")) return;
-  if (state.tool === "gz-draw") { gzDrawCancel("grading zone: drawing cancelled"); return; }
-  state.tool = "gz-draw";
-  state.gzDraft = [];
-  polySnapClear();
-  $("gzDraw").classList.add("active");
-  syncCursor();
-  setStatus("grading zone: click the corners of the region"
-    + POLY_CLOSE_HINT, "busy");
-};
-$("gzBox").onclick = () => {
-  if (!state.result) return setStatus("run Detect first", "err");
-  if (ewNotReady("grading zones")) return;
-  if (state.tool === "gz-box") {
-    state.tool = null; state.gzDrag = null;
-    $("gzBox").classList.remove("active");
-    syncCursor(); draw();
-    setStatus("grading zone: box cancelled");
-    return;
-  }
-  state.tool = "gz-box";
-  $("gzBox").classList.add("active");
-  syncCursor();
-  setStatus("grading zone: drag a box over the region " + '—' + " Esc cancels", "busy");
-};
-
-function gzDrawClick(px, py) {
-  const d = state.gzDraft;
-  // SNAP TO CLOSE - see POLY-SNAP. Same predicate as the limit of work and
-  // the structure outline, so the three cannot disagree about "near enough".
-  if (polyCloseHit(d, px, py, polyCloseTolPt())) { polySnapClear(); return gzDrawFinish(); }
-  const last = d[d.length - 1];
-  if (last && Math.hypot(px - last[0], py - last[1]) < 0.5) return; // dblclick echo
-  d.push([px, py]);
-  const fpi = arFpi();
-  let live = "";
-  if (d.length >= 3 && fpi !== null) {
-    const sf = Math.abs(polyAreaPt(d)) * (fpi / 72) * (fpi / 72);
-    live = ` ${'·'} ${Math.round(sf).toLocaleString()} SF so far`;
-  }
-  setStatus(`grading zone: ${d.length} corner(s)${live}` + POLY_CLOSE_HINT, "busy");
-  draw();
-}
-function gzDrawFinish() {
-  const pts = [];
-  for (const q of state.gzDraft)
-    if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.5)
-      pts.push(q);
-  if (pts.length < 3) {
-    return gzDrawCancel("grading zone: a region needs at least 3 corners "
-      + '—' + " drawing cancelled");
-  }
-  state.tool = null;
-  state.gzDraft = []; state.gzHover = null;
-  polySnapClear();
-  $("gzDraw").classList.remove("active");
-  syncCursor();
-  draw();
-  gzModalOpen(null, pts);
-}
-function gzDrawCancel(msg) {
-  state.tool = null;
-  state.gzDraft = []; state.gzHover = null;
-  polySnapClear();
-  $("gzDraw").classList.remove("active");
-  syncCursor();
-  if (msg) setStatus(msg);
-  draw();
-}
-
-// clicks land in the zone tools while armed; a badge click (no tool armed)
-// reopens that zone's modal
-const _gzClickBefore = handleCanvasClick;
-handleCanvasClick = function (e) {
-  if (state.tool === "gz-draw") {
-    const [px, py] = ptFromEvent(e);
-    return gzDrawClick(px, py);
-  }
-  if (!state.tool && state.gzones && state.gzones.length) {
-    const [px, py] = ptFromEvent(e);
-    for (const z of state.gzones) {
-      const b = z._badge;
-      if (b && px >= b[0] && px <= b[2] && py >= b[1] && py <= b[3])
-        return gzModalOpen(z);
-    }
-  }
-  return _gzClickBefore(e);
-};
-cv.addEventListener("dblclick", () => { if (state.tool === "gz-draw") gzDrawFinish(); });
-addEventListener("mousemove", (e) => {
-  if (state.tool !== "gz-draw" || panning || !state.gzDraft.length) return;
-  state.gzHover = ptFromEvent(e);
-  polySnapHover(state.gzHover[0], state.gzHover[1]);
-  draw();
-});
-// capture phase, same Esc semantics as the limit-of-work draw: back up one
-// corner, then cancel; Enter closes
-addEventListener("keydown", (e) => {
-  if (typing()) return;
-  if (state.tool !== "gz-draw") return;
-  if (e.key === "Enter") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    gzDrawFinish();
-    return;
-  }
-  if (e.key === "Escape") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    if (state.gzDraft.length) {
-      state.gzDraft.pop();
-      polySnapClear();
-      setStatus(state.gzDraft.length
-        ? `grading zone: ${state.gzDraft.length} corner(s) ` + '—' + " Esc again removes another"
-        : "all corners removed " + '—' + " Esc again exits", "busy");
-      draw();
-    } else {
-      gzDrawCancel("grading zone: drawing cancelled");
-    }
-  }
-}, true);
-// Esc for the box tool: abandon an in-progress drag first, then the tool
-addEventListener("keydown", (e) => {
-  if (typing()) return;
-  if (state.tool !== "gz-box" && !state.gzDrag) return;
-  if (e.key !== "Escape") return;
-  e.preventDefault(); e.stopImmediatePropagation();
-  if (state.gzDrag) {
-    state.gzDrag = null;
-    setStatus("box abandoned — drag again, or Esc to cancel the tool", "busy");
-    draw();
-    return;
-  }
-  state.tool = null;
-  $("gzBox").classList.remove("active");
-  syncCursor();
-  setStatus("grading zone: box cancelled");
-  draw();
-}, true);
-
-// ---- THE ZONE MODAL --------------------------------------------------------
-function gzModalOpen(zone, polygon) {
-  if (ewNotReady("this zone")) return;
-  gzModalZone = zone || null;
-  gzModalPoly = zone ? zone.polygon : polygon;
-  if (!gzModalPoly || gzModalPoly.length < 3) return;
-  $("gzBox").classList.remove("active");
-  const fpi = arFpi();
-  const sf = fpi === null ? null
-    : Math.abs(polyAreaPt(gzModalPoly)) * (fpi / 72) * (fpi / 72);
-  const name = zone ? zone.name : "Zone " + state.gzSeq;
-  $("gzMTitle").textContent = name + (sf !== null
-    ? ` — ${Math.round(sf).toLocaleString()} SF` : " — no scale set");
-  const s = gzZoneSummary(gzModalPoly);
-  $("gzMExist").innerHTML = (s.nContours + s.nSpots) > 0
-    ? `existing from the sheet: ${s.mean !== null ? `mean ${s.mean.toFixed(1)} ft, ` : ""}`
-      + `${s.nContours} contour${s.nContours === 1 ? "" : "s"} + `
-      + `${s.nSpots} spot${s.nSpots === 1 ? "" : "s"} in zone `
-      + `(rows the panel assigns to EXISTING)`
-    : `<span class="gz-warn">no EXISTING contour or spot inside this zone — `
-      + `the surface interpolates from the nearest assigned elevations `
-      + `outside it, or refuses if it cannot reach</span>`;
-  const d = (zone && zone.design) || {};
-  const mode = d.mode || "pad";
-  for (const r of document.querySelectorAll('input[name="gzMode"]'))
-    r.checked = r.value === mode;
-  // Number.isFinite, NEVER bare isFinite: isFinite(null) is TRUE in JS
-  // (the spotDatum defect, CLAUDE.md section 5 / ewActiveSpots)
-  const meanTxt = s.mean !== null ? String(Math.round(s.mean * 10) / 10) : "";
-  $("gzPadElev").value = (mode === "pad" && Number.isFinite(d.elev_ft)) ? d.elev_ft : meanTxt;
-  $("gzPlElev").value = (mode === "plane" && Number.isFinite(d.elev_ft)) ? d.elev_ft : meanTxt;
-  $("gzPlSlope").value = Number.isFinite(d.slope_pct) ? d.slope_pct : 1.0;
-  $("gzPlAz").value = Number.isFinite(d.azimuth_deg) ? d.azimuth_deg : 0;
-  // strip default from the researched table, citation on its face - the
-  // operator sees the number AND where it came from before it computes
-  const sd = (typeof EW_RESEARCH !== "undefined") ? EW_RESEARCH.strip_depth_in : null;
-  $("gzStrip").value = zone ? (Number.isFinite(zone.strip_in) ? zone.strip_in : 0)
-                            : (sd ? sd.value : 0);
-  // the number and its band are in Settings; the modal says what it is for
-  $("gzStripWhy").textContent = sd
-    ? `default ${sd.value}" — how deep the topsoil comes off. 0 for no strip.`
-    : "";
-  if ($("gzBaseIn")) $("gzBaseIn").value = zone && Number.isFinite(+zone.base_in) ? zone.base_in : 0;
-  if ($("gzBaseName")) $("gzBaseName").value = (zone && zone.base_name) || "Base";
-  gzModalSyncMode();
-  $("gzModal").hidden = false;
-  gzModalCalc();
-}
-
-function gzModalClose(msg) {
-  $("gzModal").hidden = true;
-  gzModalZone = null; gzModalPoly = null;
-  if (gzModalTimer) { clearTimeout(gzModalTimer); gzModalTimer = null; }
-  gzModalSeq++;
-  if (msg) setStatus(msg);
-}
-
-// enable only the inputs the picked mode reads, so a number in a greyed
-// box can never be silently part of the calculation
-function gzModalSyncMode() {
-  const mode = (document.querySelector('input[name="gzMode"]:checked') || {}).value || "pad";
-  $("gzPadElev").disabled = mode !== "pad";
-  $("gzPlElev").disabled = mode !== "plane";
-  $("gzPlSlope").disabled = mode !== "plane";
-  $("gzPlAz").disabled = mode !== "plane";
-}
-
-function gzModalCollect() {
-  const mode = (document.querySelector('input[name="gzMode"]:checked') || {}).value || "pad";
-  const sv = parseFloat($("gzStrip").value);
-  const strip_in = isFinite(sv) && sv > 0 ? sv : 0;
-  const bv = parseFloat(($("gzBaseIn") || {}).value);
-  const base = { thickness_in: isFinite(bv) && bv > 0 ? bv : 0,
-                 name: ((($("gzBaseName") || {}).value) || "Base").trim().slice(0, 30) || "Base" };
-  if (mode === "pad") {
-    const e = parseFloat($("gzPadElev").value);
-    if (!isFinite(e)) return { err: "type the pad elevation" };
-    return { design: { mode: "pad", elev_ft: e }, strip_in, base };
-  }
-  if (mode === "plane") {
-    const e = parseFloat($("gzPlElev").value);
-    if (!isFinite(e)) return { err: "type the plane's elevation at the zone centre" };
-    const sl = parseFloat($("gzPlSlope").value);
-    const az = parseFloat($("gzPlAz").value);
-    return { design: { mode: "plane", elev_ft: e,
-                       slope_pct: isFinite(sl) ? sl : 0,
-                       azimuth_deg: isFinite(az) ? az : 0 }, strip_in, base };
-  }
-  return { design: { mode }, strip_in, base };
-}
-
-function gzModalDirty() {
-  if ($("gzModal").hidden) return;
-  gzModalSyncMode();
-  if (gzModalTimer) clearTimeout(gzModalTimer);
-  gzModalTimer = setTimeout(gzModalCalc, 400);
-}
-
-async function gzModalCalc() {
-  if ($("gzModal").hidden || !gzModalPoly) return;
-  const live = $("gzMLive");
-  const c = gzModalCollect();
-  if (c.err) { live.innerHTML = `<span class="gz-warn">${c.err}</span>`; return; }
-  const seq = ++gzModalSeq;
-  const gen = state.gen;
-  live.innerHTML = '<span class="gz-meta">calculating…</span>';
-  let r;
-  try {
-    r = await fetch(`/api/job/${state.job}/page/${state.page}/earthwork/zone`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(gzBody(gzModalPoly, c.design, c.strip_in, c.base)),
-    });
-  } catch (err) {
-    if (seq === gzModalSeq) live.innerHTML = '<span class="gz-warn">server unreachable</span>';
-    return;
-  }
-  if (seq !== gzModalSeq || gen !== state.gen) return;
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    if (seq !== gzModalSeq) return;
-    live.innerHTML = `<span class="gz-warn">${e.detail || ("failed (" + r.status + ")")}</span>`;
-    return;
-  }
-  const j = await r.json();
-  if (seq !== gzModalSeq || gen !== state.gen) return;
-  const cutQ = j.cut_yd3 > 0 ? j.cut_yd3 : 0, fillQ = j.fill_yd3 > 0 ? j.fill_yd3 : 0;
-  let h = `<span class="gz-big">cut ${ewCY(cutQ)} CY · fill ${ewCY(fillQ)} CY</span>`
-    + ` · net ${ewCY(j.net_yd3)} CY`;
-  h += `<span class="gz-meta">over ${Number(j.area_sf).toLocaleString()} SF`
-    + (j.coverage < 0.999
-        ? ` <span class="gz-warn">— the existing surface reaches only `
-          + `${Math.round(j.coverage * 100)}% of this `
-          + `${Number(j.zone_area_sf).toLocaleString()} SF zone; the volumes `
-          + `cover that share only</span>`
-        : ` (the whole zone)`)
-    + `</span>`;
-  if (j.balance_elev_ft !== undefined) {
-    const bd = j.balance_delta_ft;
-    h += `<span class="gz-meta"><b>balances at ${j.balance_elev_ft.toFixed(2)} ft</b>`
-      + ` (${Math.abs(bd).toFixed(2)} ft ${bd < 0 ? "below" : "above"} the`
-      + ` existing mean ${j.existing_mean_ft.toFixed(2)} ft`
-      + (j.strip_in > 0 ? "; the strip is part of the balance" : "") + `)</span>`;
-  }
-  if (j.strip_yd3 > 0)
-    h += `<span class="gz-meta">topsoil strip ${j.strip_in}&Prime; over `
-      + `${Number(j.area_sf).toLocaleString()} SF = <b>${ewCY(j.strip_yd3)} CY</b>`
-      + (j.mode !== "strip_only"
-          ? " — the fill above already includes replacing that depth" : "")
-      + `</span>`;
-  for (const lay of (j.layers || []))
-    h += `<span class="gz-meta">base ${lay.thickness_in}&Prime; ${gzEsc(lay.name)} over `
-      + `${Number(j.zone_area_sf).toLocaleString()} SF = <b>${ewCY(lay.volume_yd3)} CY</b>`
-      + ` — the cut / fill above are figured to the subgrade, ${j.subgrade_offset_ft} ft below the `
-      + (j.mode === "balance" ? `finished grade (subgrade balances at ${j.balance_subgrade_ft} ft)` : `elevation typed`)
-      + `</span>`;
-  h += `<span class="gz-meta">existing inside the zone: mean `
-    + `${j.existing_mean_ft.toFixed(2)} ft, sampled from the surface built on `
-    + `${j.existing_n_contours} contour row${j.existing_n_contours === 1 ? "" : "s"}`
-    + ` + ${j.existing_n_spots} spot grade${j.existing_n_spots === 1 ? "" : "s"}`
-    + ` (whole sheet)</span>`;
-  if (j.max_cut_ft || j.max_fill_ft)
-    h += `<span class="gz-meta">deepest cut ${j.max_cut_ft} ft · deepest fill `
-      + `${j.max_fill_ft} ft — eyeball these against the contours</span>`;
-  h += `<img class="gz-map" alt="zone cut/fill map" `
-    + `src="data:image/png;base64,${j.map_png_base64}">`;
-  h += `<span class="gz-meta">cut blue · fill orange — full colour = `
-    + `±${j.ref_dz} ft (the sheet map's own palette)</span>`;
-  live.innerHTML = h;
-}
-
-$("gzMSave").onclick = () => {
-  if (!gzModalPoly) return;
-  const c = gzModalCollect();
-  if (c.err) { setStatus("zone not saved — " + c.err, "err"); return; }
-  let z = gzModalZone;
-  if (!z) {
-    z = {
-      id: "z" + Math.random().toString(36).slice(2, 9),
-      name: "Zone " + state.gzSeq++,
-      polygon: gzModalPoly.map(q => [q[0], q[1]]),
-      design: c.design, strip_in: c.strip_in,
-      base_in: c.base.thickness_in, base_name: c.base.name,
-      // the depths print by default: they are what the crew reads off the
-      // map, and the button turns them OFF
-      added: false, showNums: true,
-      result: null, img: null, err: null,
-      autoName: true,   // just drawn: may take the structure's name printed inside it
-    };
-    state.gzones.push(z);
-  } else {
-    z.design = c.design;
-    z.strip_in = c.strip_in;
-    z.base_in = c.base.thickness_in; z.base_name = c.base.name;
-  }
-  const name = z.name;
-  gzModalClose();
-  calcStateDirty();
-  renderGz();
-  draw();
-  gzCompute(z);   // async; refreshes the zone's priced rows if it was added
-  setStatus(`${name} saved — computing its volumes; press its "Add to takeoff" to price them`);
-};
-$("gzMCancel").onclick = () => gzModalClose("zone not saved");
-$("gzMClose").onclick = () => gzModalClose("zone not saved");
-// Esc ALWAYS cancels the modal, typing or not - registered capture-phase so
-// nothing underneath sees the key while the modal is up
-addEventListener("keydown", (e) => {
-  const m = $("gzModal");
-  if (!m || m.hidden) return;
-  if (e.key === "Escape") {
-    e.preventDefault(); e.stopImmediatePropagation();
-    gzModalClose("zone not saved");
-  }
-}, true);
-(function gzWireModalInputs() {
-  for (const id of ["gzPadElev", "gzPlElev", "gzPlSlope", "gzPlAz", "gzStrip", "gzBaseIn", "gzBaseName"]) {
-    const el = $(id);
-    if (el) el.addEventListener("input", gzModalDirty);
-  }
-  for (const r of document.querySelectorAll('input[name="gzMode"]'))
-    r.addEventListener("change", gzModalDirty);
-})();
-// =============== end GRADING ZONES ========================================
 
 resize();
 
 // =============== TOOLS MENU: one entry point in the header =================
-// The nine tool buttons (Analyze, Earthwork, Trench, Count, Whole job,
+// The nine tool buttons (Analyze, Cut / fill, Trench, Count, Whole job,
 // Across sheets, Callouts, Structure, Legend sheet) MOVED into #toolsMenu in
 // index.html with their ids, titles, and hidden attributes untouched, so
 // every handler attached above and every `$("ewBtn").hidden = ...` write in
@@ -24933,12 +23422,13 @@ resize();
 // the "open right now" dot; null = the tool has no panel (the legend prompt).
 const TOOLS_MENU_ITEMS = [
   ["aiBtn", "aiBanner"],
-  ["ewBtn", "ewPanel"],
+  ["cfBtn", "cfStage"],
   ["trBtn", "trPanel"],
   ["symBtn", "symPanel"],
   ["rollBtn", "rollPanel"],
   ["xsBtn", "xsPanel"],
   ["coBtn", "coPanel"],
+  ["flBtn", "flPanel"],
   ["stBtn", "stPanel"],
   ["legendBtn", null],
 ];
@@ -25252,8 +23742,13 @@ function bidPickWhy(plans) {
 // What the empty "Your projects" tab says on a box where nobody has uploaded
 // anything yet. It is the first thing a new account sees, so it says the one
 // action that works and where else there is something to look at.
-function projEmptyMine(demoCount) {
-  const start = "Nothing here yet — every plan you upload lands on this tab. "
+function projEmptyMine(demoCount, viewOnly) {
+  // a view-only account cannot upload or open a demo (both are refused), so it is told what it
+  // CAN do instead of being sent to two refusals (UI verify 2026-10-02 #10)
+  if (viewOnly)
+    return "Your account can look at plans but cannot add or change them, so there is nothing here yet. "
+      + "Ask your admin for an estimator account to add plans.";
+  const start ="Nothing here yet — every plan you upload lands on this tab. "
     + "Use + New project, or drop a PDF anywhere on this window.";
   return demoCount
     ? start + " Nothing to bid on yet? Open one of the " + demoCount
@@ -25294,7 +23789,7 @@ function projCountLine(shown, total) {
 
 // case- and whitespace-insensitive substring on the plan name. Multi-word
 // queries match when EVERY word appears somewhere in the name, so
-// "oncor grading" finds "Oncor Cloudcrest ... Grading Plan" - a plain
+// "site grading" finds "Site Civils ... Grading Plan" - a plain
 // substring test would not.
 function projMatches(row, q) {
   const words = String(q == null ? "" : q).toLowerCase().split(/\s+/)
@@ -25362,7 +23857,7 @@ function projReachLine(matched, loaded, total, q, noun) {
 }
 
 // ---- MULTI-SELECT + BULK DELETE -------------------------------------------
-// The registry carries real duplicates - 15 rows for Oncor Cloudcrest, 14 for
+// The registry carries real duplicates - 15 rows for one client set, 14 for
 // Belle Farms Structural, all from a job-reuse bug that is now fixed - and
 // clearing them one ⋯-menu at a time is 29 confirms. This is the layer that
 // makes it one.
@@ -25559,9 +24054,16 @@ function pvBulkReport(results, stillSel) {
   const ok = list.filter(r => r.ok);
   const bad = list.filter(r => !r.ok);
   if (!list.length) return "nothing to remove";
+  // a deletion whose PDF stayed on the server (pvDeleteOne's pdf_kept) is
+  // never folded into "permanently": it is counted and its reason quoted
+  const kept = ok.filter(r => r.pdf_kept);
+  const keptNote = kept.length
+    ? "; " + kept.length + " kept " + (kept.length === 1 ? "its" : "their")
+      + " PDF on this server (" + kept[0].pdf_kept + ")"
+    : "";
   if (!bad.length)
     return "removed " + ok.length + " project"
-      + (ok.length === 1 ? "" : "s") + " — permanently";
+      + (ok.length === 1 ? "" : "s") + (kept.length ? keptNote : " — permanently");
   const by = new Map();
   for (const r of bad) {
     const w = r.why || "no reason given";
@@ -25584,7 +24086,7 @@ function pvBulkReport(results, stillSel) {
 }
 
 // DUPLICATE SPOTTING, never duplicate GUESSING. The registry holds 15 rows
-// named "Oncor Cloudcrest Substation Civils - 20251212.pdf"; the operator
+// named after one client's substation set; the operator
 // wants to see that on the card. This counts rows sharing a name AND a page
 // count - the pair, because two different revisions can share a filename and
 // are not the same document - and returns a per-job_id note for the ones in a
@@ -25737,6 +24239,11 @@ function pvPaint() {
   const grid = $("pvGrid"), empty = $("pvEmpty");
   const q = $("pvSearch") ? $("pvSearch").value : "";
   const mode = $("pvSort") ? $("pvSort").value : "when";
+  // a view-only account is offered nothing it will be refused: no upload, no demo tab (#10)
+  const viewOnly = pvViewOnly();
+  if ($("uploadBtn")) $("uploadBtn").hidden = viewOnly;
+  if ($("pvTabDemo")) $("pvTabDemo").hidden = viewOnly;
+  if (viewOnly) pvTab = "mine";
   if (!pvTab) pvTab = projDefaultTab(pvRows, pvDemoPlans.length);
 
   // Per-tab populations, and they come from two DIFFERENT sources now.
@@ -25786,7 +24293,7 @@ function pvPaint() {
     empty.textContent = pvTab === "demo"
       ? projEmptyDemo(pvDemoInfo.expected, pvDemoInfo.present,
                       pvDemoInfo.missing)
-      : projEmptyMine(demoTotal);
+      : projEmptyMine(demoTotal, viewOnly);
     return;
   }
   if (!shown.length) {
@@ -25903,6 +24410,12 @@ function pvSyncTabs(demoLoaded, demoTotal, mineLoaded, mineTotal) {
     $("pvTabMineN").textContent = projTabCount(mineLoaded, mineTotal);
 }
 
+// A view-only account (the server's role "viewer", from /api/me): it may look and export, and
+// every upload or demo open is refused.
+function pvViewOnly() {
+  return !!(svMe && svMe.role === "viewer");
+}
+
 // Switching tabs is a re-render over rows the browser already holds - no
 // refetch, and the search box is cleared because a query typed against one
 // population reads as a broken filter against the other.
@@ -25969,7 +24482,7 @@ function pvCard(r, sharedBadge, nowS) {
   card.append(name, meta, when);
 
   // WHAT THIS DEMO SHOWS. One line, written per plan in demo-plans.json and
-  // served with the row, because "Oncor Cloudcrest Substation Civils -
+  // served with the row, because a raw file name like "<set> Civils -
   // 20251212.pdf_safe.pdf" tells a visitor nothing about why it is worth
   // opening. Only demo rows carry one; the filename is left to speak for a
   // plan the operator uploaded themselves, since they know what it is.
@@ -26238,6 +24751,17 @@ async function pvOpenDemo(p) {
       + " cached file(s) — a page may still show an earlier result", "err");
   else
     setStatus("fresh copy of " + j.name + " — nothing detected yet; press Detect");
+  // A card can name the TOOL its sheet is for (demo-plans.json `tool`):
+  // a house-set card opens on its floor plan with the Flooring panel
+  // up, so the visitor presses Detect and then Pick rooms on the sheet the
+  // card described, instead of hunting for the tool. Nothing is detected
+  // or picked here - the panel opens empty and says "run Detect first".
+  const tool = String(j.tool || (p && p.tool) || "");
+  if (tool === "flooring" && $("flPanel") && $("flPanel").hidden) {
+    $("flBtn").click();
+    if (!f.failed)
+      setStatus("fresh copy of " + j.name + " on its floor plan, Flooring panel open — press Detect, then Pick rooms");
+  }
 }
 
 // ONE server call for one deletion, used by the ⋯ menu AND by the bulk
@@ -26245,6 +24769,21 @@ async function pvOpenDemo(p) {
 // reports success for a request that errored: it RETURNS what happened,
 // { ok, name, why }, and the caller decides what to say. That return shape is
 // what makes pvBulkReport's "deleted N, failed M" arithmetic honest.
+// The one sentence for a finished deletion, from what the server REPORTS
+// (pdf_removed, pdf_why), never from what was asked. "removed <name>" only
+// when the PDF is gone; otherwise the detections went and the sentence says
+// why the PDF stayed (it was opened from its own folder; it could not be
+// deleted). A PDF another account also uploaded is the caller's removal like
+// any other: the server never says another document exists (2026-10-02). Audit 2026-09-26, D06: the
+// screen said "removed" over a PDF still on the box.
+function pvDeleteSentence(j, fallbackName) {
+  const name = (j && j.name) || fallbackName || "it";
+  if (j && j.pdf_removed === false)
+    return "removed the detections and cut / fill work for " + name + " — "
+      + (j.pdf_why || "its PDF stays on this server");
+  return "removed " + name;
+}
+
 async function pvDeleteOne(r) {
   try {
     const resp = await fetch("/api/job/" + r.job_id, { method: "DELETE" });
@@ -26254,7 +24793,8 @@ async function pvDeleteOne(r) {
                why: e.detail || ("HTTP " + resp.status) };
     }
     const j = await resp.json();
-    return { ok: true, name: j.name || r.name };
+    return { ok: true, name: j.name || r.name, said: pvDeleteSentence(j, r.name),
+             pdf_kept: j.pdf_removed === false ? (j.pdf_why || "its PDF stays on this server") : null };
   } catch (e) {
     return { ok: false, name: r.name, why: "the server did not answer" };
   }
@@ -26269,6 +24809,7 @@ async function pvRemove(r) {
   setStatus("removing…", "busy");
   const res = await pvDeleteOne(r);
   if (!res.ok) return setStatus("could not remove it (" + res.why + ")", "err");
+  if (res.pdf_kept) alert(res.said);   // the PDF stayed: say so before anything reloads
   if (r.job_id === state.job) {
     // the document on the hidden workbench no longer exists; a clean
     // reload is the only honest state (same choice as #docRemoveBtn)
@@ -26276,7 +24817,7 @@ async function pvRemove(r) {
     return;
   }
   pvSel.delete(r.job_id);            // it can no longer be bulk-acted on
-  setStatus("removed " + res.name);
+  setStatus(res.said || ("removed " + res.name), res.pdf_kept ? "err" : undefined);
   loadProjects();
   loadRecent();                      // the recents <select> lists it too
 }
@@ -26619,7 +25160,7 @@ $("pvBack").onclick = () => showProjects(false);
 // remove a line nobody can see. Capture + stopImmediatePropagation, the same
 // pattern as the tool handlers; browser defaults are left alone. Esc is
 // repurposed: with a sheet open it returns to the sheet.
-const PV_SWALLOW_KEYS = new Set(["m", "f", "l", "s", "x", "e", "d", "i",
+const PV_SWALLOW_KEYS = new Set(["m", "f", "l", "s", "x", "e", "d", "i", "t",
                                  "j", "r", "?", "Delete", "Backspace"]);
 addEventListener("keydown", (e) => {
   if (!pvIsOpen() || typing()) return;
@@ -26775,7 +25316,7 @@ function svHashTarget(hash) {
   const g = { company: "svGroupCompany", appearance: "svGroupAppearance",
               theme: "svGroupAppearance", scope: "svGroupScope",
               pricing: "svGroupPricing", bidsheet: "svGroupBidsheet", account: "svGroupAccount",
-              accounts: "svGroupAccounts" };
+              accounts: "svGroupAccounts", machine: "svGroupMachine" };
   return Object.prototype.hasOwnProperty.call(g, h) ? g[h] : null;
 }
 
@@ -26787,9 +25328,11 @@ function svBookRows(storedLabels, liveItems) {
   const m = new Map();
   for (const it of liveItems || []) {
     if (!it || !it.label) continue;
-    const got = m.get(it.label);
-    if (!got) m.set(it.label, { label: it.label, unit: it.unit || "",
-                                inUse: true, stored: false });
+    // a grading zone's row is priced as Site Cut / Site Fill (priceKey): one book row for them all
+    const lab = typeof priceLabel === "function" ? priceLabel(it.label) : it.label;
+    const got = m.get(lab);
+    if (!got) m.set(lab, { label: lab, unit: it.unit || "",
+                           inUse: true, stored: false });
     else if (!got.unit && it.unit) got.unit = it.unit;
   }
   for (const lab of storedLabels || []) {
@@ -26845,7 +25388,9 @@ function svSerializeCSV(rows) {
 // unparseable with its 1-based line number - never silently dropped.
 function svParseCSV(text) {
   const rows = [], bad = [];
-  const lines = String(text == null ? "" : text).split(/\r\n|\r|\n/);
+  let t = String(text == null ? "" : text);
+  if (t.charCodeAt(0) === 0xfeff) t = t.slice(1);   // Excel's "CSV UTF-8" (and our export) lead with a BOM
+  const lines = t.split(/\r\n|\r|\n/);
   let first = true;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -26889,7 +25434,15 @@ function svParseCSV(text) {
 function svImportPlan(rows, storedLabels) {
   const stored = new Set(storedLabels || []);
   const byLabel = new Map();
-  for (const r of rows || []) byLabel.set(r.label, r);
+  // a zone's row imports as the Site Cut / Site Fill price it shares (and overwrites it knowingly);
+  // a plain "Site Cut" row in the same file wins over a zone's row, whatever the order
+  const plain = new Set();
+  for (const r of rows || []) {
+    const lab = typeof priceLabel === "function" ? priceLabel(r.label) : r.label;
+    if (lab !== r.label && plain.has(lab)) continue;
+    if (lab === r.label) plain.add(lab);
+    byLabel.set(lab, lab === r.label ? r : Object.assign({}, r, { label: lab }));
+  }
   const adds = [], overwrites = [];
   for (const r of byLabel.values())
     (stored.has(r.label) ? overwrites : adds).push(r);
@@ -26899,6 +25452,38 @@ function svImportPlan(rows, storedLabels) {
 function svPreviewLine(nNew, nOver, nBad) {
   return nNew + " new, " + nOver + " overwrite, " + nBad + " unparseable"
     + (nBad ? " — shown below" : "");
+}
+
+// ACCOUNT ROLES (UI verify 2026-10-02 #3). The Accounts table showed a Staff / Client button that
+// flipped `staff`: one click on a viewer's "Client" made it an admin (every company's documents)
+// with no question, and the next click made it an estimator, so the viewer role was gone. The
+// control now shows the account's own role and offers exactly the server's roles; nothing is sent
+// until a different role is picked, and making someone an admin asks first. When the server sends
+// roles (`role` on each row) the pick goes to its role route; a server with only staff / not staff
+// offers admin / estimator over the staff route.
+const SV_ROLES = ["admin", "estimator", "viewer"];
+function svRoleOf(u) {
+  if (u && SV_ROLES.indexOf(u.role) >= 0) return u.role;
+  return u && u.staff ? "admin" : "estimator";
+}
+function svRoleChoices(u) {
+  return u && "role" in u ? SV_ROLES.slice() : ["admin", "estimator"];
+}
+function svRoleWord(r) {
+  return r === "admin" ? "Admin" : r === "viewer" ? "Viewer" : "Estimator";
+}
+// What picking `next` for account `u` does: null = nothing to send; else the request and the
+// question to ask first (only when it makes an admin).
+function svRoleChange(u, next) {
+  const cur = svRoleOf(u);
+  if (!u || next === cur || svRoleChoices(u).indexOf(next) < 0) return null;
+  const base = "/api/users/" + encodeURIComponent(u.user);
+  const req = "role" in u ? { url: base + "/role", body: { role: next } }
+                          : { url: base + "/staff", body: { staff: next === "admin" } };
+  req.ask = next === "admin"
+    ? "An admin can see every company's documents. Make " + u.user + " an admin?" : null;
+  req.done = u.user + " is now " + (next === "admin" ? "an admin" : "a " + next) + ".";
+  return req;
 }
 // SETTINGS-PURE-END ----------------------------------------------------------
 
@@ -27006,7 +25591,11 @@ function renderSvBidsheet() {
   const where = svBs.scope === "account" ? "your account's own sheet"
     : svBs.scope === "install" ? "this server's sheet (your account has not saved its own)"
     : "the printed sheet as scanned; edit it and Save to make it yours";
+  // a sheet saved before the cut / fill net lines existed gains them at its end on load
+  // (bidsheet.upgrade_lines): say so once, plainly, until the seat saves
+  const added = (svBs.added || []).filter((nm) => lines.some((ln) => ln.name === nm));
   note.textContent = `${lines.length} line${lines.length === 1 ? "" : "s"} · ${where}`
+    + (added.length ? ` · added at the end after the update: ${added.join(", ")} - rename or remove them, then Save` : "")
     + (svBsDirty ? " · unsaved changes" : "");
   box.innerHTML = "";
   const scroll = document.createElement("div");
@@ -27099,7 +25688,6 @@ function renderSettings() {
   renderSvBook();
   renderSvBidsheet();
   renderSvColors();
-  renderSvMaterials();
   renderSvFoot();
   renderSvAccount();
   renderSvUsers();
@@ -27346,7 +25934,7 @@ function renderSvUsers() {
   const rows = svUsers.users || [];
   const nStaff = rows.filter(u => u.staff).length;
   note.textContent = rows.length + " account(s) on this server, " + nStaff
-    + " staff. You are signed in as " + svUsers.me + ".";
+    + " admin. You are signed in as " + svUsers.me + ".";
   box.innerHTML = "";
   const scroll = document.createElement("div");
   scroll.className = "sv-book-scroll";
@@ -27368,19 +25956,27 @@ function renderSvUsers() {
     }
     tr.appendChild(nameTd);
     const role = document.createElement("td");
-    const rb = document.createElement("button");
+    // the account's own role, and exactly the server's roles (svRoleChange; UI verify #3)
+    const rb = document.createElement("select");
     rb.className = "mini";
-    rb.textContent = u.staff ? "Staff" : "Client";
+    rb.setAttribute("aria-label", "Role for " + u.user);
+    const cur = svRoleOf(u);
+    for (const r of svRoleChoices(u)) {
+      const o = document.createElement("option");
+      o.value = r; o.textContent = svRoleWord(r); o.selected = r === cur;
+      rb.appendChild(o);
+    }
     rb.title = isMe
-      ? "You cannot change your own role. Ask another staff member to do it."
+      ? "You cannot change your own role. Ask another admin to do it."
       : lastStaff
-      ? "The last staff account cannot be demoted. Make someone else staff first."
-      : u.staff ? "Click to make this a CLIENT account (sees only its own documents)"
-                : "Click to make this a STAFF account (sees and can delete every document)";
+      ? "The last admin cannot be changed. Make someone else an admin first."
+      : "Admin: sees every company's documents. Estimator: their own work. Viewer: looks, changes nothing.";
     rb.disabled = lastStaff || isMe;
-    rb.onclick = () => svUserAction("POST",
-      "/api/users/" + encodeURIComponent(u.user) + "/staff", { staff: !u.staff },
-      u.user + " is now " + (u.staff ? "a client account" : "staff"));
+    rb.onchange = () => {
+      const ch = svRoleChange(u, rb.value);
+      if (!ch || (ch.ask && !window.confirm(ch.ask))) { rb.value = cur; return; }
+      svUserAction("POST", ch.url, ch.body, ch.done).then(j => { if (!j) rb.value = cur; });
+    };
     role.appendChild(rb);
     tr.appendChild(role);
     const pw = document.createElement("td");
@@ -27782,120 +26378,11 @@ $("svAddBtn").onclick = () => {
   const had = store.getItem(priceKey(label)) !== null;
   store.setItem(priceKey(label), String(p));
   $("svAddLabel").value = ""; $("svAddPrice").value = "";
-  setStatus((had ? "updated" : "added") + " “" + label + "” at $"
-    + p + " per unit");
+  // a zone's row ("Site Cut – Lot") sets the Site Cut price every zone and job shares: say that one
+  setStatus((had ? "updated" : "added") + " “" + priceLabel(label) + "” at $"
+    + p + " per unit" + (priceLabel(label) !== label ? " (every zone's " + priceLabel(label) + " row shares it)" : ""));
   renderSvBook(); renderSvFoot();
 };
-
-// MATERIAL DEFAULTS - webui/ew_defaults.js rendered verbatim: name, default,
-// citation, and where the operator's override actually lives today. FOUND:
-// there is NO settings-scoped override store. The strip depth override is
-// the Topsoil layer row in the Earthwork panel (per sheet, saved to the
-// server in that page's calculator-inputs sidecar); the material factor
-// override is the panel's two factor boxes (#ewFacExp/#ewFacImp), which are
-// live inputs and are NOT saved across a reload. The inputs below edit
-// exactly those places - no second store is invented here.
-function renderSvMaterials() {
-  const box = $("svMatBox");
-  box.innerHTML = "";
-  if (typeof EW_RESEARCH === "undefined") {
-    box.textContent = "ew_defaults.js did not load — no defaults to show.";
-    return;
-  }
-  // --- strip depth ---------------------------------------------------------
-  const sd = EW_RESEARCH.strip_depth_in;
-  const sdRow = document.createElement("div");
-  sdRow.className = "sv-ovr";
-  const sdName = document.createElement("span");
-  sdName.textContent = "Topsoil strip depth — default " + sd.value
-    + " in (national band " + sd.national[0] + "–" + sd.national[1] + " in)";
-  sdRow.appendChild(sdName);
-  const topsoil = state.ew
-    && state.ew.layers.existing.find(l => /topsoil/i.test(l.name));
-  const sdIn = document.createElement("input");
-  sdIn.type = "number"; sdIn.step = "0.5"; sdIn.min = "0";
-  sdIn.name = "sv-strip-depth";
-  if (topsoil) {
-    sdIn.value = topsoil.thickness_in;
-    sdIn.oninput = () => {
-      topsoil.thickness_in = parseFloat(sdIn.value);
-      renderEwLayers();              // the panel's own row shows the same number
-      calcStateDirty();              // per-page sidecar, same as other calc edits
-    };
-  } else {
-    sdIn.disabled = true; sdIn.placeholder = "—";
-  }
-  const sdUnit = document.createElement("span");
-  sdUnit.textContent = "in";
-  sdRow.append(sdIn, sdUnit);
-  const sdWhere = document.createElement("span");
-  sdWhere.className = "sv-note";
-  sdWhere.textContent = topsoil
-    ? "edits the open sheet's Topsoil layer in the Earthwork panel (saved "
-      + "with that page's calculator inputs)"
-    : "override lives on the Earthwork panel's Topsoil layer row — open a "
-      + "sheet, open Earthwork, press “Strip topsoil”";
-  sdRow.appendChild(sdWhere);
-  box.appendChild(sdRow);
-  const sdCite = document.createElement("div");
-  sdCite.className = "sv-cite";
-  sdCite.textContent = "local prior: " + sd.local;
-  box.appendChild(sdCite);
-  // --- materials table -----------------------------------------------------
-  const grid = document.createElement("div");
-  grid.className = "sv-mat";
-  for (const h of ["material", "", "bank → loose", "bank → compacted"]) {
-    const th = document.createElement("div");
-    th.className = "sv-th"; th.textContent = h;
-    grid.appendChild(th);
-  }
-  for (const name of Object.keys(EW_RESEARCH.materials)) {
-    const m = EW_RESEARCH.materials[name];
-    const n = document.createElement("div"); n.textContent = name;
-    const sp = document.createElement("div");
-    const b2l = document.createElement("div");
-    b2l.textContent = "× " + m.b2l.toFixed(2);
-    const b2c = document.createElement("div");
-    b2c.textContent = "× " + m.b2c.toFixed(2);
-    grid.append(n, sp, b2l, b2c);
-    const cite = document.createElement("div");
-    cite.className = "sv-cite"; cite.textContent = m.src;
-    grid.appendChild(cite);
-  }
-  box.appendChild(grid);
-  // --- factor override: the SAME two live boxes the preset fills ------------
-  const fac = document.createElement("div");
-  fac.className = "sv-ovr";
-  const facName = document.createElement("span");
-  facName.textContent = "Override for the open sheet — export factor";
-  const mk = (srcId, nm) => {
-    const el = document.createElement("input");
-    el.type = "number"; el.min = "0"; el.step = "0.05";
-    el.name = nm;
-    const src = $(srcId);
-    el.value = src ? src.value : "";
-    el.oninput = () => {
-      const src2 = $(srcId);
-      if (!src2) return;
-      src2.value = el.value;
-      // the same event the material preset dispatches, so the Earthwork
-      // panel reacts exactly as if the box itself had been typed in
-      src2.dispatchEvent(new Event("input", { bubbles: true }));
-    };
-    return el;
-  };
-  const facImpName = document.createElement("span");
-  facImpName.textContent = "import factor";
-  fac.append(facName, mk("ewFacExp", "sv-fac-exp"),
-             facImpName, mk("ewFacImp", "sv-fac-imp"));
-  const facNote = document.createElement("span");
-  facNote.className = "sv-note";
-  facNote.textContent = "these ARE the Earthwork panel's factor boxes — "
-    + "applied on the sheet's next Calculate, defaulting to 1.0, "
-    + "and not saved across a reload (existing behaviour, unchanged here)";
-  fac.appendChild(facNote);
-  box.appendChild(fac);
-}
 
 // persistence honesty, from what the store actually is: `store` fronts
 // sessionMem and mirrors to localStorage under tk1:: - this browser only
@@ -27916,7 +26403,7 @@ $("svExportBtn").onclick = () => {
     if (isFinite(p) && p > 0) rows.push({ label: r.label, unit: r.unit, price: p });
   }
   if (!rows.length) return setStatus("nothing to export — the book is empty", "err");
-  const blob = new Blob([svSerializeCSV(rows)], { type: "text/csv" });
+  const blob = new Blob([String.fromCharCode(0xfeff) + svSerializeCSV(rows)], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "price-book.csv";
@@ -28068,7 +26555,7 @@ svGoto(BOOT_HASH);
 // single-key shortcuts may reach it - the same swallow discipline as the
 // projects view, Ctrl+Z / Ctrl+Y included (undo must not act on the hidden
 // sheet). Esc returns to the sheet, or to Projects when no job is open.
-const SV_SWALLOW_KEYS = new Set(["m", "f", "l", "s", "x", "e", "d", "i",
+const SV_SWALLOW_KEYS = new Set(["m", "f", "l", "s", "x", "e", "d", "i", "t",
                                  "j", "r", "?", "Delete", "Backspace"]);
 addEventListener("keydown", (e) => {
   if (!svIsOpen() || typing()) return;
@@ -28088,28 +26575,60 @@ addEventListener("keydown", (e) => {
 // =============== toolkit rich hover demos (TIPVID) =========================
 // The Photoshop rich-tooltip pattern on the toolkit rail: rest the pointer
 // on a tool button for 600ms and a small popover opens beside the rail with
-// a short SILENT looping clip of that tool doing its real work (recorded
-// live on Barn C3.0 - files and captions in webui/tooldemos/manifest.json),
-// the button's own title text verbatim, and the shortcut key. It is a HINT,
-// never a control: pointer-events:none, instant close on leave/click/Esc,
-// and it never opens while a canvas tool is armed - an operator brushing
-// the rail mid-gesture must not get a video in the face. Native title
-// attributes are untouched: they stay the accessible description and the
-// whole story for buttons without a clip (faithful toggle, help, clear).
-// Zero video bytes load up front: the manifest is fetched on the first
-// hover ever, and a clip's src is set only when its popover first opens.
+// the button's own title text verbatim, a one-line caption of what the tool
+// does, and the shortcut key. It is a HINT, never a control:
+// pointer-events:none, instant close on leave/click/Esc, and it never opens
+// while a canvas tool is armed. Native title attributes are untouched: they
+// stay the accessible description and the whole story for buttons without
+// a tip (faithful toggle, help, clear).
+// CLIPS, RE-RECORDED 2026-10-02. The first clips were pulled on 2026-10-01
+// (cropped from a staff-only client sheet). The ten in webui/tooldemos/ were
+// recorded again in the live app, signed in, with real clicks, on the shared
+// Loves Lane site grading sheet (C4.0) after an ordinary Detect - nothing
+// drawn beforehand. tooldemos/manifest.json lists the same rows as
+// TIPVID_TIPS (the test keeps them equal); the app never fetches it.
+// REQUESTS: none at page load. A clip's <video> is made, and its src set,
+// only when that tool's tip first opens; it is kept, so a later hover does
+// not download it again (after a minute idle Chrome re-opens a paused
+// player with a header-only range request - measured 167 bytes, 2026-10-02).
+// A tool without a clip, a reduced-motion user, a touch screen or a window
+// under 768 px (tipvidClipsOk), or a clip that failed to load gets the text tip: no <video>, no empty box, and the app logs
+// nothing (a missing file still gets the browser's own 404 network line).
 
 // TIPVID-PURE-BEGIN
 // Pure lookup + placement math (no DOM, no state.*) so
 // tests/test_tooldemo_tips.js can eval just this block.
 const TIPVID_HOVER_DELAY_MS = 600;
+const TIPVID_TIPS = {
+  measureBtn: { file: "measure.webm", caption: "Measuring a two-leg run along a curb line — the readout keeps the total", key: "M" },
+  splitBtn: { file: "split.webm", caption: "Splitting an existing-ground contour in two", key: "S" },
+  extendBtn: { file: "extend.webm", caption: "Extending a pavement edge across its gap to where it should reach", key: "E" },
+  cutSpanBtn: { file: "cutspan.webm", caption: "Cutting a span out of an existing-ground contour", key: "X" },
+  drawBtn: { file: "drawline.webm", caption: "Drawing a new run into the selected family", key: "D" },
+  reclassBtn: { file: "reclass.webm", caption: "Moving an existing-ground contour into the finished-grade family", key: "R" },
+  mergeBtn: { file: "merge.webm", caption: "Joining two pieces of one concrete edge into a single run", key: "J" },
+  sepBtn: { file: "separate.webm", caption: "Naming one contour so it gets its own itemized row", key: null },
+  removeBtn: { file: "delete.webm", caption: "Deleting a whole line — Ctrl+Z restores it", key: "Del" },
+  wzBtn: { file: "workarea.webm", caption: "Dragging a work-area box — only what is inside counts", key: null },
+  // text tips, no clip (UI verify 2: Trim and Flatten had no tip at all)
+  flattenBtn: { file: null, caption: "Make a bumpy run straight — every corner stays", key: "R" },
+  trimBtn: { file: null, caption: "Cut every line at a match line, so a run that goes on to the next sheet counts once", key: "T" },
+};
 
-// manifest row for a button, or null (no clip -> native title only)
-function tipvidEntry(manifest, btnId) {
-  if (!manifest || typeof manifest !== "object") return null;
-  const e = Object.prototype.hasOwnProperty.call(manifest, btnId)
-    ? manifest[btnId] : null;
-  return e && typeof e.file === "string" ? e : null;
+// The clip URL for a row, or null for a text-only tip: a plain
+// "<name>.webm" under webui/tooldemos/, nothing else.
+function tipvidClip(ent) {
+  return ent && typeof ent.file === "string" && /^[\w-]+\.webm$/.test(ent.file)
+    ? "tooldemos/" + ent.file : null;
+}
+
+// the tip row for a button, or null (no row -> native title only). A row is
+// a tip when it carries a caption.
+function tipvidEntry(tips, btnId) {
+  if (!tips || typeof tips !== "object") return null;
+  const e = Object.prototype.hasOwnProperty.call(tips, btnId) ? tips[btnId] : null;
+  return e && typeof e === "object" && typeof e.caption === "string" && e.caption
+    ? e : null;
 }
 
 // Place the popover just right of the rail button, vertically centred on
@@ -28123,26 +26642,30 @@ function tipvidPos(btn, pop, vw, vh, gap) {
   y = Math.max(4, y);
   return { x, y };
 }
+
+// A clip is a hover aid for a mouse. A screen with no hover (a phone, a
+// tablet), a coarse pointer (a finger), a narrow window, or a reduced-motion
+// user gets the text tip only: no clip is asked for, so none plays over the
+// sheet (UI verify 2, P2-M1: a 314 x 260 clip covered the sheet at 390 px).
+const TIPVID_CLIP_MIN_WIDTH = 768;
+function tipvidClipsOk(env) {
+  return !!env && !env.reduced && !env.noHover && !env.coarse
+    && env.width >= TIPVID_CLIP_MIN_WIDTH;
+}
 // TIPVID-PURE-END
 
 (() => {
   const rail = document.querySelectorAll(".toolkit .tk");
   if (!rail.length) return;
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-  let manifest;            // undefined until the first hover fetches it
-  let manifestReq = null;
-  let pop = null, vid = null, tTitle = null, tCap = null, tKey = null;
+  const noHover = matchMedia("(hover: none)");
+  const coarse = matchMedia("(pointer: coarse)");
+  let pop = null, tTitle = null, tCap = null, tKey = null;
   let timer = null;
-
-  function withManifest(fn) {
-    if (manifest !== undefined) { fn(); return; }
-    if (!manifestReq)
-      manifestReq = fetch("tooldemos/manifest.json")
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null)
-        .then((m) => { manifest = m; });
-    manifestReq.then(fn);
-  }
+  let openBtn = null;          // the button whose tip is showing
+  const vids = new Map();      // clip URL -> its <video>, made on that tip's first open
+  const failed = new Set();    // clip URLs that failed to load: text only from then on
+  let shown = null;            // the <video> inside the popover now, or null
 
   function build() {
     if (pop) return;
@@ -28150,21 +26673,12 @@ function tipvidPos(btn, pop, vw, vh, gap) {
     pop.id = "tipvid";
     pop.hidden = true;
     pop.setAttribute("aria-hidden", "true");   // the title attr already reads
-    vid = document.createElement("video");
-    // muted looping inline autoplay; preload=none so no bytes move until a
-    // popover actually opens and sets src
-    vid.muted = true;
-    vid.loop = true;
-    vid.autoplay = true;
-    vid.playsInline = true;
-    vid.setAttribute("playsinline", "");
-    vid.preload = "none";
     tTitle = document.createElement("div");
     tTitle.className = "tv-title";
     tKey = document.createElement("kbd");
     tCap = document.createElement("div");
     tCap.className = "tv-cap";
-    pop.append(vid, tTitle, tCap);
+    pop.append(tTitle, tCap);
     document.body.appendChild(pop);
   }
 
@@ -28172,41 +26686,87 @@ function tipvidPos(btn, pop, vw, vh, gap) {
     if (timer) { clearTimeout(timer); timer = null; }
     if (pop && !pop.hidden) {
       pop.hidden = true;
-      try { vid.pause(); } catch (e) { /* not loaded yet */ }
+      if (shown) try { shown.pause(); } catch (e) { /* not loaded yet */ }
     }
+    openBtn = null;
+  }
+
+  // Beside the rail (or, in a frame that overrides tipvidPos, below a
+  // ribbon - so the rect carries bottom and width too), clamped to the
+  // viewport. The <video> has a fixed CSS box, so the size is right before
+  // a single byte of the clip arrives.
+  function place(btn) {
+    const b = btn.getBoundingClientRect();
+    const p = tipvidPos(
+      { left: b.left, right: b.right, top: b.top, bottom: b.bottom,
+        width: b.width, height: b.height },
+      { w: pop.offsetWidth, h: pop.offsetHeight },
+      innerWidth, innerHeight, 10);
+    pop.style.left = p.x + "px";
+    pop.style.top = p.y + "px";
+  }
+
+  function dropShown() {
+    if (!shown) return;
+    try { shown.pause(); } catch (e) { /* not loaded yet */ }
+    shown.remove();
+    shown = null;
+  }
+
+  // The clip's <video>, made the first time its tip opens - the src is set
+  // here and nowhere earlier. A load failure (missing file, bad bytes) drops
+  // it for good: the tip stays, as text, re-placed so no empty box is left.
+  function clipVideo(src) {
+    let v = vids.get(src);
+    if (v) return v;
+    v = document.createElement("video");
+    v.muted = true;
+    v.loop = true;
+    v.playsInline = true;
+    v.setAttribute("playsinline", "");
+    v.setAttribute("aria-hidden", "true");
+    v.preload = "auto";
+    v.addEventListener("error", () => {
+      failed.add(src);
+      if (shown === v) {
+        dropShown();
+        if (openBtn && pop && !pop.hidden) place(openBtn);
+      }
+    });
+    v.setAttribute("src", src);
+    vids.set(src, v);
+    return v;
   }
 
   function openTip(btn) {
-    // a drawing/measuring/box gesture owns the canvas - no video in the face
+    // a drawing/measuring/box gesture owns the canvas - no popover in the face
     if (state.tool) return;
-    const ent = tipvidEntry(manifest, btn.id);
-    if (!ent) return;                    // no clip: native title only
+    const ent = tipvidEntry(TIPVID_TIPS, btn.id);
+    if (!ent) return;                    // no row: native title only
     build();
     tTitle.textContent = btn.getAttribute("title") || "";
     tCap.textContent = ent.caption || "";
     tKey.remove();
     if (ent.key) { tKey.textContent = ent.key; tCap.append(" ", tKey); }
-    const src = "tooldemos/" + ent.file;
-    if (vid.getAttribute("src") !== src) vid.setAttribute("src", src);
-    if (reduced.matches) {
-      // reduced motion: the first frame, paused - a poster, not a loop
-      const still = () => { vid.pause(); try { vid.currentTime = 0; } catch (e) {} };
-      if (vid.readyState >= 2) still();
-      else { vid.addEventListener("loadeddata", still, { once: true }); vid.load(); }
-    } else {
-      const pr = vid.play();
-      if (pr && pr.catch) pr.catch(() => {});
+    // reduced motion, touch / no hover, a narrow window, no clip, or a clip
+    // that already failed: text only (read at open: a window can be resized)
+    const src = tipvidClipsOk({ reduced: reduced.matches, noHover: noHover.matches,
+      coarse: coarse.matches, width: innerWidth }) ? tipvidClip(ent) : null;
+    const want = src && !failed.has(src) ? clipVideo(src) : null;
+    if (shown !== want) {
+      dropShown();
+      if (want) { pop.prepend(want); shown = want; }
     }
-    // measure hidden, then place beside the rail, clamped to the viewport
+    if (shown) {
+      try { shown.currentTime = 0; } catch (e) { /* not loaded yet */ }
+      const pr = shown.play();
+      if (pr && pr.catch) pr.catch(() => {});   // a failed load is the error event's job
+    }
+    openBtn = btn;
+    // measure hidden, then place, clamped to the viewport
     pop.style.visibility = "hidden";
     pop.hidden = false;
-    const b = btn.getBoundingClientRect();
-    const p = tipvidPos(
-      { left: b.left, right: b.right, top: b.top, height: b.height },
-      { w: pop.offsetWidth, h: pop.offsetHeight },
-      innerWidth, innerHeight, 10);
-    pop.style.left = p.x + "px";
-    pop.style.top = p.y + "px";
+    place(btn);
     pop.style.visibility = "";
   }
 
@@ -28215,12 +26775,12 @@ function tipvidPos(btn, pop, vw, vh, gap) {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        withManifest(() => { if (btn.matches(":hover")) openTip(btn); });
+        if (btn.matches(":hover")) openTip(btn);
       }, TIPVID_HOVER_DELAY_MS);
     });
     btn.addEventListener("pointerleave", closeTip);
-    // a click means USE the tool, not watch it - and no re-open until the
-    // pointer leaves and comes back (pointerenter will not refire in place)
+    // a click means USE the tool, not read about it - and no re-open until
+    // the pointer leaves and comes back (pointerenter will not refire in place)
     btn.addEventListener("pointerdown", closeTip);
   }
   // capture phase: the app's own Esc cascade stops propagation downstream,
@@ -28230,3 +26790,777 @@ function tipvidPos(btn, pop, vw, vh, gap) {
   }, true);
 })();
 // =============== end toolkit rich hover demos ==============================
+
+// =============== CUT / FILL: the cut / fill engine, embedded ===============
+// Replaced the earthwork calculator on 2026-09-25. The engine (cutfill/,
+// served under /cutfill by this same service) reads the sheet's contours and
+// spot grades itself and computes the volumes on its own page. This app only
+// opens it for the job, hears its totals (postMessage from the iframe), and
+// turns them into takeoff rows when the operator says so - the same consent
+// step every calculator here has ("Calculating is looking; adding is a
+// decision"). Nothing in this block measures anything.
+// the rows the engine can file (cutfill/takeoff.py): the four volume rows, the limit line's own
+// rows, the topsoil balance and the wall face
+// (a grading zone files its own pair, "Site Cut – Island" / "Site Fill – Island": cutfill/takeoff.py ZONE_ROW_SEP)
+const CF_ROW_RE = /^(Site Cut|Site Fill)( – .+)?$|^(Export Cut|Import Structural|Silt \/ Construction Fence|Clear & Grub|Strip Topsoil|Rough Place Topsoil|Export Topsoil|Import Topsoil|Site walls face)$/;
+let cfState = { job: null, pid: null, summary: null };
+// the button's own tooltip (index.html), put back when a state that says something else ends
+const CF_ADD_TITLE = ($("cfAdd") && $("cfAdd").title) || "";
+// whether the engine's rows are in the takeoff right now - read off the rows, because a Detect or
+// a page switch rebuilds the takeoff from its own record and this must follow it
+// a row the engine filed: its label, and not a row the Areas tool made (`_area`) - an area the operator named "Clear &
+// Grub" is theirs, and was taken for the engine's: cleared, replaced, and refused at the approve (critic 9, WRONG-3 / m3)
+function cfIsRow(it) {
+  return !!it && !it._area && CF_ROW_RE.test(it.label);
+}
+
+// ---------- THE OLD EARTHWORK CALCULATOR'S ROWS (v1.8.5's; removed here, Cut / fill replaces it) ---------------------
+// Koby, 2026-10-01 (evening): the old calculator's earthwork rows count nowhere - not in the takeoff, the bid sheet or the
+// report - and the page says "Earthwork from the old calculator was removed. Redo it in Cut / fill." (server.py
+// _export_view / _ew_removed_pages; docs/fable/LEGACY-EARTHWORK-DESIGN.md). A v1.8.5 browser kept a page's rows under
+// calcKey() as {label, qty, unit} only, never an Areas row (`_area` rows were not stored), so a row there by the old
+// calculator's names is its: the CY rows of ewApplyItems / its balance / gzApplyItems, and its limit of work's Clear &
+// Grub (SF) and fence (LF). server.py _EW_OLD_CY is the same list. `v185`: a row read from v1.8.5's key (an unmarked row
+// there); a row a build of 2026-10-01 marked "earthwork-old" is dropped wherever it is
+const EW_OLD_CY_RE = /^(Site Cut|Site Fill|Strip Topsoil|Import Structural|Import Topsoil|Import Fill|Remove .+|Rough Place .+|Place .+|Export .+|(Cut|Fill) \(earthwork\)|.+ (cut|fill|topsoil strip|place .+))$/;
+function ewOldRow(r, v185) {
+  if (!r) return false;
+  if (r.src === "earthwork-old") return true;
+  if (!v185 || r._area || r.src || r.kind || r.basis) return false;
+  const l = String(r.label || ""), u = String(r.unit || "").trim().toUpperCase();
+  return (u === "CY" && EW_OLD_CY_RE.test(l)) || (l === "Clear & Grub" && u === "SF") || (l === "Silt / Construction Fence" && u === "LF");
+}
+function cfAdded() { return state.extraItems.some(cfIsRow); }
+
+function cfSyncButton() {
+  const b = $("cfBtn"); if (b) b.hidden = !state.job;
+  if ($("cfStage") && !$("cfStage").hidden) cfRenderBar();   // a Detect or page switch may have taken the rows
+}
+// `key`: the sheet the frame opens on - the one the operator opened Cut / fill from. Without it the engine opens on
+// its last compute's sheet: opened from 3.1, it showed 3.0 while its volumes used 3.1 (live check, 2026-09-28)
+function cfFrameUrl(pid, key) {
+  const theme = document.documentElement.dataset.theme || "";
+  return `/cutfill/?embed=1&pid=${encodeURIComponent(pid)}&theme=${encodeURIComponent(theme)}`
+    + (key ? `&key=${encodeURIComponent(key)}` : "");
+}
+function cfPlace() {
+  const h = document.querySelector("header");
+  $("cfStage").style.top = (h ? Math.round(h.getBoundingClientRect().bottom) : 0) + "px";
+}
+// What the reviewer did to this sheet's lines, as it stands on screen: the lines erased, the
+// lines put in their place (split / extended), every family's name (ticked or not: an existing
+// contour is rarely a billed row) and the work area. The engine leaves erased lines out of its
+// surfaces, takes a surface named here, and uses the work area as the limit when none is drawn.
+// null = this sheet has no detection on screen (nothing to hand over; what the engine holds stands).
+function cfReviewEdits() {
+  const r = state.result;
+  if (!r || !Array.isArray(r.chains)) return null;
+  const ex = state.excluded instanceof Set ? state.excluded : new Set();
+  const labels = state.labels instanceof Map ? Object.fromEntries([...state.labels].filter(([, v]) => v)) : {};
+  const own = state.chainLabels instanceof Map
+    ? Object.fromEntries([...state.chainLabels].filter(([id, v]) => v && !ex.has(id))) : {};
+  const zones = (typeof wzActive === "function" && wzActive() && Array.isArray(state.workZones))
+    ? state.workZones.map(z => z.slice()) : [];
+  return {
+    excluded_chain_ids: [...ex],
+    added_chains: r.chains.filter(c => c.custom && !ex.has(c.chain_id)).map(c => ({ points: c.points })),
+    labels, chain_labels: own, work_zones: zones,
+  };
+}
+// ---------- SHEETS FOR CUT / FILL: every sheet the job needs, in one open ------------------------------
+// Koby 2026-09-28: "why do we have to go back and press detect and cut/fill on both sheets". Opening Cut / fill
+// handed the engine the sheet on screen only; a later sheet started as "none" and was read with its own Analyze.
+// A plan set of several pages now asks once, on its first open: the ticked sheets not detected yet are detected
+// here, then all of them go to the engine together (both surfaces, read at once). A job already set up opens
+// straight in; "Sheets…" on the bar adds more later.
+let cfsState = null;                    // { lst: the server's list, adding: true from the bar's "Sheets…" }
+// labels false: only whether the job's cut / fill is set up and how many pages the set has (fast); true: the
+// whole list with the sheet numbers (9 s cold on a 132-page set)
+async function cfSheetsList(job, labels) {
+  try {
+    const r = await fetch(`/api/job/${job}/cutfill/sheets` + (labels ? "?labels=1" : ""));
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+function cfSheetsRender() {
+  const box = $("cfsList"); box.innerHTML = "";
+  for (const pg of cfsState.lst.pages) {
+    const inJob = !!pg.role;
+    const row = document.createElement("label"); row.className = "cfs-row";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = String(pg.page);
+    // in the job already: ticked and fixed (its role is changed in the engine's Sheets card)
+    cb.checked = inJob || (!cfsState.adding && pg.page === state.page);
+    cb.disabled = inJob;
+    const name = document.createElement("span"); name.className = "cfs-name";
+    name.textContent = (pg.label ? pg.label + " · " : "") + "page " + (pg.page + 1);
+    const st = document.createElement("span"); st.className = "cfs-st";
+    st.textContent = cfsStatusText(pg);
+    row.append(cb, name, st); box.append(row);
+  }
+}
+function cfsStatusText(pg) {
+  const running = pg.running || (state.pageStatus && state.pageStatus[pg.page] === "running");
+  return pg.role ? "in the cut / fill (" + pg.role + ")" + (pg.stale ? " · detected by an older version: detect it again" : "")
+    : pg.detected ? "detected"
+    : running ? "being detected now"
+    : pg.stale ? "detected by an older version: detected again first"
+    : "not detected yet: detected first";
+}
+// what an open did, for the cut / fill bar, said as what happened (a role changed later cannot make it false: the
+// second critic's M-c): how many sheets it opened with or added, any left out and why, any whose detection an older
+// version made
+function cfOpenNotice(j, adding) {
+  const parts = [];
+  // the server's count of sheets that take part now and did not before (the sheet it opened on too: the third
+  // critic's w2 counted "joined" only, and said "added 0 sheets" when it had added one)
+  if (adding) { const a = (Array.isArray(j.added) ? j.added : j.joined || []).length; parts.push(`added ${a} sheet${a === 1 ? "" : "s"}`); }
+  else if (Number.isInteger(j.in_job)) parts.push(`opened with ${j.in_job} sheet${j.in_job === 1 ? "" : "s"}`);
+  if (j.skipped && j.skipped.length) parts.push(`left out: ${cfSkippedText(j.skipped)}`);
+  const older = (j.older || []).map((p) => "page " + (p + 1));
+  if (older.length) parts.push(`${older.join(", ")} detected by an older version: detect again`);
+  // a sheet detected again since the engine read it is read again from its new lines (the third critic's r1)
+  const again = (j.reread || []).map((p) => "page " + (p + 1));
+  if (again.length) parts.push(`${again.join(", ")} detected again: being read again`);
+  if (j.reread_linked) parts.push(`${j.reread_linked} sheet${j.reread_linked === 1 ? "" : "s"} of a linked plan set detected again: being read again`);
+  // a linked plan set this account may no longer open: its sheets were taken out, said in the server's words
+  if (j.hidden_note) parts.push(j.hidden_note);
+  return parts.join(" · ");
+}
+// a page's detection moved on while the picker is open: its row says so, its tick stays (the live check left a
+// row saying "being detected now" a minute after the detection had finished)
+function cfsRowStatus(p, st) {
+  if (!cfsState) return;
+  const i = cfsState.lst.pages.findIndex((x) => x.page === p);
+  const pg = i >= 0 ? cfsState.lst.pages[i] : null;
+  if (!pg || pg.role) return;
+  if (st === "done") { pg.detected = true; pg.running = false; pg.stale = false; }
+  else if (st === "running") pg.running = true;
+  else { pg.running = false; }
+  const row = $("cfsList").children[i];
+  if (row && row.children[2]) row.children[2].textContent = cfsStatusText(pg);
+}
+// what the open left out, in words: "page 2 (not detected)"
+function cfSkippedText(sk) {
+  return (sk || []).map((s) => `page ${s.page + 1} (${s.why || "not detected"})`).join(", ");
+}
+function cfSheetsShow(lst, adding) {
+  // the list is this plan set's: its Open acts on this set only (the third critic's w3)
+  cfsState = { lst, adding: !!adding, job: state.job };
+  cfSheetsRender();
+  $("cfsMsg").textContent = ""; $("cfsMsg").classList.remove("err");
+  $("cfsOpen").disabled = false;
+  $("cfsOpen").textContent = adding ? "Add the ticked sheets" : "Open cut / fill";
+  $("cfSheetsModal").hidden = false;
+  $("cfsOpen").focus();
+}
+function cfSheetsClose() { $("cfSheetsModal").hidden = true; cfsState = null; }
+// Detect one page the way "Detect all" does (start, then watch its status); "done", "error" or "left"
+async function cfDetectPage(job, p) {
+  setPageStatus(p, "running");
+  try {
+    const r = await fetch(`/api/job/${job}/page/${p}/detect`, { method: "POST" });
+    if (!r.ok) throw new Error("detect returned " + r.status);
+  } catch (e) { setPageStatus(p, "error"); return "error"; }
+  let idle = 0;
+  for (;;) {
+    if (state.job !== job) return "left";
+    let j;
+    try { j = await (await fetch(`/api/job/${job}/page/${p}/status`)).json(); } catch (e) { j = { status: "running" }; }
+    if (j.status === "done") {
+      setPageStatus(p, "done");
+      if (p === state.page && !state.result) loadResult(state.gen);
+      return "done";
+    }
+    if (j.status && String(j.status).startsWith("error")) { setPageStatus(p, "error"); return "error"; }
+    // a worker that exited writing neither a result nor an error reads "idle": not forever
+    if (j.status === "idle" && ++idle > 5) { setPageStatus(p, "error"); return "error"; }
+    await new Promise((res) => setTimeout(res, 1200));
+  }
+}
+async function cfSheetsGo() {
+  // this Open's own run: closing the dialog ends it, and a dialog opened again is another run (the picker's
+  // critic, W1: an Open left running took over the second dialog and opened the sheets ticked in the first)
+  const run = cfsState;
+  if (!run) return;
+  // a list shown for another plan set (one opened while it stayed up) adds nothing here
+  if (run.job && run.job !== state.job) return cfSheetsClose();
+  const job = state.job, adding = run.adding;
+  const over = () => cfsState !== run || state.job !== job;
+  const boxes = [...$("cfsList").querySelectorAll("input[type=checkbox]")];
+  const ticked = boxes.filter((b) => b.checked && !b.disabled).map((b) => +b.value);
+  const inJob = run.lst.pages.filter((pg) => pg.role).map((pg) => pg.page);
+  if (!ticked.length) {
+    if (adding || inJob.length) return cfSheetsClose();
+    $("cfsMsg").textContent = "tick at least one sheet"; $("cfsMsg").classList.add("err");
+    return;
+  }
+  $("cfsOpen").disabled = true;
+  const byPage = new Map(run.lst.pages.map((pg) => [pg.page, pg]));
+  const failed = new Set();
+  for (const p of ticked) {
+    const pg = byPage.get(p);
+    if (pg && pg.detected) continue;
+    $("cfsMsg").classList.remove("err");
+    $("cfsMsg").textContent = `detecting ${pg && pg.label ? "sheet " + pg.label : "page " + (p + 1)}… (about half a minute a sheet)`;
+    const got = await cfDetectPage(job, p);
+    if (over()) return;
+    if (got !== "done") {
+      failed.add(p);
+      $("cfsMsg").textContent = `page ${p + 1} could not be detected: the others go on without it`;
+      $("cfsMsg").classList.add("err");
+    }
+  }
+  // the review's decisions (lines erased or named, the work area) go with the sheet on screen: its sheet has to be
+  // loaded to the end first (the work area comes back after the result: the second critic's R4), or they are sent
+  // as none (the first critic's R4: a sheet detected here last lost 5). Not for a sheet that could not be detected
+  const loaded = () => state.resultLoaded && state.resultLoaded.job === job && state.resultLoaded.page === state.page
+    && state.resultLoaded.gen === state.gen;
+  if (ticked.includes(state.page) && !failed.has(state.page)) {
+    for (let i = 0; i < 60 && !loaded(); i++) {
+      await new Promise((res) => setTimeout(res, 250));
+      if (over()) return;
+    }
+  }
+  cfSheetsClose();
+  if (adding) return cfSheetsAdd(job, ticked.concat(inJob));
+  cfOpen({ pages: ticked });
+}
+// the bar's "Sheets…": the engine takes the new sheets and shows them; what happened is said on the bar (the
+// host's status line is under the stage: the picker's critic, W4). The sheet on screen, when it goes, takes the
+// review's decisions with it, as the plain open does (the third critic's m6: the dialog said they go along)
+async function cfSheetsAdd(job, pages) {
+  let j;
+  try {
+    const r = await fetch(`/api/job/${job}/cutfill`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page: state.page, pages, ...(pages.includes(state.page) ? { edits: cfReviewEdits() } : {}) }) });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).detail) || r.statusText);
+    j = await r.json();
+  } catch (e) { cfState.notice = "could not add the sheets: " + e.message; return cfRenderBar(); }
+  if (state.job !== job || cfState.job !== job) return;
+  cfState.notice = cfOpenNotice(j, true);
+  // the engine reads the project again on "show" (roles, reads running) and keeps each sheet's view; the frame
+  // is loaded again only when it cannot be told
+  try { $("cfFrame").contentWindow.postMessage({ source: "host", type: "show", key: "d0p" + j.page }, location.origin); }
+  catch (err) { $("cfFrame").src = cfFrameUrl(j.pid, "d0p" + j.page) + "&t=" + Date.now(); }
+  cfRenderBar();
+}
+$("cfsOpen").onclick = cfSheetsGo;
+$("cfsClose").onclick = cfSheetsClose;
+$("cfSheets").onclick = async () => {
+  const job = state.job;
+  // the cut / fill on screen is another plan set's (a set opened while it stayed up): not this one's to add to
+  if (cfState.job !== job) { cfState.notice = "this cut / fill belongs to another plan set: ← Sheet, then open Cut / fill here"; return cfRenderBar(); }
+  const lst = await cfSheetsList(job, true);
+  if (state.job !== job) return;
+  if (!lst || !Array.isArray(lst.pages)) { cfState.notice = "could not list the sheets of this plan set"; return cfRenderBar(); }
+  cfSheetsShow(lst, true);
+};
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("cfSheetsModal").hidden) { e.preventDefault(); e.stopImmediatePropagation(); cfSheetsClose(); }
+}, true);
+// an open is on its way: another click on Cut / fill waits for THAT open and ends with it (the second critic's R3:
+// with nothing on screen a second click took the old path and wiped the picker's words; the third critic's m7: a
+// second call that returned at once let the redesign's 3D button find the stage closed and drop its view)
+let cfOpening = null, cfOpeningJob = null;
+function cfOpen(opts) {
+  // only an open for the plan set on screen is waited for: one for a set opened before ends by itself (it checks the
+  // job), and a click for this set is not swallowed by it (the fourth critic's m1)
+  if (cfOpening && cfOpeningJob === state.job) return cfOpening;
+  const job = state.job;
+  const run = cfOpenRun(opts).finally(() => { if (cfOpening === run) { cfOpening = null; cfOpeningJob = null; } });
+  cfOpening = run; cfOpeningJob = job;
+  return run;
+}
+async function cfOpenRun(opts) {
+  if (!state.job) return setStatus("open a plan set first", "err");
+  const stage = $("cfStage");
+  if (!stage.hidden) return;
+  // the job and page this open is for: another plan set or page opened while it waits must not receive it
+  // (the picker's critic, R3: the open landed on the other job, whose page became its grading sheet)
+  const job = state.job, page = state.page;
+  const moved = () => state.job !== job || state.page !== page;
+  const pages = opts && Array.isArray(opts.pages) ? opts.pages : null;
+  if (!pages && state.kinds.length > 1) {
+    // a plan set of several sheets asks once which sheets the job needs (a job set up before opens straight in)
+    setStatus("checking this plan set's cut / fill…");
+    const head = await cfSheetsList(job, false);
+    if (moved()) return setStatus("");
+    if (head && head.n > 1 && !head.in_project) {
+      setStatus("reading the sheet numbers of this plan set…");
+      const lst = await cfSheetsList(job, true);
+      if (moved()) return setStatus("");
+      setStatus("");
+      if (lst && Array.isArray(lst.pages)) return cfSheetsShow(lst, false);
+    }
+    setStatus("");
+  }
+  let j;
+  // a first open makes the job's cut / fill (4-9 s on a big set): said while it works (R3)
+  const opening = pages ? "opening the cut / fill with the ticked sheets…" : "opening the cut / fill…";
+  setStatus(opening);
+  // an open that never answers ends: every later click waits for this one (the third critic's m7)
+  const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 90000);
+  try {
+    const r = await fetch(`/api/job/${job}/cutfill`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: ac.signal,
+      body: JSON.stringify({ page, edits: cfReviewEdits(), ...(pages ? { pages } : {}) }) });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).detail) || r.statusText);
+    j = await r.json();
+  } catch (e) {
+    return setStatus("could not open the cut / fill engine: " + (e.name === "AbortError" ? "no answer in 90 s" : e.message), "err");
+  } finally { clearTimeout(tm); }
+  // the open's own words leave the status line; whatever was said there meanwhile stays (the third critic's m9)
+  if ($("status").textContent === opening) setStatus("");
+  if (state.job !== job) return;
+  const rowsPage = Number.isInteger(j.rows_page) ? j.rows_page : null, hint = j.role_hint || "";
+  if (j.review_error) setStatus("the lines erased and named in review did not reach the cut / fill (" + j.review_error + ")", "err");
+  if (cfState.job !== job || cfState.pid !== j.pid) {
+    cfState = { job, pid: j.pid, summary: null };
+    $("cfFrame").src = cfFrameUrl(j.pid, "d0p" + (Number.isInteger(j.page) ? j.page : page));
+  } else {
+    // same project, another page: the engine shows the sheet the operator is looking at
+    try { $("cfFrame").contentWindow.postMessage({ source: "host", type: "show", key: "d0p" + (Number.isInteger(j.page) ? j.page : page) }, location.origin); }
+    catch (err) { /* the frame is still loading; it opens on the project's display page */ }
+  }
+  // what the picker's open did, said on the bar: the host's status line is under the stage (W4); on a plain open,
+  // only a sheet whose detection an older version made, or one detected again and being read again
+  cfState.notice = pages ? cfOpenNotice(j)
+    : ((j.older && j.older.length) || (j.reread && j.reread.length) || j.reread_linked || j.hidden_note)
+      ? cfOpenNotice({ older: j.older, reread: j.reread, reread_linked: j.reread_linked, hidden_note: j.hidden_note }) : "";
+  cfState.rowsPage = rowsPage; cfState.hint = hint;
+  // "Sheets…" can only add a sheet to a plan set of several
+  $("cfSheets").hidden = !(state.kinds && state.kinds.length > 1);
+  cfPlace(); stage.hidden = false; cfRenderBar();
+  if (typeof toolsMenuSync === "function") toolsMenuSync();
+}
+// ONE set of cut / fill rows per job. `rowsPage` is the page whose takeoff holds them (the
+// engine's project remembers it): another page cannot add them a second time, and a fresh
+// result puts them back on their page after a stale one took them out.
+function cfRowsElsewhere() {
+  return Number.isInteger(cfState.rowsPage) && cfState.rowsPage !== state.page;
+}
+function cfRowsHere() {
+  return cfAdded() || (Number.isInteger(cfState.rowsPage) && cfState.rowsPage === state.page);
+}
+// a scale for a sentence: two decimals at most (a measured bar reads 40.016655966932305);
+// only the print is rounded, never the number in force
+function cfScaleTxt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : "?";
+}
+// the scale as the bar says it, with where it came from - before any compute too (the bar printed
+// 1" = 40.016655966932305 ft with the limit's rows only: check 5A)
+function cfScaleNote(s) {
+  return s.scale_ft_per_in ? `1" = ${cfScaleTxt(s.scale_ft_per_in)} ft` + (s.scale_source ? ` (${s.scale_source})` : " (unconfirmed)")
+    : "scale not set in the panel";
+}
+// the few facts the report's caveat needs, kept with the job's record so a reload still has them
+function cfCompact(s) {
+  if (!s || s.error) return null;
+  return { scale_ft_per_in: s.scale_ft_per_in || null, scale_source: s.scale_source || null,
+           coverage: s.coverage != null ? s.coverage : null, section_ft: s.section_ft || 0,
+           region_source: s.region_source || null, factors: s.factors || null, zones_itemized: !!s.zones_itemized,
+           zones_rest: !!s.zones_rest,
+           // the compute the rows came from: a page load asks the engine whether it is still its last (cfReconcile)
+           computed_at: s.computed_at != null ? s.computed_at : null,
+           questions_total: s.questions_total != null ? s.questions_total : (s.questions || []).length };
+}
+function cfClose() {
+  const stage = $("cfStage");
+  if (stage.hidden) return;
+  stage.hidden = true;
+  cfState.notice = "";          // what an open did belongs to that open
+  if (typeof toolsMenuSync === "function") toolsMenuSync();
+}
+// another plan set is opening: the stage and the picker close, and nothing of the old set's cut / fill stays to
+// answer (its frame is emptied, so no result of it can arrive; cfState names no job, so the next open loads the
+// frame for the set on screen)
+function cfCloseForJob() {
+  if ($("cfSheetsModal") && !$("cfSheetsModal").hidden) cfSheetsClose();
+  if ($("cfStage")) cfClose();
+  if (cfState.job != null) {
+    cfState = { job: null, pid: null, summary: null };
+    const fr = $("cfFrame");
+    if (fr && fr.getAttribute("src") && fr.getAttribute("src") !== "about:blank") fr.src = "about:blank";
+  }
+}
+// the engine's rows: Site Cut / Site Fill as reported (bank measure), and the
+// net as the row the bid sheet prices - Export Cut when the site cuts more than
+// it fills, Import Structural the other way. No swell or shrink factor is
+// applied here; that is the estimator's call, and the tooltip says so.
+// The net row is tagged `kind: "net"` (and its label starts Export / Import,
+// which is what the matchers read): the bid sheet files it on its own
+// export / import line and never inside Site Cut or Site Fill (D02 / D17).
+function cfRows(s) {
+  if (!s) return [];
+  // the engine's own rows (limit line, strip, balance, walls, with the operator's typed factors)
+  // when it sent them - an empty list too: the four rows below are built only when a summary sends none at all (an
+  // empty list from a refused or failed takeoff re-filed the volumes at the old scale and dropped the limit's rows:
+  // critic 7, WRONG-2; critic 8, r-1); every row keeps its basis for the tooltip
+  if (Array.isArray(s.rows))
+    return s.rows.filter(r => r && CF_ROW_RE.test(r.label) && isFinite(+r.qty) && +r.qty > 0)
+      .map(r => ({ label: r.label, qty: +r.qty, unit: r.unit, basis: r.basis || "",
+                   // the net row keeps its tag (the bid sheet's export / import lines read it)
+                   ...(/^(Export Cut|Import Structural)$/.test(r.label) ? { kind: "net" } : r.kind ? { kind: String(r.kind) } : {}) }));
+  const rows = [];
+  const cut = Math.round(s.cut_cy || 0), fill = Math.round(s.fill_cy || 0);
+  if (cut > 0) rows.push({ label: "Site Cut", qty: cut, unit: "CY" });
+  if (fill > 0) rows.push({ label: "Site Fill", qty: fill, unit: "CY" });
+  if (cut > fill) rows.push({ label: "Export Cut", qty: cut - fill, unit: "CY", kind: "net" });
+  else if (fill > cut) rows.push({ label: "Import Structural", qty: fill - cut, unit: "CY", kind: "net" });
+  return rows;
+}
+function cfClearItems() { state.extraItems = state.extraItems.filter(it => !cfIsRow(it)); }
+function cfApplyItems(s) {
+  cfLeftNote(null);
+  cfClearItems();
+  const rows = cfRows(s);
+  for (const r of rows) {
+    state.extraItems.push({ label: r.label, qty: r.qty, unit: r.unit, ...(r.kind ? { kind: r.kind } : {}),
+                            ...(r.basis ? { basis: r.basis } : {}), src: "cutfill" });
+    if (!store.getItem(tradeKey(r.label))) store.setSession(tradeKey(r.label), "Earthwork & Grading");
+  }
+  state.cfFacts = cfCompact(s);
+  // the rows belong to the JOB: its record hears every change (a second browser saw none, and
+  // the net row's trade fell back to General after a reload)
+  renderItemized(); calcSave(); calcStateDirty();
+}
+function cfDropItems() {
+  cfClearItems(); renderItemized(); calcSave(); calcStateDirty();
+}
+// why the cut / fill rows left the takeoff, for the status line: a refusal, a result that stands no more (with the
+// engine's why), else an input changed (critic 7: a refusal said "an input changed", a stale result said nothing more)
+function cfLeftWords(s, rowsPage) {
+  s = s || {};
+  // with no page on record a Compute refiles nothing: Add is needed too (critic 11, m4)
+  const back = rowsPage === null ? "Compute, then Add to takeoff, puts them back" : "Compute puts them back";
+  return s.error ? "the cut / fill rows left the takeoff: the engine refused the compute (the panel says why)"
+    : s.stale && s.stale_why ? "the cut / fill rows left the takeoff: " + cfSentence(s.stale_why) + " " + back
+    : "the cut / fill rows left the takeoff (an input changed) — " + back;
+}
+function cfLeftReason(s) {
+  s = s || {};
+  return s.error ? "the engine refused the compute" : s.stale && s.stale_why ? cfSentence(s.stale_why).replace(/\.$/, "") : "an input changed";
+}
+// The rows leaving is lasting news for this page's takeoff: the reason stays on the status bar's lasting side until
+// they come back or the page loads again, the whole sentence on hover. On the transient line alone it was lost to the
+// page load's own words ("scale restored from this page's approved record"), and the rows left silently (the live
+// check of critic 9's round)
+function cfLeftNote(reason, words) {
+  state.cfLeft = reason ? { reason, words: words || reason } : null;
+  // beside the transient line, sharing only the room the sheet facts leave (style.css .sb-cf): inside the facts it
+  // could still cut them (critic 10, m2)
+  const status = typeof $ === "function" ? $("status") : null;
+  if (!status || !status.parentNode) return;
+  let seg = $("sbCf");
+  if (!seg) {
+    seg = document.createElement("span");
+    seg.id = "sbCf"; seg.className = "sb-cf";
+    status.parentNode.insertBefore(seg, status);
+  }
+  seg.textContent = reason ? "cut / fill rows out: " + reason + " · " : "";   // the separator the style cannot give
+  seg.title = reason ? (words || reason) : "";
+  // the rows' note gone (they came back): this page's approval may still be out of date - asked again (critic 22, RISK-1)
+  if (!reason && typeof approvalOutdated === "function" && state.job) approvalOutdated(state.gen).catch(() => {});
+}
+// how the rows come back: a Compute refiles them only on the page on record as holding them; with none on record
+// they need Add to takeoff as well ("Compute puts them back" was untrue there: critic 10, m4)
+// the approve's refusal: Compute (and Add) FIRST, then approve - "Approve again (Compute ... puts them back)" read as
+// approve first, which exported the page without the dirt, and nothing asked for it again (critic 14, RISK-4)
+function cfBackThenApprove(rowsPage) {
+  return Number.isInteger(rowsPage) ? "Compute in the Cut / fill panel to put them back, then approve again."
+    : "Compute, then Add to takeoff in the Cut / fill panel, then approve again.";
+}
+function cfBackWords(rowsPage) {
+  return Number.isInteger(rowsPage) ? "Compute in the Cut / fill panel puts them back"
+    : "Compute, then Add to takeoff in the Cut / fill panel, puts them back";
+}
+function cfRowsLeft(reason, words) {
+  cfDropItems();
+  setStatus(words, "err");
+  cfLeftNote(reason, words);
+}
+// The rows a page holds follow the engine's last word. Two sources: what the engine's page said while another page was
+// on screen (a stale or refused result could not take the rows out of a takeoff that was not loaded: critic 7's WRONG-2
+// / WRONG-3, one page over), and the engine itself, asked without its page - a correction in review reached the engine
+// and never this takeoff: the rows at 50 stayed, were approved and exported, 56 % high (critic 8, WRONG-1). Called once
+// a page's takeoff is back (loadResult).
+async function cfReconcile() {
+  if (!cfState || !state.result || !state.job) return;
+  const job = state.job, page = state.page, gen = state.gen;
+  const key = (rows) => JSON.stringify(rows.map((r) => [r.label, +r.qty, r.unit]));
+  if (cfState.job === job && cfState.summary && cfRowsHere() && !cfRowsElsewhere()) {
+    const s = cfState.summary;
+    const fresh = !s.error && !s.stale && (!s.no_volumes || cfRows(s).length);
+    const had = cfAdded();
+    if (fresh) {
+      if (key(cfRows(s)) !== key(state.extraItems.filter(cfIsRow))) {
+        cfApplyItems(s);
+        setStatus(had ? "the cut / fill rows follow the volumes computed while another page was on screen"
+          : "cut / fill rows are back in the takeoff with the new volumes");
+      }
+    } else if (had) {
+      cfRowsLeft(cfLeftReason(s), cfLeftWords(s, cfState.rowsPage));
+    }
+  }
+  if (!cfAdded()) return;
+  const here = () => state.job === job && state.page === page && state.gen === gen && cfAdded();
+  const st = await cfEngineState(job, false);
+  if (!st || !here()) return;
+  // the ENGINE's rows with no cut / fill behind them (a reset swept it), or on a page that does not hold the job's rows
+  // (one set per job): the approve refuses them, so they leave now, and it is said - they stayed, silently, until an
+  // approve (critic 9, r-7 / WRONG-3). The old Earthwork calculator's rows are never in a takeoff (ewOldRow): they
+  // stay, said where they came from
+  if (st.project === false || (st.project && Number.isInteger(st.rows_page) && st.rows_page !== page)) {
+    if (st.project === false)
+      cfRowsLeft("no cut / fill behind them (it was reset)",
+        "the cut / fill rows left the takeoff: this job has no cut / fill behind them now (it was reset) - compute again in the Cut / fill panel, then Add to takeoff");
+    else
+      cfRowsLeft(`the job's rows are in page ${st.rows_page + 1}'s takeoff`,
+        `the cut / fill rows left this page: the job's rows are in page ${st.rows_page + 1}'s takeoff (one set per job)`);
+    return;
+  }
+  if (!st.project) return;
+  if (st.why) {
+    cfRowsLeft(cfSentence(st.why).replace(/\.$/, ""),
+      "the cut / fill rows left the takeoff: " + cfSentence(st.why) + " " + cfBackWords(st.rows_page));
+    return;
+  }
+  // rows filed from another compute than the engine's last (it ran while this page was not listening): its rows now.
+  // Volumes with no compute behind them at all (opened again after a reset, never computed) follow too: the engine's
+  // rows are then the limit's alone (critic 9, r-7)
+  const facts = state.cfFacts || (state.calcSaved && state.calcSaved.cf) || {};
+  const orphan = st.computed_at == null && state.extraItems.some((it) => cfIsRow(it) && /^(Site Cut|Site Fill|Export Cut|Import Structural)\b/.test(it.label));
+  if (!orphan && (facts.computed_at == null || st.computed_at == null || Math.abs(facts.computed_at - st.computed_at) < 1e-6)) return;
+  const full = await cfEngineState(job, true);
+  if (!full || !here()) return;
+  if (full.why || !full.summary) {
+    const why = cfSentence(full.why || "the engine has no rows for them now");
+    cfRowsLeft(why.replace(/\.$/, ""), "the cut / fill rows left the takeoff: " + why + " " + cfBackWords(st.rows_page));
+    return;
+  }
+  if (key(cfRows(full.summary)) === key(state.extraItems.filter(cfIsRow))) { state.cfFacts = cfCompact(full.summary); return; }
+  cfApplyItems(full.summary);
+  const said = orphan ? "the cut / fill volumes left the takeoff: the engine holds no compute for them now - " + cfBackWords(st.rows_page)
+    : "the cut / fill rows follow the engine's last compute (it ran while this page was not listening)";
+  setStatus(said, orphan ? "err" : undefined);
+  if (orphan) cfLeftNote("the engine holds no compute for the volumes", said);
+}
+// the job's cut / fill as the engine stands now, without its page (server.py _cf_state): {project, why, computed_at,
+// rows_page, summary (with `rows`)}; null when it cannot say
+async function cfEngineState(job, rows) {
+  try {
+    const r = await fetch(`/api/job/${encodeURIComponent(job)}/cutfill/state` + (rows ? "?rows=1" : ""));
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+// the first sentence of an engine message, ending in ONE period (a message whose only sentence ends
+// with one printed "again.. (the panel says why)" and "proposed.. (": check 5A)
+function cfSentence(t) { return String(t || "").split(". ")[0].replace(/[.\s]+$/, "") + "."; }
+function cfRenderBar() {
+  const s = cfState.summary, sum = $("cfSum"), note = $("cfNote"), add = $("cfAdd");
+  // what the last open or "Sheets…" did (how many sheets take part, any left out and why) leads the note: the
+  // host's status line is under the stage, where nobody working in the engine sees it (the picker's critic, W4)
+  const said = () => {
+    if (typeof cfReadingSay === "function") cfReadingSay(note);   // a read waiting in line or being stopped (below)
+    if (!cfState.notice) return;
+    // after the warnings the bar puts first on purpose, in capitals (the second critic's M-b): the scale, a sheet left out
+    const t = note.textContent || "";
+    const lead = (t.match(/^(?:(?:STALE: [^·]*|SCALE DISAGREES WITH THE SHEET|A SHEET IS LEFT OUT) · )+/) || [""])[0];
+    note.textContent = lead ? lead + cfState.notice + " · " + t.slice(lead.length)
+      : cfState.notice + (t ? " · " + t : "");
+    note.title = cfState.notice + (note.title ? "\n" + note.title : "");
+  };
+  // the rows belong in this page's takeoff and are out of it: a stale, refused or missing result
+  // took them out (the message handler below). The bar says so, beside STALE and the button: the
+  // host's status line is under the stage, where nobody working in the engine sees it (check 5A)
+  const out = cfRowsHere() && !cfAdded();
+  if (!s || s.error) {
+    sum.textContent = (s && s.error ? "the engine refused: " + cfSentence(s.error) + " (the panel says why)"
+      : "no volumes yet — read a sheet and press Compute in the panel below")
+      + (out ? " · the cut / fill rows are out of the takeoff until a compute goes through" : "");
+    note.textContent = cfState.hint || "";
+    note.title = cfState.hint || "";
+    add.disabled = true; add.textContent = "Add to takeoff";
+    add.title = out ? "The cut / fill rows are out of this page's takeoff: a compute that goes through puts them back" : CF_ADD_TITLE;
+    said();
+    return;
+  }
+  if (s.no_volumes) {
+    // the limit line's own rows stand before any volume: fence, Clear & Grub, strip
+    const rows = cfRows(s);
+    sum.textContent = "no volumes yet — " + (rows.length
+      ? rows.length + " row" + (rows.length === 1 ? "" : "s") + " from the limit line: " + rows.map(r => r.label).join(", ")
+      : "pick or draw the limit in the panel below");
+    note.textContent = cfScaleNote(s);
+    // the note's whole text first, in the tooltip too (the bar wraps it; check 6A saw it cut)
+    note.title = [note.textContent, ...(s.warnings || [])].join("\n");
+    add.disabled = !rows.length || !state.result;
+    add.title = state.result ? "Put the limit line's rows into the itemized takeoff (the cut / fill rows follow a compute)" : "run Detect first — the itemized takeoff belongs to a detected sheet";
+    add.textContent = cfAdded() ? "Remove from takeoff" : "Add to takeoff";
+    said();
+    return;
+  }
+  const f = (v) => Math.round(Math.abs(v || 0)).toLocaleString("en-US");
+  const net = s.net_cy || 0;
+  const extra = (s.rows || []).filter(r => !/^(Site Cut|Site Fill)( – .+)?$|^(Export Cut|Import Structural)$/.test(r.label));
+  sum.textContent = `Cut ${f(s.cut_cy)} CY · Fill ${f(s.fill_cy)} CY · ${net >= 0 ? "import" : "export"} ${f(net)} CY · ${f(s.area_sf)} SF`
+    + (extra.length ? ` · + ${extra.length} row${extra.length === 1 ? "" : "s"} (${extra.map(r => r.label).join(", ")})` : "")
+    + (s.stale ? (out ? " · STALE — its rows left the takeoff: Compute puts them back" : " · STALE — press Compute again") : "");
+  const w = s.warnings || [], qs = s.questions || [];
+  const nq = s.questions_total != null ? s.questions_total : qs.length;   // the engine sends the whole count, the first texts
+  const cov = s.coverage != null ? Math.round(s.coverage * 100) : null;
+  note.textContent = cfScaleNote(s)
+    + (cov != null && cov < 95 ? ` · surfaces cover ${cov} % of the limit` : "")
+    + (w.length ? ` · ${w.length} warning${w.length === 1 ? "" : "s"}` : "")
+    + (nq ? ` · ${nq} open question${nq === 1 ? "" : "s"}` : "");
+  // a warning about the scale is said in words, never folded into a count
+  const wScale = w.find((x) => /square of the scale/.test(x));
+  if (wScale) note.textContent = "SCALE DISAGREES WITH THE SHEET · " + note.textContent;
+  // so is a sheet the compute left out (not lined up with the sheet shown, or not read yet): these volumes cover part
+  // of the job only (the fifth critic's r-e: a sheet not read got no lead)
+  if (w.some((x) => /: it is left out\./.test(x))) note.textContent = "A SHEET IS LEFT OUT · " + note.textContent;
+  // why these volumes stand no more, when the engine knows (its sheet shown or scale changed, or the scale is refused
+  // on its sheet now): first, before any other word - the rows already left the takeoff (critic 7, WRONG-2 / WRONG-3)
+  if (s.stale && s.stale_why) note.textContent = "STALE: " + cfSentence(s.stale_why) + " · " + note.textContent;
+  if (cfState.hint) note.textContent += " · " + cfState.hint;
+  // the note's whole text first (the hint is in it), then every warning and question it counts
+  note.title = [note.textContent, ...w, ...qs.map((q) => "? " + q), ...(nq > qs.length ? [`? and ${nq - qs.length} more in the Cut / fill panel`] : [])].join("\n");
+  add.disabled = !!s.stale || !state.result;
+  add.title = !state.result ? "run Detect first — the itemized takeoff belongs to a detected sheet"
+    : s.stale && out ? "The cut / fill rows left this page's takeoff " + (s.stale_why ? "(" + cfSentence(s.stale_why).replace(/\.$/, "") + ")" : "when an input changed")
+      + ": Compute in the panel puts them back with the new volumes"
+    : CF_ADD_TITLE;
+  add.textContent = cfAdded() ? "Remove from takeoff" : "Add to takeoff";
+  if (cfRowsElsewhere() && !cfAdded()) {
+    // one set of rows per job: they are in another sheet's takeoff
+    add.disabled = true;
+    add.textContent = `In the takeoff on page ${cfState.rowsPage + 1}`;
+    add.title = `The cut / fill rows are in page ${cfState.rowsPage + 1}'s takeoff (one set per job - adding them here too would count the dirt twice). Remove them there to add them here.`;
+  }
+  said();
+}
+// a read in the cut / fill that waits in line, or is being stopped, says so on the bar, in the engine's own words
+// (Koby, 2026-10-01: "the screen should say it is waiting in line"); the engine sends '' once that read moves on
+function cfReadingMessage(d) {
+  if (!d || d.pid !== cfState.pid || cfState.job !== state.job || typeof d.key !== "string") return false;
+  cfState.reading = cfState.reading || {};
+  if (d.text) cfState.reading[d.key] = String(d.text); else delete cfState.reading[d.key];
+  return true;
+}
+function cfReadingSay(note) {
+  const said = Object.values(cfState.reading || {});
+  if (!said.length) return;
+  note.textContent = said.join(" · ") + (note.textContent ? " · " + note.textContent : "");
+  note.title = said.join("\n") + (note.title ? "\n" + note.title : "");
+}
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data || e.data.source !== "cutfill") return;
+  if (e.data.type === "reading") {
+    if (cfReadingMessage(e.data)) cfRenderBar();
+    return;
+  }
+  if (e.data.type === "scale") {
+    // the cut / fill's Scale card set a page's review scale (one scale per sheet - the review wins, and it can be typed
+    // in either place: Koby, 2026-09-29). This session's own memory of that page's scale goes - it would be sent back
+    // at the next Approve and undo it - and the chip follows when the page is on screen
+    if (e.data.pid !== cfState.pid || cfState.job !== state.job || e.data.job !== state.job) return;
+    const pg = e.data.page, ft = +e.data.ft;
+    if (!Number.isInteger(pg) || !(ft > 0)) return;
+    try {
+      store.removeItem("scaletyped::" + (state.docName || "?") + "::p" + pg);
+      store.removeItem("scale::" + (state.docName || "?") + "::p" + pg);
+    } catch (err) { /* private mode */ }
+    if (pg === state.page && state.result) {
+      state.result.scale = scaleTypedObj(state.result.scale, ft, String(e.data.text || ('1" = ' + ft + "'")));
+      try { store.setItem(scaleTypedKey(), JSON.stringify({ ft: ft, text: state.result.scale.text })); } catch (err) { /* private mode */ }
+      scaleRepaint();
+      // ...and the record itself is asked again: its new stamp (the next Approve sends it), and the review's own number
+      // if it is not the one posted. The same whether the post came from the frame or from Cut / fill in a tab of its own
+      scaleRestore(state.gen).catch(() => {});
+    }
+    return;
+  }
+  if (e.data.type !== "result" || e.data.pid !== cfState.pid) return;
+  // a result is the set's that opened the stage: never written into another set's takeoff (the third critic's w3)
+  if (cfState.job !== state.job) return;
+  cfState.summary = e.data.result;
+  // rows already in the takeoff follow the engine's current number, or leave
+  // with it: a stale or missing result must not keep pricing the old one
+  const follow = () => {
+    if (!(cfRowsHere() && state.result)) return;
+    const fresh = cfState.summary && !cfState.summary.error && !cfState.summary.stale
+      && (!cfState.summary.no_volumes || cfRows(cfState.summary).length);
+    const had = cfAdded();
+    if (fresh) {
+      cfApplyItems(cfState.summary);
+      if (!had) setStatus("cut / fill rows are back in the takeoff with the new volumes");
+    } else if (had) {
+      cfRowsLeft(cfLeftReason(cfState.summary), cfLeftWords(cfState.summary, cfState.rowsPage));
+    }
+  };
+  if (cfRowsElsewhere() && cfAdded() && state.result) {
+    // rows on a page this tab thinks does not hold the job's rows are never refreshed there (one set per job: critic 9,
+    // WRONG-3) - but the engine says where they are before any leave: another tab may have moved them here, and this
+    // tab's old record took the job's only rows off their page (critic 10, r-4). When the engine says "here", the post
+    // is followed like any other (it was dropped, and the old 900 CY stayed priced: critic 11, r-3)
+    const job = state.job, page = state.page, gen = state.gen, summary = cfState.summary;
+    cfEngineState(job, false).then((st) => {
+      if (!st || !st.project || state.job !== job || state.page !== page || state.gen !== gen || !cfAdded()) return;
+      if (Number.isInteger(st.rows_page) && st.rows_page !== page)
+        cfRowsLeft(`the job's rows are in page ${st.rows_page + 1}'s takeoff`,
+          `the cut / fill rows left this page: the job's rows are in page ${st.rows_page + 1}'s takeoff (one set per job)`);
+      else if (st.rows_page === page && cfState.job === job) {
+        cfState.rowsPage = page;
+        if (cfState.summary === summary) follow();      // a later post follows itself
+        cfRenderBar();
+      }
+    }).catch(() => {});
+  } else follow();
+  cfRenderBar();
+});
+$("cfAdd").onclick = () => {
+  const s = cfState.summary;
+  // the volumes on the bar are the set's that opened the stage (the third critic's w3)
+  if (cfState.job !== state.job) return setStatus("this cut / fill belongs to another plan set: close it and open Cut / fill here", "err");
+  if (!s || s.error || (s.no_volumes && !cfRows(s).length)) return setStatus("compute the volumes first — the engine reports them here when it is done", "err");
+  // the why when the engine knows it (critic 8, MINOR-5: this said "an input changed" beside a bar that named it)
+  if (s.stale) return setStatus("the volumes are stale (" + (s.stale_why ? cfSentence(s.stale_why).replace(/\.$/, "") : "an input changed")
+    + ") — press Compute in the panel first", "err");
+  if (!state.result) return setStatus("run Detect first — the itemized takeoff belongs to a detected sheet", "err");
+  const on = !cfAdded();
+  if (on && cfRowsElsewhere())
+    return setStatus(`the cut / fill rows are already in page ${cfState.rowsPage + 1}'s takeoff — one set per job`, "err");
+  if (on) cfApplyItems(s);
+  else cfDropItems();
+  cfState.rowsPage = on ? state.page : null;
+  cfRenderBar();
+  // the ledger hears the decision; it never fails the click. Once the page is on record, this page's approval is asked
+  // again: one that still holds the old calculator's rows now reads OUT OF DATE (approve again)
+  const job = state.job, gen = state.gen;
+  fetch(`/api/job/${state.job}/page/${state.page}/cutfill/rows`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ added: on, pid: cfState.pid,
+                           rows: on ? cfRows(s) : [], summary: s }) })
+    .then(() => { if (state.job === job && state.gen === gen && typeof approvalOutdated === "function") return approvalOutdated(gen); })
+    .catch(() => {});
+  setStatus(on
+    ? "cut / fill added to the takeoff — it prices and prints like any other row"
+    : "cut / fill removed from the takeoff");
+};
+$("cfBtn").onclick = cfOpen;
+$("cfBack").onclick = cfClose;
+$("cfOpenTab").onclick = () => { if (cfState.pid) window.open(cfFrameUrl(cfState.pid), "_blank"); };
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("cfStage").hidden && !typing()) { e.preventDefault(); e.stopImmediatePropagation(); cfClose(); }
+}, true);
+addEventListener("resize", () => { if (!$("cfStage").hidden) cfPlace(); });
+// the engine follows this app's theme
+new MutationObserver(() => {
+  const f = $("cfFrame");
+  if (f && f.contentWindow && cfState.pid)
+    f.contentWindow.postMessage({ source: "host", type: "theme", theme: document.documentElement.dataset.theme || "" }, location.origin);
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+cfSyncButton();
+// =============== end CUT / FILL ============================================

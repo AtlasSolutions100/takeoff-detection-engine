@@ -2,26 +2,47 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script src="/client.js?v=2"></script>
 <title>CORE — Takeoff · Work Optional</title>
 <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
 <link rel="alternate icon" href="/favicon.ico?v=1" sizes="16x16 32x32 48x48">
 <link rel="apple-touch-icon" href="/favicon-180.png?v=1">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="tokens.css?v=1">
-<link rel="stylesheet" href="style.css?v=103">
+<link rel="stylesheet" href="tokens.css?v=2">
+<!-- REDESIGN 2026-09-26: the round-3 frame. shell.css lays the new frame
+     over style.css; shell.js (after app.js) composes it by moving app.js's
+     own nodes. The palette/theme are applied before first paint so the page
+     never flashes the wrong colours; shell-boot keeps the old layout from
+     showing for the moment before shell.js runs (released after 4 s no
+     matter what, so a failed shell.js leaves the old, working layout). -->
+<link rel="stylesheet" href="shell.css?v=13">
+<link rel="stylesheet" href="team.css?v=3">
+<link rel="stylesheet" href="responsive.css?v=7">
+<link rel="stylesheet" href="dock.css?v=4">
+<script>
+try {
+  var d = document.documentElement;
+  d.dataset.palette = localStorage.getItem("core-palette") === "nightcrew" ? "nightcrew" : "steel";
+  d.dataset.accent = localStorage.getItem("core-accent") === "yellow" ? "yellow" : "green";
+  if (localStorage.getItem("core-theme") === "light") d.dataset.theme = "light";
+  d.classList.add("shell-boot");
+  setTimeout(function () { d.classList.remove("shell-boot"); }, 4000);
+} catch (e) { /* storage blocked: steel, dark, no boot veil */ }
+</script>
+<link rel="stylesheet" href="style.css?v=116">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
      It used to hold seventeen things: the brand, a sample-plan picker, a
      path box, Open, a recents picker, Upload, the document name, the page
-     picker, Detect, Tools, the BETA chip, Feedback, Feedback CSV, Terms,
+     picker, Detect, Tools, the accuracy chip, Feedback, Feedback CSV, Terms,
      Privacy, the saved-work button, the theme toggle - AND the status line,
      which is a different kind of thing entirely. At 1920px it wrapped to
      three rows (147px tall, 234px while a long status string was up, and
      every one of those pixels came out of the sheet).
      It now carries only IDENTITY and DOCUMENT CONTEXT: brand (with its
      Projects / Settings links) · document name · sheet picker · Detect ·
-     Tools, then the BETA chip and the theme toggle on the right.
+     Tools, then the accuracy chip and the theme toggle on the right.
      NOTHING WAS DELETED. Every id below moved to the view that is actually
      about it, with its handler, its title and its `hidden` bookkeeping
      untouched:
@@ -70,7 +91,8 @@
          false so nothing is ever applied without the operator accepting it. -->
     <div id="toolsMenu" class="tools-menu" hidden>
       <div class="tm-group" aria-hidden="true">Calculators</div>
-      <button id="ewBtn" hidden title="Cut &amp; fill volumes from labeled contours"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16c4-3 6 1 10-2s5-6 8-7"/><path d="M3 20h18"/></svg><span class="tm-txt"><span class="tm-nm">Earthwork</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
+      <button id="cfBtn" hidden title="Cut &amp; fill volumes: the cut / fill engine reads this set&rsquo;s contours and spot grades on its own page and hands the totals back here"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16c4-3 6 1 10-2s5-6 8-7"/><path d="M3 20h18"/></svg><span class="tm-txt"><span class="tm-nm">Cut / fill</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
+      <button id="flBtn" hidden title="Rooms by floor type: click inside a room, the engine fills to the walls and bridges the doors; colour each room by its flooring; square feet per type and base footage into the takeoff"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 12h18M12 4v16M7.5 4v8M16.5 12v8"/></svg><span class="tm-txt"><span class="tm-nm">Flooring</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <button id="trBtn" hidden title="Trench excavation + bedding volumes for a pipe run"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5v10l4 4M20 5v10l-4 4M8 19h8"/><path d="M9 9h6" stroke-dasharray="2 2"/></svg><span class="tm-txt"><span class="tm-nm">Trench</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <button id="stBtn" hidden title="Building footprint: mass excavation, perimeter layback dig + backfill, slab prep"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="9" width="14" height="10"/><path d="M3 9 12 3l9 6M9 19v-5h6v5"/></svg><span class="tm-txt"><span class="tm-nm">Structure</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <div class="tm-sep" aria-hidden="true"></div>
@@ -87,7 +109,7 @@
     </div>
   </div>
   <div class="hdr-right">
-    <span id="betaBanner" class="beta-chip" tabindex="0" role="note" title="BETA - CORE Takeoff is still being refined. Automated detection can be wrong, so check every quantity against the drawings.">BETA &mdash; verify every quantity</span>
+    <span id="betaBanner" class="beta-chip" tabindex="0" role="note" title="Double-check every quantity against the drawings.">Automated detection can be wrong</span>
     <button id="themeBtn" title="Switch between dark and paper theme">&#9680;</button>
   </div>
   <input id="legendPath" type="hidden">
@@ -205,8 +227,7 @@
        via CSS and nothing else changes, so the sheet keeps its full state
        while out of sight. The two views are exclusive: opening one closes
        the other. Built by renderSettings() in app.js from the SAME price
-       store the itemized panel writes (priceKey/"price:<label>") plus the
-       EW_RESEARCH table in ew_defaults.js.
+       store the itemized panel writes (priceKey/"price:<label>").
 
        This page started life as the price book alone and the price book is
        now ONE of its five groups. Nothing about the pricing markup below
@@ -256,7 +277,7 @@
       <div class="sv-form">
         <label class="sv-fld"><span>Company name</span>
           <input id="svBrandCompany" type="text" maxlength="80" spellcheck="false"
-                 placeholder="e.g. Ryno Construction LLC"></label>
+                 placeholder="e.g. Example Construction LLC"></label>
         <label class="sv-fld"><span>Contact line <em>(optional)</em></span>
           <input id="svBrandContact" type="text" maxlength="120" spellcheck="false"
                  placeholder="e.g. 512-555-0134 · estimating@example.com"></label>
@@ -269,7 +290,7 @@
         top of every itemized-takeoff page and of the summary page of
         <b>Report PDF</b>. They are not printed over the sheet-overlay pages
         (those are your client&rsquo;s own drawing) and they never displace
-        the beta notice, which is stamped last, on every page. This is the
+        the accuracy notice, which is stamped last, on every page. This is the
         only thing on the report that is not a measurement, so it carries no
         caveat &mdash; and it cannot add one: nothing here changes a
         quantity, a price or a total.</div>
@@ -328,14 +349,6 @@
         <span class="sv-note">the colour this name comes up in on every job</span>
       </div>
       <div id="svColorWarn" class="sv-preview" hidden></div>
-    </section>
-    <section class="sv-section">
-      <h2>Material defaults</h2>
-      <div class="sv-note">Researched, cited, overridable — the table below is
-        webui/ew_defaults.js verbatim. Nothing here applies silently: factors
-        stay 1.0 until an operator picks a preset in the Earthwork panel, and
-        the override always wins.</div>
-      <div id="svMatBox"></div>
     </section>
     <section class="sv-section">
       <h2>Import / export</h2>
@@ -493,244 +506,26 @@
          first thing in the scrollport, so pressing EARTHWORK or TRENCH puts
          the panel where the operator is already looking. The buttons also
          scrollIntoView on open, which now lands at the top of #sideScroll. -->
-    <div id="ewPanel" class="ew-panel" hidden>
-      <div class="side-head" id="ewHead"><h2>Earthwork — assign contours</h2>
-        <button id="ewClose" class="mini">close</button></div>
-      <!-- The busy line for the /earthwork/suggest fetch. It lives HERE,
-           directly under the panel head, because the panel's own "reading
-           elevation labels…" hint renders into #ewRows at the BOTTOM of a
-           long panel - measured 53 px below the bottom of #sideScroll on the
-           frame the panel opens, i.e. off screen, and the panel's own
-           scrollIntoView pins the head to the top so it stays off screen.
-           The status bar carries the same sentence; this is the in-panel
-           half. -->
-      <div class="ew-busy" id="ewBusy" hidden></div>
-      <!-- THE HOW-TO, in plain words (2026-09-09, Koby: "3rd grade level
-           English, explain how to go through the earthwork process"). Each
-           step is one short sentence. -->
-      <div class="ew-hint ew-howto" id="ewHint">
-        <b>How to do this</b>
-        <ol>
-          <li>Each row is one contour line. Click a row and the line lights up on the sheet.</li>
-          <li>Ask: is this a real contour? If not, press <b>&times;</b> to drop it.</li>
-          <li>Pick a side. <b>EXIST</b> is the ground now. <b>PROP</b> is the new ground. <b>skip</b> means do not use it.</li>
-          <li>Is the number right? If not, type the right one.</li>
-          <li>Draw a work area, or set the limit of work, so only that part counts.</li>
-          <li>Press <b>Calculate cut &amp; fill</b>.</li>
-        </ol>
-      </div>
-      <!-- WHAT THE READER THREW AWAY. /earthwork/suggest has reported
-           suggestions_dropped since the route existed and no screen ever
-           rendered it, so a page whose every candidate row was filtered out
-           looked identical to a page that had none. Rendered by
-           renderEwDropped() from suggestions_dropped + ocr_ladder. -->
-      <div class="ew-dropped" id="ewDropped" hidden></div>
-      <!-- What this calculator is, stated permanently and not dismissible.
-           It is a contour interpolation between two triangulated surfaces:
-           three inputs a real earthwork quantity needs are simply not in it,
-           and the one time we could check the output against an estimator's
-           own figures it was 2.3-2.5x high. That belongs on the face of the
-           panel, not in a tooltip and not in a warning the operator can
-           clear. -->
-      <!-- FOLDED, NOT DISMISSED (2026-09-09). Measured on Belle Farms ROAD
-           GRADING p0 at 1500x940: this block plus the grading-zone block
-           filled the panel's first screen and the 40 contour rows - the
-           surface the operator works on - sat below the fold, so when the
-           read finished nothing on screen changed. The claim ("not a
-           measured quantity") and the cost ("2.3-2.5x high, measured once")
-           stay on the face of the panel, always; the two paragraphs between
-           them fold behind a button. Nothing here can be cleared. -->
-      <div class="ew-limit" id="ewLimit">
-        <b>Beta &mdash; check every number.</b> We make one surface from the
-        EXIST lines and one from the PROP lines and take one away from the
-        other. It is read off the drawing, not measured, and it can be
-        <b>off by a third or more, either way</b>. It is off the most where
-        contour lines have no number. Use it as a rough check and price
-        from your own take-off.
-        <button id="ewLimitToggle" class="mini ew-limit-more" type="button"
-                aria-expanded="false">where it counts, and what it leaves out ▸</button>
-        <span id="ewLimitMore" hidden>
-        <br><span id="ewWhere"><b>Where it counts.</b> Each surface reaches
-        only as far as its own lines, and the volume is counted where the two
-        overlap. That shape is a box round the lines, <b>not the real graded
-        area</b>. Set a limit of work below and it will be.</span>
-        <br><b>What it leaves out.</b> The road section, the dig depth under
-        each surface, and how much the dirt swells or shrinks.
-        </span>
-      </div>
-      <!-- GRADING ZONES. For sheets that do not draw a full proposed
-           surface (the Stice case, EXCAVATION-PLAN.md section 25): the
-           estimator picks a region and DECLARES the design - pad / plane /
-           balance / strip - and the engine computes declared-design vs
-           detected-existing inside that polygon only. Zones persist via the
-           calcstate sidecar (additive key "gzones"); results always
-           recompute through the endpoint, never restore from storage. -->
-      <div class="ew-bound" id="gzSection">
-        <div class="ew-bound-row">
-          <span class="ew-bound-lab">Grading zones</span>
-          <span id="gzState" class="ew-bound-state">none</span>
-        </div>
-        <div class="ew-bound-row">
-          <button id="gzDraw" class="mini" title="Click the corners of the region; a click back on the first corner closes it, and so do Enter and double-click. Esc backs up one corner then cancels. Then declare the design for that region.">+ grading zone (draw)</button>
-          <button id="gzBox" class="mini" title="Drag a rectangle over the region, then declare the design for it.">+ grading zone (box)</button>
-        </div>
-        <div id="gzRows" class="gz-rows"></div>
-        <div id="gzTable" class="gz-table" hidden></div>
-        <div class="gz-hint">Use this when the sheet does not draw the new
-          ground. Outline a region. Then say what goes there: a flat pad, a
-          sloping plane, a balanced pad, or a strip. We compare that to the
-          ground now, inside the region only. Press the zone's own Add button
-          to put it in the takeoff.</div>
-      </div>
-      <!-- Limit of work. Without one the volume is integrated over the
-           intersection of the two surfaces' CONVEX HULLS, which bulges wherever
-           the graded area is concave - the single biggest source of over-read
-           this calculator has, reported independently by two clients. -->
-      <div class="ew-bound" id="ewBound">
-        <div class="ew-bound-row">
-          <span class="ew-bound-lab">Limit of work</span>
-          <span id="ewBoundState" class="ew-bound-state">not set</span>
-        </div>
-        <div class="ew-bound-row">
-          <button id="ewBoundPick" class="mini" title="Click the grading-limit line on the sheet. Most grading plans draw one - a dashed outline around the disturbed area - and using the sheet's own line beats any boundary we could invent.">use a line on the sheet</button>
-          <button id="ewBoundAuto" class="mini" hidden title="This sheet names a limits-of-disturbance line. One click makes it the limit of work: the area inside it is Clear &amp; Grub and the strip area, and its length is the silt / construction fence. You still see the ring and its numbers before anything is counted.">use the sheet&rsquo;s limit line</button>
-          <button id="ewBoundDraw" class="mini" title="Draw the limit by hand - click corners around the graded area; a click back on the first corner closes it, and so do Enter and double-click. Esc backs up. For sheets whose limit line is broken, missing, or shaped with cuts a picked chain cannot follow.">draw it</button>
-          <button id="ewBoundClear" class="mini" hidden title="Go back to the whole overlap of the two surfaces">clear</button>
-        </div>
-      </div>
-      <!-- HOW MUCH OF THIS SHEET'S CONTOUR LINEWORK IS BEHIND THE NUMBER.
-           Nothing in the app stated a contour DENOMINATOR before
-           2026-09-02, so a sheet whose reader elevated 150 of 368 contour
-           lines looked exactly like one that elevated all of them.
-           Rendered by renderEwCoverage() from /earthwork/suggest's
-           contour_coverage; the sentence itself comes from ewCoverageText,
-           shared with the basis block beside the number and with the
-           printed report so the three cannot drift. -->
-      <div class="ew-coverage" id="ewCoverage" hidden></div>
-      <div class="ew-rows-head"><span>Contours <span class="card-n" id="ewRowsCount"></span></span>
-        <button id="ewAddRow" class="mini" title="Sheet prints no elevation on a contour? Click the line yourself and type the value (from the overview sheet)">+ Add contour</button></div>
-      <!-- THE REVIEW SURFACE. One chip per class of evidence, each with its
-           own count, so an operator can go straight to the rows nobody
-           printed and the rows a machine transcribed instead of reading 150
-           rows in elevation order. Rendered by renderEwFilters(). -->
-      <div class="ew-filters" id="ewFilters" hidden></div>
-      <div id="ewRows" class="ew-rows"></div>
-      <div id="ewSpots" class="ew-spots" hidden></div>
-      <div id="ewLayers" class="ew-layers">
-        <div class="ew-layers-head"><span>Existing layers to remove</span>
-          <button id="ewStrip" class="mini" title="Topsoil comes off first; thickness is from the soils report, not the plans">Strip topsoil</button>
-          <button id="ewAddEx" class="mini">+ add layer</button></div>
-        <div id="ewExLayers" class="ew-layer-rows"></div>
-        <div class="ew-place" id="ewPlace" title="Topsoil goes back over the ground you disturbed, less the buildings and the paving. What came off and is not put back is exported; putting back more than came off imports the difference. Leave the depth blank to keep the percent rule.">
-          <span>Put topsoil back</span>
-          <input id="ewPlaceDepth" type="number" min="0" max="24" step="1" placeholder="0">
-          <span>in deep, over the limit of work less</span>
-          <input id="ewPlaceLess" type="number" min="0" step="100" placeholder="0">
-          <span>SF of buildings &amp; paving</span>
-          <button id="ewPlaceUse" class="mini" hidden>use 0 SF</button>
-          <div class="ew-meta" id="ewPlaceNote"></div>
-        </div>
-        <div class="ew-layers-head"><span>Proposed layers (fill stack)</span>
-          <button id="ewAddPr" class="mini" title="What gets built on the proposed side (base, paving): the dig stops this much below the finish grade drawn">+ add layer</button></div>
-        <div id="ewPrLayers" class="ew-layer-rows"></div>
-        <div id="ewLayerOut" class="ew-layer-out"></div>
-      </div>
-      <div class="ew-area" id="ewArea">
-        <label for="ewAreaIn">Area for layer volumes</label>
-        <input id="ewAreaIn" type="number" min="0" step="100" placeholder="auto">
-        <span class="ew-unit">SF</span>
-        <span class="ew-area-note" id="ewAreaNote"></span>
-      </div>
-      <!-- Volumes are re-integrated server-side and cannot be rescaled on
-           the client, so a scale change after Calculate leaves them stale.
-           This says so and offers the redo. -->
-      <div id="ewStale" class="ew-stale" hidden></div>
-      <!-- Surface model. Between its contours a linear TIN is a flat plane,
-           which terraces a sheet whose labels are far apart in elevation;
-           the smooth model restores that relief but is clipped to the local
-           contour bracket so it cannot invent an elevation. Auto measures
-           the sheet's own label sparsity and picks. Whichever runs, the
-           basis line below the result names it. -->
-      <div class="ew-model" id="ewModel">
-        <label for="ewModelSel">Surface between contours</label>
-        <select id="ewModelSel">
-          <option value="auto">Auto (measure this sheet)</option>
-          <option value="linear">Linear TIN</option>
-          <option value="clamped_ct">Smooth, clamped</option>
-        </select>
-        <span class="ew-model-note" id="ewModelNote"></span>
-      </div>
-      <div class="ew-actions" id="ewActions">
-        <button id="ewCalc">Calculate cut &amp; fill</button>
-        <span id="ewResult" class="ew-result"></span>
-        <label class="ew-map-toggle" title="Paint where the dirt moves: cut blue, fill yellow; deeper = stronger"><input type="checkbox" id="ewMap"> Show cut/fill map</label>
-        <span id="ewMapLegend" class="ew-map-legend" hidden><span class="eml-bar"></span><span class="eml-txt"></span></span>
-        <label class="ew-map-toggle" id="ewMapNumsWrap" hidden title="Print the depth in every block of the map - the number the crew reads: cut red (−), fill blue (+), the mean over each block"><input type="checkbox" id="ewMapNums" checked> print depths</label>
-        <!-- The map's OWN refusal, in its own slot. /earthwork/map can
-             refuse when /earthwork answered 200 (a layers-only sheet has
-             layer volumes but no dz grid to paint), and writing that into
-             #ewResult wiped the layer explanation the operator had just
-             been given. Rendered by ewMapNote(). -->
-        <div class="ew-map-note" id="ewMapNote" hidden></div>
-      </div>
-      <!-- What the number rests on, printed beside the number, from the
-           fields the response already carries (existing_contours /
-           proposed_contours / area_sf / cell_ft) plus the spot grades this
-           client sent. Rendered by renderEwBasis(). -->
-      <div class="ew-basis off" id="ewBasis"></div>
-      <!-- WHAT BACKS THE NUMBER (CUTFILL-ACCURACY-SPEC.md stage 3): the
-           surface checked against the elevations this sheet prints as
-           points, the same rows through the other surface model and a
-           finer grid, and whether the region is the estimator's own line.
-           The volume kernel is exact on analytic truth, so these are
-           checks on the INPUTS - the only place a wrong number can come
-           from. Rendered by renderEwProof() from the reply's `proof`. -->
-      <div class="ew-proof off" id="ewProof"></div>
-      <!-- THE REQUIRED-INPUT CONTRACT. A cut/fill is only as good as
-           what it was told, and every item on this list was measured to
-           move a real sheet: elevations (Barn swings 89-144% across
-           which lines carry one), the limit of work (23% of Barn's
-           area), the strip (30% of C-04's cut), the dig depth (88%).
-           Supplied / assumed / missing, and READY only when nothing
-           required is either of the last two. Rendered by
-           renderEwReady() from the reply's `readiness`. -->
-      <div class="ew-ready off" id="ewReady"></div>
-      <!-- Consent. Calculating is looking; adding is a decision. Nothing
-           reaches the itemized takeoff (and therefore the priced report)
-           until this is pressed. -->
-      <div class="ew-take off" id="ewTake">
-        <button id="ewAdd">Add to takeoff</button>
-        <span class="ew-take-note" id="ewTakeNote"></span>
-      </div>
-      <div class="ew-balance" id="ewBalance">
-        <div class="ew-layers-head"><span>Material balance</span></div>
-        <label class="ew-bal-cut" title="Site cut goes back in as structural fill, one for one. Untick if it does not."><input type="checkbox" id="ewCutReuse" checked> Site cut is reusable as structural fill</label>
-        <div id="ewBalOut" class="ew-bal-out"></div>
-        <div class="ew-bal-factors">
-          <span>Multiply export volumes by</span><input id="ewFacExp" type="number" min="0" step="0.05" value="1">
-          <span>Multiply import volumes by</span><input id="ewFacImp" type="number" min="0" step="0.05" value="1">
-          <span>Material preset</span><select id="ewMatPreset"><option value="">— none (no factor) —</option></select>
-        </div>
-        <div class="ew-bal-note" id="ewBalNote"></div>
-      </div>
-    </div>
     <div id="trPanel" class="ew-panel" hidden>
       <div class="side-head" id="trHead"><h2>Pipe trench</h2>
         <button id="trClose" class="mini">close</button></div>
-      <div class="ew-hint" id="trHint">Pick the pipe run, set its size and invert depths, and adjust the
-        bedding rules to the spec. Depth interpolates start&rarr;end along each line; trench width =
-        pipe OD + clearance each side, growing with depth per the rules. Sides are vertical unless you
-        lay them back: a 1:1 layback adds a V of depth &times; depth per foot of run (a 6 ft trench adds
-        36 SF of section), and it goes to backfill, not bedding. Water and sewer here run about 6 ft
-        and are laid back; gas and electric usually are not &mdash; the Utility box fills those in.</div>
+      <div class="ew-hint" id="trHint">Pick a run &mdash; from the list or by clicking its line on the plan.
+        Depth is read off this sheet's profile where it has one (ground line to pipe invert at every
+        station, mapped onto the run); without a profile the typed end depths are used, and the panel
+        says which. Trench width is by pipe size: the OD plus a clearance each side (the preset, or the
+        set's printed detail), or the depth-class table. Bedding is an envelope round the pipe: so much
+        under it, the pipe, so much over it, at the trench width. Sides are vertical unless you lay them
+        back: a 1:1 layback adds a V of depth &times; depth per foot of run (a 6 ft trench adds
+        36 SF of section), and it goes to backfill, not bedding. The rows go in per run: LF per depth
+        band and pipe size, dig, bedding, backfill, and the structures of the system.</div>
       <div id="trBody" class="tr-body"></div>
-      <!-- Pierce's per-foot depth bands, read-only. Rendered by
-           renderTrBands() only after Calculate has run. Class .off, not the
-           hidden attribute: the trHead collapse handler writes el.hidden on
-           every id it owns and would un-hide an empty table on expand.
-           TYPED d0/d1 depths only - profile-DERIVED depths are forbidden
-           until the datum work (commit 5390b3f) is wired into profiles;
-           EXCAVATION-PLAN.md section 16. -->
+      <!-- A contractor's per-foot depth bands. Rendered by renderTrBands() after a
+           calculation. Class .off, not the hidden attribute: the trHead
+           collapse handler writes el.hidden on every id it owns and would
+           un-hide an empty table on expand. Since 2026-09-26 the bands come
+           off the sheet's PROFILE (the depth at every station, mapped onto
+           the run) when it has one, else the typed ends; the note under the
+           table says which, and the band rows go into the takeoff. -->
       <div id="trBandBox" class="tr-bands off">
         <div class="tr-bands-head" title="Pipe is priced by the foot, by how deep it is. The first band ends at 6 ft and the rest step 2 ft. Both are editable.">Depth bands (LF per band)</div>
         <div class="tr-bands-cfg">
@@ -741,8 +536,6 @@
           <span>ft</span>
         </div>
         <div id="trBandRows"></div>
-        <div class="tr-bands-note">From the typed start/end depths, interpolated linearly along the run
-          as of the last Calculate. Depths read off profile sheets are not wired in yet.</div>
       </div>
       <div class="ew-actions" id="trActions">
         <button id="trCalc">Calculate trench</button>
@@ -810,6 +603,30 @@
       <div id="symRows" class="ew-rows"></div>
       <div id="symTotal" class="sym-total" hidden></div>
       <div class="sym-foot"><button id="symAddAll" class="mini">Add every named mark</button></div>
+    </div>
+    <div id="flPanel" class="ew-panel" hidden>
+      <div class="side-head" id="flHead"><h2>Flooring &mdash; rooms by floor type</h2>
+        <button id="flClose" class="mini">close</button></div>
+      <div class="ew-hint" id="flHint"><b>Pick rooms</b> and click inside each room: the fill runs to the walls of the
+        line types you have <i>showing</i> (hide dimension strings and fixtures first; keep the walls) and bridges the
+        doors the engine found. If a room runs into the next one as drawn, <b>Close a gap</b> with two clicks across
+        the opening, or <b>Draw outline</b> yourself. Give each room a floor type; its colour paints the room on the
+        sheet. Each type becomes one square-foot row and one base/molding row (walls less the door openings), with
+        the rooms behind each row listed under it in the takeoff, the CSV and the report. A <b>waste %</b> on a type adds
+        its own row; a ceiling height read in the room (or typed) gives a <b>wall area</b> row (perimeter &times; height,
+        door openings out); a doorway shared by two rooms of different types counts a <b>transition strip</b>; and
+        <b>Walls by type</b> classes the wall line types by their CAD layer or legend name. Every fixture the lines
+        enclose inside a room is listed under it, named from its layer and size: <b>tubs and showers come out of the
+        flooring</b>, cabinets and everything else stay in unless you tick them, and <b>Deduct</b> takes out any other
+        shape by a click. Where the fill got a shape wrong, <b>Edit shape</b>: drag a room's corners, press on an edge to
+        add a corner there, double-click one to remove it &mdash; area and walls follow. <b>3D view</b> stands the rooms up
+        in their floor materials and colours, walls to the ceiling height.</div>
+      <div id="flTypes" class="fl-types"></div>
+      <div id="flBody" class="tr-body"></div>
+      <div id="flRows" class="ew-rows"></div>
+      <div class="ew-actions" id="flActions">
+        <span id="flResult" class="ew-result"></span>
+      </div>
     </div>
     <div id="stPanel" class="ew-panel" hidden>
       <div class="side-head" id="stHead"><h2>Structure &mdash; dig &amp; backfill</h2>
@@ -918,8 +735,18 @@
              filter that is still narrowing the list is never silent.
              renderScopeToggle() in app.js owns its text/title/state. -->
         <button id="scopeToggle" class="mini" aria-expanded="true" hidden>scope</button>
+        <!-- Walls drawn as two lines, counted once: asked for on demand
+             (twinsAsk in app.js), never on page load - the pairing is
+             O(n^2) work that belongs on a foundation plan only. -->
+        <button id="onceAskBtn" class="mini" hidden
+                title="Check this sheet for walls and footings drawn as two parallel lines, so each can be counted as one run. For foundation plans; a civil sheet answers why it is not offered.">walls once</button>
         <button id="allBtn" class="mini">all</button>
         <button id="noneBtn" class="mini">none</button>
+        <!-- ways back from all / none (INC-BULK in app.js) -->
+        <button id="incUndoBtn" class="mini" hidden
+                title="Put the ticks back the way they were before you clicked.">undo</button>
+        <button id="incSeedBtn" class="mini" hidden
+                title="Put back the keep / drop ticks the engine picked. Names and colors stay.">engine's picks</button>
       </div>
     </div>
     <div id="colorChips" class="color-chips"></div>
@@ -964,7 +791,7 @@
          (.canvas-status), which is bottom-CENTRED, re-centres on every
          selection, grows a second row whenever the hover readout shares
          it, and splits its width with four other controls. Measured live
-         on Oncor Cloudcrest engine page index 3 = printed C-04: across 14
+         on a substation set's engine page index 3 = printed C-04: across 14
          contours the chip's left edge moved 920.4 -> 1023.0 px and the
          whole row jumped 38 px upward the moment any style row was
          hovered. Nothing was ever clipped - the number simply never sat
@@ -976,7 +803,6 @@
          move it, and it is rendered for every selected line - including
          the ones with no elevation, which used to render nothing at all
          and were indistinguishable from a read that had not finished. -->
-    <div id="selElev" class="sel-elev" hidden></div>
     <!-- A RUN IN PROGRESS, WHERE THE EYE ALREADY IS. The only two places a
          detection announced itself were 12px of text in the status bar at
          the foot of the window and a grey chip in the sheet header - the
@@ -1120,11 +946,12 @@
       <button id="msClearBtn" class="tk" title="Clear the selection"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5" stroke-dasharray="3 2.6"/><path d="m9 9 6 6M15 9l-6 6"/></svg></button>
       </div>
       <span class="tk-sep"></span>
-      <button id="wzBtn" class="tk" title="Work area &mdash; drag one or more boxes around the part of the sheet that counts. The takeoff lists (style rows, itemized rows, CSV, approve export) count only length inside your boxes; detection is untouched and Clear restores everything. The earthwork and trench calculators keep their own limit-of-work boundary and are not masked."><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2.6"/></svg></button>
+      <button id="wzBtn" class="tk" title="Work area &mdash; drag one or more boxes around the part of the sheet that counts. The takeoff lists (style rows, itemized rows, CSV, approve export) count only length inside your boxes; detection is untouched and Clear restores everything. Cut / fill and Trench keep their own limit of work and are not masked."><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2" stroke-dasharray="3 2.6"/></svg></button>
       <button id="wzClearBtn" class="tk danger" hidden title="Clear the work area &mdash; every line counts in full again"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="12" height="12" rx="2" stroke-dasharray="3 2.6"/><path d="m14.6 14.6 6.4 6.4M21 14.6l-6.4 6.4"/></svg></button>
       <button id="trimBtn" class="tk" title="Trim at a match line (T) &mdash; click the match line on the sheet (or two points to draw one), then click the side to keep. Every shown line is cut there and the part beyond it leaves the count, so a run that continues on the next sheet is not counted twice. Ctrl+Z puts it all back."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18" stroke-dasharray="3 2.4"/><path d="M3 8h9M3 16h9"/><path d="M15 8h3M15 16h3" opacity=".35"/></svg></button>
       <span class="tk-sep"></span>
       <button id="faithfulBtn" class="tk active" title="Line rendering (F): ON draws every line with its true dash pattern and printed weight; OFF draws bold uniform strokes that are easier to see. Display only — no count or length changes."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h6M12 8h3M18 8h3M3 16h18"/></svg></button>
+      <button id="rotateBtn" class="tk" title="Rotate the view a quarter turn clockwise — for a sheet that was scanned or exported sideways. Display only: every length, area and count is unchanged, and the turn is remembered for this page."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 3v5h-5"/></svg></button>
       <button id="kbdBtn" class="tk" title="Keyboard shortcuts — every key and gesture the app answers to (?)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9a3 3 0 1 1 4.5 2.6c-1 .6-1.5 1.2-1.5 2.4"/><circle cx="12" cy="18" r=".9" fill="currentColor" stroke="none"/></svg></button>
     </div>
     <div class="canvas-status">
@@ -1215,61 +1042,23 @@
     </div>
   </div>
 </div>
-<div id="gzModal" class="gz-modal" hidden>
-  <div class="gz-m-card">
-    <div class="gz-m-head">
-      <h2 id="gzMTitle">Zone</h2>
-      <button id="gzMClose" class="mini" title="Close without saving (Esc)">&#10005;</button>
-    </div>
-    <div class="gz-m-exist" id="gzMExist"></div>
-    <div class="gz-m-design">
-      <label class="gz-m-row"><input type="radio" name="gzMode" value="pad" checked>
-        <span>Pad at</span>
-        <input id="gzPadElev" type="number" step="0.1" class="gz-num">
-        <span>ft</span></label>
-      <label class="gz-m-row"><input type="radio" name="gzMode" value="plane">
-        <span>Plane:</span>
-        <input id="gzPlElev" type="number" step="0.1" class="gz-num">
-        <span>ft at the zone centre, falling</span>
-        <input id="gzPlSlope" type="number" step="0.1" min="0" value="1.0" class="gz-num gz-sm">
-        <span>% toward</span>
-        <input id="gzPlAz" type="number" step="1" value="0" class="gz-num gz-sm">
-        <span>&deg;</span></label>
-      <div class="gz-m-note">0&deg; is up the page, 90&deg; is right. Check the
-        sheet's north arrow.</div>
-      <label class="gz-m-row"><input type="radio" name="gzMode" value="balance">
-        <span>Balance &mdash; solve the pad elevation where cut equals fill</span></label>
-      <label class="gz-m-row"><input type="radio" name="gzMode" value="strip_only">
-        <span>Strip only &mdash; no design surface, just the strip volume</span></label>
-      <label class="gz-m-row"><input type="radio" name="gzMode" value="proposed">
-        <span>Proposed contours on this sheet &mdash; the design the sheet draws</span></label>
-      <div class="gz-m-note">The PROP contours and spot grades against the ground now,
-        inside this zone only. One zone per building. Ground the design does not reach is
-        left out, and coverage says how much it reached.</div>
-    </div>
-    <div class="gz-m-strip">
-      <label for="gzStrip">Topsoil strip</label>
-      <input id="gzStrip" type="number" min="0" step="1" class="gz-num gz-sm">
-      <span>in</span>
-      <span class="gz-m-note" id="gzStripWhy"></span>
-    </div>
-    <div class="gz-m-strip">
-      <label for="gzBaseIn">Base under the finished grade</label>
-      <input id="gzBaseIn" type="number" min="0" step="1" value="0" class="gz-num gz-sm">
-      <span>in of</span>
-      <input id="gzBaseName" type="text" value="Base" maxlength="30" class="gz-num">
-      <span class="gz-m-note">The elevation above is the finished grade. The dig stops this
-        much lower, and the base gets its own row (zone area &times; thickness). 0 = none.</span>
-    </div>
-    <div class="gz-m-live" id="gzMLive"></div>
-    <div class="gz-m-actions">
-      <button id="gzMSave">Save zone</button>
-      <button id="gzMCancel" class="mini">Cancel</button>
-      <span class="gz-m-note">Saving keeps the zone on this sheet; it reaches
-        the priced takeoff only via its own &ldquo;Add to takeoff&rdquo; in the
-        panel list.</span>
-    </div>
+<!-- CUT / FILL: the cut / fill engine, embedded. It replaced the earthwork
+     calculator: the engine reads the sheet's contours and spot grades itself,
+     on its own page (served under /cutfill by this same service), and reports
+     its totals up to this app. The bar is this app's: the totals as reported,
+     and "Add to takeoff" - the consent step that turns them into rows. -->
+<div id="cfStage" class="cf-stage" hidden>
+  <div class="cf-bar">
+    <button id="cfBack" class="mini" title="Back to the sheet (Esc)">&larr; Sheet</button>
+    <span class="cf-title">Cut / fill</span>
+    <button id="cfSheets" class="mini" title="Add more sheets of this plan set to the cut / fill">Sheets&hellip;</button>
+    <span class="cf-sum" id="cfSum"></span>
+    <span class="cf-spacer"></span>
+    <span class="cf-note" id="cfNote"></span>
+    <button id="cfAdd" disabled title="Put these volumes into the itemized takeoff as Site Cut and Site Fill rows, with the net as Export Cut or Import Structural (bank measure, no swell or shrink factor). Nothing is priced until this is pressed.">Add to takeoff</button>
+    <button id="cfOpenTab" class="mini" title="Open the cut / fill page in its own browser tab">Open in a tab</button>
   </div>
+  <iframe id="cfFrame" class="cf-frame" title="Cut / fill engine" src="about:blank"></iframe>
 </div>
 <!-- THE LEGEND SHEET, AS A DROP TARGET.
      From the 2026-09-02 screen share: this control was a prompt() asking for
@@ -1279,6 +1068,25 @@
      on the hosted box the server refuses paths outright, so for everyone else
      there was no way in at all. Drop or pick a PDF now; the typed path is
      kept, second, for the owner's own use. -->
+<!-- SHEETS FOR CUT / FILL: every sheet the job needs, in one open (2026-09-28: going back to Detect and open
+     Cut / fill from each sheet was the question a client would ask first). -->
+<div id="cfSheetsModal" class="lg-modal" hidden>
+  <div class="lg-card" role="dialog" aria-modal="true" aria-labelledby="cfsTitle">
+    <div class="lg-head">
+      <h2 id="cfsTitle">Sheets for cut / fill</h2>
+      <button id="cfsClose" class="mini" title="Close (Esc)">&#10005;</button>
+    </div>
+    <p class="lg-lead">Tick every grading sheet this job needs. Each one is read as old and new ground
+      (&ldquo;both&rdquo;); you can change a sheet in the Sheets card later. A sheet not detected yet is
+      detected first. Lines you erased or named in review go along for the sheet on screen only; the
+      other sheets go as detected.</p>
+    <div id="cfsList" class="cfs-list"></div>
+    <div class="lg-actions">
+      <button id="cfsOpen">Open cut / fill</button>
+      <span class="lg-note" id="cfsMsg"></span>
+    </div>
+  </div>
+</div>
 <div id="legendModal" class="lg-modal" hidden>
   <div class="lg-card" role="dialog" aria-modal="true" aria-labelledby="lgTitle">
     <div class="lg-head">
@@ -1310,7 +1118,10 @@
   </div>
 </div>
 <datalist id="legendVocab"></datalist>
-<script src="ew_defaults.js?v=1"></script>
-<script src="app.js?v=209"></script>
+<script src="app.js?v=298"></script>
+<script src="shell.js?v=17"></script>
+<script src="team.js?v=6"></script>
+<script src="responsive.js?v=2"></script>
+<script src="dock.js?v=5"></script>
 </body>
 </html>

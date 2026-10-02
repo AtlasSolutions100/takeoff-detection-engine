@@ -156,9 +156,7 @@ const tolAt = (k) => S.polyCloseTolFrom(k, IMG_DPI);
 // 5. WIRING - all three polygons, one predicate, and the preview
 // =========================================================================
 // every hand-drawn polygon's click handler tests BEFORE it pushes a corner
-for (const [fn, finish] of [["ewBoundDrawClick", "ewBoundDrawFinish"],
-                            ["gzDrawClick", "gzDrawFinish"],
-                            ["stDrawClick", "stFinishDraw"]]) {
+for (const [fn, finish] of [["stDrawClick", "stFinishDraw"]]) {
   const i = src.indexOf(`function ${fn}(`);
   check(i >= 0, `${fn} exists`);
   const body = src.slice(i, src.indexOf("\n}", i));
@@ -177,15 +175,15 @@ for (const [fn, finish] of [["ewBoundDrawClick", "ewBoundDrawFinish"],
   const i = src.indexOf("function polyActiveDraft()");
   check(i >= 0, "polyActiveDraft() exists");
   const body = src.slice(i, src.indexOf("\n}", i));
-  for (const t of ["ew-bound-draw", "gz-draw", "st-draw"])
+  for (const t of ["st-draw"])
     check(body.includes(`"${t}"`), `polyActiveDraft knows about ${t}`);
 }
 // ...and the preview dies at the state.tool CHOKEPOINT, not at each of the
 // ~20 places that can take a tool away. That is the lesson syncCursor's own
 // comment already records; the close-snap had to learn it too.
 {
-  check(/const POLY_DRAW_TOOLS = new Set\(\["ew-bound-draw", "gz-draw", "st-draw"\]\)/
-    .test(src), "POLY_DRAW_TOOLS names the same three tools, once");
+  check(/const POLY_DRAW_TOOLS = new Set\(\["st-draw", "fl-draw"\]\)/
+    .test(src), "POLY_DRAW_TOOLS names the two polygon tools (structure, flooring), once");
   const i = src.indexOf("function syncCursor()");
   const body = src.slice(i, src.indexOf("\n}", i));
   check(/POLY_DRAW_TOOLS\.has\(state\.tool\)/.test(body),
@@ -205,8 +203,8 @@ for (const [fn, finish] of [["ewBoundDrawClick", "ewBoundDrawFinish"],
 // the preview is armed on hover for all three
 {
   const n = (src.match(/polySnapHover\(/g) || []).length;
-  check(n >= 4, `polySnapHover is called from all three mousemove handlers (${n} refs incl. its definition)`);
-  for (const h of ["state.ewBoundHover", "state.gzHover", "state.st.hover"]) {
+  check(n >= 2, `polySnapHover is called from the structure draw's mousemove handler (${n} refs incl. its definition)`);
+  for (const h of ["state.st.hover"]) {
     const i = src.indexOf(h + " = ptFromEvent(e);");
     check(i >= 0, `${h} is set on mousemove`);
     check(src.slice(i, i + 200).includes("polySnapHover("),
@@ -216,32 +214,28 @@ for (const [fn, finish] of [["ewBoundDrawClick", "ewBoundDrawFinish"],
 // ...and the preview is what the canvas draws: the band goes to the FIRST
 // corner, and the ring marks it, in every one of the three
 {
-  check((src.match(/drawPolyCloseRing\(/g) || []).length >= 4,
-    "drawPolyCloseRing is drawn for all three drafts");
-  for (const first of ["state.ewBoundDraft[0]", "state.gzDraft[0]", "P[0]"])
+  check((src.match(/drawPolyCloseRing\(/g) || []).length >= 2,
+    "drawPolyCloseRing is drawn for the structure draft");
+  for (const first of ["P[0]"])
     check(src.includes(`drawPolyCloseRing(${first},`),
       `the ring lands on ${first}, the corner that will be closed onto`);
   // the rubber band retargets, which is what makes the snap PREDICTABLE
-  check(/if \(state\.polySnap\)\s*\n\s*ctx\.lineTo\(state\.ewBoundDraft\[0\]/.test(src),
-    "limit of work: the rubber band runs to the first corner while snapping");
-  check(/if \(state\.polySnap\)\s*\n\s*ctx\.lineTo\(state\.gzDraft\[0\]/.test(src),
-    "grading zone: same");
+  // (the limit-of-work and grading-zone drafts left with the earthwork calculator, 2026-09-25)
   check(/if \(st\.hover && !state\.polySnap\) ctx\.lineTo/.test(src),
     "structure outline: the free-hover leg stands down while snapping");
 }
 // the preview never survives the tool that owns it
 {
   const n = (src.match(/polySnapClear\(\)/g) || []).length;
-  check(n >= 12, `polySnapClear is called on every arm/finish/cancel/Esc path (${n})`);
-  for (const fn of ["ewBoundDrawFinish", "ewBoundDrawCancel",
-                    "gzDrawFinish", "gzDrawCancel", "stFinishDraw", "stDisarm"]) {
+  check(n >= 4, `polySnapClear is called on every arm/finish/cancel/Esc path (${n})`);
+  for (const fn of ["stFinishDraw", "stDisarm"]) {
     const i = src.indexOf(`function ${fn}(`);
     check(i >= 0 && src.slice(i, src.indexOf("\n}", i)).includes("polySnapClear()"),
       `${fn} clears the preview`);
   }
   // an Esc that pops a corner can take the draft below 3, where nothing closes
-  check((src.match(/\.pop\(\);\s*\n\s*polySnapClear\(\)/g) || []).length >= 3,
-    "all three Esc backups clear the preview after popping a corner");
+  check((src.match(/\.pop\(\);\s*\n\s*polySnapClear\(\)/g) || []).length >= 1,
+    "the Esc backup clears the preview after popping a corner");
 }
 // the operator is TOLD the close exists, in all three tools, from one string
 {
@@ -250,7 +244,7 @@ for (const [fn, finish] of [["ewBoundDrawClick", "ewBoundDrawFinish"],
   const line = src.slice(i, src.indexOf(";", i));
   check(/click the first corner/.test(line),
     "...and it says clicking the first corner closes the shape");
-  check((src.match(/POLY_CLOSE_HINT/g) || []).length >= 7,
+  check((src.match(/POLY_CLOSE_HINT/g) || []).length >= 3,
     "...and every arming and per-corner message uses it");
   check(!/Enter\/double-click closes, Esc backs up/.test(src),
     "no tool is left telling the operator the old, incomplete story");

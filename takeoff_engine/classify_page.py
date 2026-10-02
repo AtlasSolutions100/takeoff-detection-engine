@@ -13,14 +13,14 @@ sheet, or a product-selection board is a normal vector sheet decorated with
 a COLLAGE of photographs, and the SUM of those photo bboxes crosses any
 coverage threshold while none of the sheet's linework is in pixels at all.
 Tracing such a page invents geometry that never existed as linework:
-measured on Thielen A0.0 (page index 0), the tracer returned 107
+measured on Res-C A0.0 (page index 0), the tracer returned 107
 non-annotation chains / 23,391.2 pt in 64.3 s, of which 26 were parcel
 boundaries traced inside a vicinity-map screenshot and 10 were the outlines
 of the letter "D" in a heading.
 
 Testing the largest SINGLE image is not enough either: PDF producers split
-scans into strips (Philips Custom Home p0 is 118 vertical bands, Bozeman
-Yards p114 is 9 horizontal ones), and no single band is large. Hence
+scans into strips (a custom-home scan p0 is 118 vertical bands, a mixed-use
+set's p114 is 9 horizontal ones), and no single band is large. Hence
 scan_coverage below - the largest contiguous block of image tiles that
 actually fills its own bounding rectangle. See
 out/verify/2026-08-22/misroute/VERIFY.md for the original measurement and
@@ -57,13 +57,13 @@ class PageClass:
 MIN_VECTOR_PATHS = 200
 # Above this SCAN coverage the sheet is that image: a scan. Unchanged at 0.5,
 # and it did not need tuning - what changed is the quantity it is applied to.
-# Measured over every page of ../client_meet (208) and ../TakeoffPro AI
+# Measured over every page of the client folders (208) and ../TakeoffPro AI
 # (6,494 readable pages) with path_count < MIN_VECTOR_PATHS: pages kept
 # raster land at scan_coverage 0.551-1.000 (the 0.551 is a two-tile scan of
-# federal form SF-1444, White Sulfer p319) and every page this test demotes
+# federal form SF-1444, a sewer project p319) and every page this test demotes
 # reads 0.005-0.437 (the 0.437 is Northwest Pipe p25, a valve-catalogue
 # dimension page whose sections are one bitmap - not a plan sheet). In
-# client_meet the nearest demoted miss is Thielen p60, an interior-fixture
+# the client folders the nearest demoted miss is Res-C p60, an interior-fixture
 # photo board whose touching photos are rejected by the solidity test below,
 # at 0.347. 0.5 sits 1.14x above the highest demoted page and 1.10x below
 # the lowest kept scan - that 1.10x is the tightest number in this file, and
@@ -73,11 +73,11 @@ RASTER_COVERAGE = 0.5
 HYBRID_COVERAGE = 0.05
 # A block of image tiles only counts as a scan when the tiles FILL the
 # rectangle they span. Split scans abut exactly, so they measure solidity
-# 1.000 (118-band Philips, 26-band HURRICANE, 9-band White Sulfer, Bozeman,
+# 1.000 (118-band custom home, 26-band storage site, 9-band sewer, mixed-use,
 # and 2-tile producers alike); 41 of the two corpora's 6,702 pages are kept
 # raster ONLY by this block test - a largest-single-image rule would send
 # them to the vector path, which yields nothing on them (paths 0-6). The one
-# photo collage whose images touch into a big block, Thielen p60, measures
+# photo collage whose images touch into a big block, Res-C p60, measures
 # 0.780 because the clump is ragged. 0.95 sits 5% below the structural value
 # and 22% above the collage.
 TILED_SOLIDITY = 0.95
@@ -96,7 +96,7 @@ def _tiled_block_coverage(boxes: list, clip: pymupdf.Rect,
     Answers "is some rectangular region of this sheet nothing but pixels?"
     without decoding a single image. Runs only on the pages where the cheap
     tests are ambiguous (images cover the sheet in total, but no one image
-    does): 97 of the 6,702 pages of ../client_meet + ../TakeoffPro AI.
+    does): 97 of the 6,702 pages of the client folders + ../TakeoffPro AI.
     """
     import cv2
     import numpy as np
@@ -137,21 +137,21 @@ def classify_page(page: pymupdf.Page) -> PageClass:
     # reports bboxes in UNROTATED space (the space get_drawings() uses) while
     # page.rect is rotation-aware, so on a /Rotate 90 or 270 sheet this clip
     # throws away the part of the image that sticks out of the rotated rect
-    # and both coverages below read low by up to min(w,h)/max(w,h) (Thielen
+    # and both coverages below read low by up to min(w,h)/max(w,h) (Res-C
     # p16/p17, full-page scans on /Rotate 90 sheets: 0.714, not 1.000). The
     # correct clip is `page.rect * page.derotation_matrix`. It is NOT applied
     # because HYBRID_COVERAGE (0.05) was calibrated against the low number:
     # correcting it lifts 14 /Rotate 270 plan-corpus sheets from vector to
     # hybrid, and on four of them extract_hybrid_image_units() traces an
-    # embedded screenshot of a schedule table as linework (Bozeman Yards p36:
+    # embedded screenshot of a schedule table as linework (a mixed-use set p36:
     # +46 chains, +11,037.3 pt = 3,065.9 ft at its 1"=20'). Until the hybrid
     # tracer can tell a pasted table/photo from a scanned drawing, the low
     # measurement is the safer product. Deferred, with the page list, in
     # out/verify/2026-08-22/misroute-split/DEFERRED-derotation-clip.md.
     # The routing below does not need the correction: measured over all
-    # 6,702 readable pages of ../client_meet + ../TakeoffPro AI, every
+    # 6,702 readable pages of the client folders + ../TakeoffPro AI, every
     # rotated page kept as raster still reads scan_coverage >= 0.647 under
-    # this clip (floor: Million Air p72 and Bid Tab Example p0, both
+    # this clip (floor: an aviation set p72 and Bid Tab Example p0, both
     # /Rotate 270), and the raster set is page-for-page identical to the one
     # the corrected clip produces.
     clip = page.rect
@@ -179,7 +179,7 @@ def classify_page(page: pymupdf.Page) -> PageClass:
     # A slab of pixels covering the sheet = a scan, and only a scan belongs on
     # the raster tracer. Testing the SUM instead sent every photo-collage
     # sheet there (see the module docstring); testing text or path counts
-    # instead would send the OCR'd, vector-ruled scans in Bill/Window -
+    # instead would send the OCR'd, vector-ruled scans in a client's Window -
     # Storefront - Door schedules.pdf (11,838 text chars and 107 table rules
     # over a full-page 150-dpi image) to the vector path, which cannot see
     # their content at all.
@@ -194,7 +194,7 @@ def classify_page(page: pymupdf.Page) -> PageClass:
         # rendering sheet, an estimate form, or a near-empty page. Whatever
         # linework it has is already vector, so read that and trace nothing.
         # (Was: "raster if img_area > 0", which made a firm's logo enough to
-        # hand the whole page to the tracer - that is how the Beaumont
+        # hand the whole page to the tracer - that is how a client's
         # estimate PDF, 0.5% image coverage, ended up being traced.)
         kind = "vector"
 

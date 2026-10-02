@@ -1,9 +1,9 @@
 """Filled AREA regions: the square-foot takeoff the engine could not do.
 
 Concrete, patio, walking path, gravel parking, pool, water feature - an
-estimator buys these by the square foot, never by the linear foot. Beaumont
-Excavating's own Estimate #853 prices "Paths To Subgrade 22,796 SF @ $3.00",
-"Slab Prep 9,237 SF @ $5.50", "Gravel Parking area 2,500 SF" (client
+estimator buys these by the square foot, never by the linear foot. A client
+excavator's own estimate prices "Paths To Subgrade" by the square foot,
+"Slab Prep" by the square foot, "Gravel Parking area" in SF (client
 document, not an industry prior). Before this module the engine could only
 offer a perimeter, so a filled hardscape region reported as "20 LF".
 
@@ -16,7 +16,7 @@ path is not edited at all and the gate is protected BY CONSTRUCTION rather
 than by testing. The duplicated ~40 lines of path walking are the price and
 they are worth it. `extract.fill_boxes()` already sets this precedent.
 
-WHAT IT DOES AND DOES NOT SEE (measured, Barn Civil engine page index 1)
+WHAT IT DOES AND DOES NOT SEE (measured, Res-A civil engine page index 1)
 ----------------------------------------------------------------------------
 SOLID fills only - PDF path types 'f' and 'fs'. That is slice 1.
 
@@ -45,14 +45,14 @@ paper space the layer means nothing. Three signals, in confidence order:
   3. LAYER - the CAD layer name tail, as the style list already does.
 
 A legend class with NO matching region is reported in `unmatched_legend`
-with no quantity at all - never a zero, never a guess. On Barn Civil p1 the
+with no quantity at all - never a zero, never a guess. On Res-A civil p1 the
 legend is a DOCUMENT-WIDE key: PROPOSED WATER FEATURE and EXISTING MAPPED
 WETLANDS are named there but drawn nowhere on the sheet.
 
 SCALE PROVENANCE
 ----------------------------------------------------------------------------
 Every area carries the scale it was computed with, and `scale.tag_check`
-reports what the sheet's own printed areas imply. On Barn Civil p1 the
+reports what the sheet's own printed areas imply. On Res-A civil p1 the
 detected scale is 5.167 ft/inch while 13 printed tags all imply 20.00
 ft/inch - a 15.0x area error the reader must surface, not hide. Areas are
 also emitted in raw pt so a consumer can rescale without re-detecting.
@@ -75,12 +75,12 @@ WHITE_MIN = 0.92
 # scale-derived floor would then either hide real regions (too big) or flood
 # the list with symbol confetti (too small). A paper floor cannot do either.
 # 324 pt2 is 25 SF at 1"=20', 6.3 SF at 1"=10', 100 SF at 1"=40' - all inside
-# "is this worth its own takeoff row", and far above the confetti (Barn Civil
+# "is this worth its own takeoff row", and far above the confetti (Res-A civil
 # p1 carries 4,992 tree-stem fills averaging 0.33 pt2 each).
 MIN_AREA_PT2 = 324.0
 
 # A legend swatch is a short wide bar with its label immediately to the
-# right. Measured on Barn Civil p1: every swatch is 121.0 x 15.1 pt and its
+# right. Measured on Res-A civil p1: every swatch is 121.0 x 15.1 pt and its
 # text starts 9.3 pt past the bar's right edge.
 #
 # Shape alone is NOT enough - measured: it also matched 36 building floor-
@@ -104,7 +104,7 @@ FURNITURE_RE = re.compile(r"(?i)ANNO|TTLB|TITLE|\bTXT\b|TEXT|BORDER|LOGO")
 # list. Regions are emitted largest-first.
 MAX_REGIONS = 400
 
-# Printed-tag agreement window. The 13 tags on Barn Civil p1 agree with
+# Printed-tag agreement window. The 13 tags on Res-A civil p1 agree with
 # shoelace to ratio 1.000, so anything past a couple of percent is a real
 # disagreement (wrong scale, or the tag belongs to a different region).
 TAG_TOL_PCT = 2.0
@@ -166,6 +166,197 @@ def _shoelace(ring) -> float:
     return abs(a) / 2.0
 
 
+def _winding_edges(a, b, x: float, y: float) -> int:
+    """Winding number around (x, y) of the edges a[i] -> b[i]."""
+    cross = (b[:, 0] - a[:, 0]) * (y - a[:, 1]) - (x - a[:, 0]) * (b[:, 1] - a[:, 1])
+    up = (a[:, 1] <= y) & (b[:, 1] > y) & (cross > 0)
+    down = (a[:, 1] > y) & (b[:, 1] <= y) & (cross < 0)
+    return int(up.sum() - down.sum())
+
+
+# COST GUARD for _painted. Two exact methods, cheapest first, and a stated
+# refusal past both - never an unbounded computation, never a silent guess.
+#   nest  - every subpath is a simple ring and no two CROSS (they are
+#           disjoint, touch, or one encloses the other). Exact by ring
+#           arithmetic: no noding. Bounded by the number of bbox-overlapping
+#           ring pairs it must classify.
+#   node  - rings cross or self-intersect: node every edge into faces and
+#           keep a face iff the fill rule paints it. Its cost follows the
+#           number of edge contacts (touches + crossings: up to the SQUARE
+#           of the edge count), so those are counted first and noding runs
+#           only below NODE_MAX_HITS (and NODE_MAX_EDGES).
+# Every pair count is taken in chunks and stops at its cap, so even the
+# counting is bounded. Measured over the 6,665-page corpus and at each cap
+# with adversarial synthetic paths (core-cutfill out/verify/2026-10-02/
+# areas-half/COST.md). A refused fill is listed with its reason and NO
+# number - never a partial or guessed figure.
+NEST_MAX_RINGS = 20000
+NEST_MAX_PAIRS = 200000
+NODE_MAX_EDGES = 8000
+NODE_MAX_HITS = 20000
+_CHUNK = 256
+
+
+def _pairs(tree, geoms, cap):
+    """Unique (i, j), i < j, of geoms whose shapes intersect, or None once
+    there are more than `cap` - counted chunk by chunk, so a pathological
+    path costs at most one chunk past the cap, never the full square."""
+    pi, pj, n = [], [], 0
+    for s in range(0, len(geoms), _CHUNK):
+        qi, qj = tree.query(geoms[s:s + _CHUNK], predicate="intersects")
+        qi = qi + s
+        m = qj > qi
+        n += int(np.count_nonzero(m))
+        if n > cap:
+            return None
+        pi.append(qi[m]); pj.append(qj[m])
+    if not pi:
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+    return np.concatenate(pi), np.concatenate(pj)
+
+
+def _painted(rings, even_odd: bool):
+    """The region a multi-subpath fill actually paints, by the PDF fill rule.
+
+    A path is NOT "largest ring minus whatever sits inside it". Measured on
+    Loves Lane C4.0 p0: every P1-BLDG-HATCH fill is ONE path of TWO
+    triangles (a CAD SOLID quad split on its diagonal, opposite windings,
+    nonzero rule). Keeping only the largest ring reported 11,625 SF for a
+    23,248 SF building - the second triangle is neither the outer ring nor
+    inside it, so it was dropped with no trace.
+
+    Returns (area_pt2 or None, shapely geometry or None, method). A None
+    area means REFUSED: method then says why, and the caller must show it.
+    Zero-area / degenerate subpaths paint nothing and are dropped first."""
+    import shapely
+    from shapely.geometry import Polygon
+    # a zero-area SIMPLE ring (a line drawn there and back) paints nothing;
+    # a zero-shoelace self-crossing ring (an even bow-tie) paints both lobes
+    keep_r = [r for r in rings if len(set(r)) >= 3
+              and (_shoelace(r) > 1e-9 or not _simple_ring(r))]
+    if not keep_r:
+        return 0.0, None, "empty"
+    if len(keep_r) > NEST_MAX_RINGS:
+        return None, None, f"too complex: {len(keep_r):,} subpaths"
+    polys = np.asarray([Polygon(r) for r in keep_r], dtype=object)
+    simple = bool(np.all(shapely.is_valid(polys)))
+    crossing = not simple
+    pi = pj = np.zeros(0, dtype=int)
+    i_in_j = j_in_i = None
+    if simple:
+        got = _pairs(shapely.STRtree(polys), polys, NEST_MAX_PAIRS)
+        if got is None:
+            return None, None, (f"too complex: over {NEST_MAX_PAIRS:,} "
+                                f"overlapping subpath pairs")
+        pi, pj = got
+        if len(pi):
+            A = polys
+            disjoint = shapely.relate_pattern(A[pi], A[pj], "F********")
+            i_in_j = shapely.covers(A[pj], A[pi])
+            j_in_i = shapely.covers(A[pi], A[pj])
+            crossing = bool(np.any(~disjoint & ~i_in_j & ~j_in_i))
+    if not crossing:
+        return _nest(keep_r, polys, pi, pj, i_in_j, j_in_i, even_odd)
+    n_edges = sum(len(r) for r in keep_r)
+    if n_edges > NODE_MAX_EDGES:
+        return None, None, (f"too complex: {len(keep_r):,} crossing subpaths, "
+                            f"{n_edges:,} edges")
+    a = np.concatenate([np.asarray(r, dtype=float) for r in keep_r])
+    b = np.concatenate([np.roll(np.asarray(r, dtype=float), -1, axis=0)
+                        for r in keep_r])
+    segs = shapely.linestrings(np.stack([a, b], axis=1))
+    if _pairs(shapely.STRtree(segs), segs, NODE_MAX_HITS) is None:
+        return None, None, (f"too complex: {len(keep_r):,} crossing subpaths, "
+                            f"over {NODE_MAX_HITS:,} edge contacts")
+    return _node(keep_r, even_odd)
+
+
+def _nest(rings, polys, pi, pj, i_in_j, j_in_i, even_odd):
+    """Exact painted area of simple, non-crossing rings: each ring's own
+    region (itself minus its direct children) is painted iff the fill rule
+    holds for the winding summed down its chain of enclosing rings.
+    Identical twin rings nest by index, so even-odd cancels them and
+    nonzero keeps one - which is what a renderer does."""
+    from shapely.ops import unary_union
+    n = len(rings)
+    area = [_shoelace(r) for r in rings]
+    sign = []
+    for r in rings:
+        s = 0.0
+        for k in range(len(r)):
+            x0, y0 = r[k]
+            x1, y1 = r[(k + 1) % len(r)]
+            s += x0 * y1 - x1 * y0
+        sign.append(1 if s > 0 else -1)
+    # rank: bigger first, then index - a container always ranks earlier
+    rank = sorted(range(n), key=lambda k: (-area[k], k))
+    pos = {k: t for t, k in enumerate(rank)}
+    parent = [-1] * n
+    if i_in_j is not None:
+        for a, b, ab, ba in zip(pi.tolist(), pj.tolist(),
+                                i_in_j.tolist(), j_in_i.tolist()):
+            for child, cont in ((a, b), (b, a)):
+                ok = ab if (child, cont) == (a, b) else ba
+                if not ok or pos[cont] > pos[child]:
+                    continue
+                p = parent[child]
+                if p < 0 or pos[cont] > pos[p]:
+                    parent[child] = cont      # the nearest enclosing ring
+    wind = [0] * n
+    for k in rank:
+        wind[k] = sign[k] + (wind[parent[k]] if parent[k] >= 0 else 0)
+    kids = [[] for _ in range(n)]
+    for k in range(n):
+        if parent[k] >= 0:
+            kids[parent[k]].append(k)
+    total, pieces = 0.0, []
+    for k in range(n):
+        w = wind[k]
+        if not ((w % 2 != 0) if even_odd else (w != 0)):
+            continue
+        own = area[k] - sum(area[c] for c in kids[k])
+        if own <= 1e-9:
+            continue
+        total += own
+        g = polys[k]
+        if kids[k]:
+            g = g.difference(unary_union([polys[c] for c in kids[k]]))
+        pieces.append(g)
+    if not pieces:
+        return 0.0, None, "nest"
+    return total, unary_union(pieces), "nest"
+
+
+def _node(rings, even_odd):
+    """Exact painted area of crossing / self-intersecting rings: node every
+    edge into faces, keep a face iff the fill rule paints it. Overlapping
+    subpaths are counted once by construction (a face is a face)."""
+    from shapely.geometry import LineString
+    from shapely.ops import polygonize, unary_union
+    lines = [LineString(list(r) + [r[0]]) for r in rings]
+    a = np.concatenate([np.asarray(r, dtype=float) for r in rings])
+    b = np.concatenate([np.roll(np.asarray(r, dtype=float), -1, axis=0)
+                        for r in rings])
+    keep = []
+    for f in polygonize(unary_union(lines)):
+        p = f.representative_point()
+        w = _winding_edges(a, b, p.x, p.y)
+        if (w % 2 != 0) if even_odd else (w != 0):
+            keep.append(f)
+    if not keep:
+        return 0.0, None, "node"
+    u = unary_union(keep)
+    return float(u.area), u, "node"
+
+
+def _simple_ring(ring) -> bool:
+    """True when the ring does not cross itself, so its shoelace IS the
+    area it paints. A self-crossing ring (a bow-tie) cancels its lobes in
+    the shoelace sum while a renderer paints both."""
+    from shapely.geometry import Polygon
+    return Polygon(ring).is_valid
+
+
 def _ring_perimeter(ring) -> float:
     L = 0.0
     n = len(ring)
@@ -206,7 +397,7 @@ def _clean_name(text: str, max_words: int = 6) -> str:
 
     Words are gathered by y-band, and on a CAD sheet two unrelated labels can
     interleave in x on one band ("CONC. PAVER PATIO;" + "RE. TO STRUCTURAL"
-    came back merged on Barn Civil p1). Contiguity fixes the far-apart case
+    came back merged on Res-A civil p1). Contiguity fixes the far-apart case
     but not the interleaved one, so anything still carrying measurement
     debris after this filter is reported as UNNAMED rather than as a wrong
     name - an unnamed row the reviewer types over is honest; a plausible
@@ -257,7 +448,7 @@ def _area_tags(page: pymupdf.Page, rot) -> list:
     A span is atomic, so "3,086.86 sf" and "Flooring, Ceiling, Glazing" each
     arrive whole; the word-level route grouped by y-band instead and merged
     unrelated labels that happen to share a band ("CONC. PAVER PATIO;" came
-    back fused with "RE. TO STRUCTURAL"). On Barn Civil p1 every area tag is
+    back fused with "RE. TO STRUCTURAL"). On Res-A civil p1 every area tag is
     colour 0x800080 against 0x000000 body text, so same-colour + directly
     above is an exact pairing.
 
@@ -328,7 +519,7 @@ def _swatch_columns(filled: list, outlines: list) -> tuple:
     a table rule.
 
     The column evidence must include OUTLINE-only bars, not just filled ones:
-    on Barn Civil p1 five of the seven legend rows are hatched rather than
+    on Res-A civil p1 five of the seven legend rows are hatched rather than
     filled, so the filled swatches number two and would never reach a stack
     of three on their own. Counting the stroked bars finds all seven and
     confirms both filled ones.
@@ -405,7 +596,13 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
                 and SWATCH_H[0] <= h <= SWATCH_H[1] and w / h >= SWATCH_ASPECT)
 
     raw, swatches, outline_bars = [], [], []
-    for path in page.get_drawings():
+    # a client's PDF markups (highlighter polygons, count squares) are fills
+    # too and must never become measured regions - same rule as the stroke
+    # extractor (extract.annots_hidden)
+    from .extract import annots_hidden
+    with annots_hidden(page):
+        _drawings = page.get_drawings()
+    for path in _drawings:
         ptype = path.get("type") or ""
         if "f" not in ptype:
             # stroke-only paths are not regions, but a bar-shaped one is
@@ -433,20 +630,54 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
         k = int(np.argmax(areas))
         outer = rings[k]
         gross = areas[k]
-        if gross <= 0:
-            continue
-        holes = sum(a for i, a in enumerate(areas)
-                    if i != k and _inside(outer, *rings[i][0]))
-        net = max(gross - holes, 0.0)
+        geom = None
+        refused = None
+        # A fill paints nothing outside its own path rect, so this bounds
+        # the painted area from above whatever the rule or ring shape.
+        r0 = path.get("rect")
+        bound = abs(r0.width * r0.height) if r0 is not None else sum(areas)
+        if bound < MIN_AREA_PT2 or (
+                len(rings) == 1 and (len(rings[0]) <= 4
+                                     or _simple_ring(rings[0]))):
+            # one simple ring (shoelace is exact), or a path that cannot
+            # reach the area floor whatever it paints: the original cheap
+            # arithmetic, unchanged
+            if gross <= 0:
+                continue
+            holes = sum(a for i, a in enumerate(areas)
+                        if i != k and _inside(outer, *rings[i][0]))
+            net = max(gross - holes, 0.0)
+        else:
+            net, geom, how = _painted(rings, bool(path.get("even_odd")))
+            if net is None:
+                refused = how
+            elif net <= 0:
+                continue
+            if geom is not None:
+                # the outline drawn and walked is the painted region's,
+                # not one triangle of it
+                big = max(getattr(geom, "geoms", [geom]),
+                          key=lambda g: g.area)
+                outer = [tuple(c) for c in big.exterior.coords[:-1]]
+                gross = big.area
         xs = [p[0] for p in outer]
         ys = [p[1] for p in outer]
-        bbox = [min(xs), min(ys), max(xs), max(ys)]
+        bbox = ([float(v) for v in geom.bounds] if geom is not None
+                else [min(xs), min(ys), max(xs), max(ys)])
         w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
         rec = {"fill": [round(float(c), 3) for c in fill],
                "layer": path.get("layer") or "",
                "outer": outer, "net": net, "gross": gross,
                "perim": _ring_perimeter(outer), "bbox": bbox,
-               "n_rings": len(rings)}
+               "n_rings": len(rings), "geom": geom, "refused": refused,
+               # order key: a refused fill ranks by its rect, the most it
+               # could paint
+               "rank": net if net is not None else bound}
+        if refused:
+            # measured nothing, so neither a swatch nor below the floor can
+            # be decided - list it, with the reason, never a number
+            raw.append(rec)
+            continue
         # a legend swatch is furniture AND the naming key - hold it aside
         # before the area floor, since swatches are small. Whether it really
         # IS a swatch is decided by column structure below, not shape alone.
@@ -467,10 +698,11 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
         by_colour.setdefault(tuple(lc["fill"]), lc["label"])
 
     tags = _area_tags(page, rot)
-    raw.sort(key=lambda r: -r["net"])
+    raw.sort(key=lambda r: -r["rank"])
     truncated = max(0, len(raw) - MAX_REGIONS)
     raw = raw[:MAX_REGIONS]
 
+    from shapely.geometry import Point as _Point
     used_tags = set()
     regions = []
     for i, r in enumerate(raw):
@@ -481,7 +713,9 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
             bx = r["bbox"]
             if not (bx[0] <= t["x"] <= bx[2] and bx[1] <= t["y"] <= bx[3]):
                 continue
-            if _inside(r["outer"], t["x"], t["y"]):
+            g = r.get("geom")
+            if (g.contains(_Point(t["x"], t["y"])) if g is not None
+                    else _inside(r["outer"], t["x"], t["y"])):
                 tag = t
                 used_tags.add(ti)
                 break
@@ -492,8 +726,9 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
             name, src = by_colour[tuple(r["fill"])], "legend"
         elif r["layer"]:
             name, src = r["layer"].split("|")[-1], "layer"
-        area_sf = r["net"] * fpp * fpp if fpp else None
-        perim_lf = r["perim"] * fpp if fpp else None
+        unmeasured = r.get("refused")
+        area_sf = r["net"] * fpp * fpp if fpp and not unmeasured else None
+        perim_lf = r["perim"] * fpp if fpp and not unmeasured else None
         delta = None
         check = None
         if tag and area_sf:
@@ -505,8 +740,11 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
             "layer": r["layer"],
             "name": name,
             "name_source": src,
-            "area_pt2": round(r["net"], 1),
-            "perim_pt": round(r["perim"], 1),
+            "area_pt2": None if unmeasured else round(r["net"], 1),
+            "perim_pt": None if unmeasured else round(r["perim"], 1),
+            # why there is no number: the fill is too complex to measure
+            # within the cost guard (see _painted). Never a partial figure.
+            "unmeasured": unmeasured,
             "area_sf": round(area_sf, 1) if area_sf is not None else None,
             "perim_lf": round(perim_lf, 1) if perim_lf is not None else None,
             "bbox": [round(v, 1) for v in r["bbox"]],
@@ -521,14 +759,15 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
 
     # GROUPS are the takeoff-facing unit: one appearance = one class. A group
     # holds region_ids, never its own copy of the geometry, so one region can
-    # be referenced by several priced rows (Estimate #853 bills the same
-    # 22,796 SF twice: once to subgrade, once for 4" road base).
+    # be referenced by several priced rows (a client's estimate bills the same
+    # paved area twice: once to subgrade, once for 4" road base).
     gmap = defaultdict(list)
     for reg in regions:
         gmap[(tuple(reg["fill"]), reg["layer"])].append(reg)
     groups = []
     for gi, ((fill, layer), members) in enumerate(sorted(
-            gmap.items(), key=lambda kv: -sum(m["area_pt2"] for m in kv[1]))):
+            gmap.items(),
+            key=lambda kv: -sum(m["area_pt2"] or 0 for m in kv[1]))):
         named = [m for m in members if m["name_source"] == "tag"]
         # Same ladder as a region - tag, then legend, then layer - except
         # that a tag names ONE polygon, so it may only name the GROUP when
@@ -545,14 +784,17 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
             gname, gsrc = None, None
         for m in members:
             m["group_id"] = gi
-        a_pt2 = sum(m["area_pt2"] for m in members)
-        p_pt = sum(m["perim_pt"] for m in members)
+        # one unmeasured member makes the group total unknowable: no number
+        # at all rather than a sum that silently leaves a fill out
+        n_un = sum(1 for m in members if m["unmeasured"])
+        a_pt2 = None if n_un else sum(m["area_pt2"] for m in members)
+        p_pt = None if n_un else sum(m["perim_pt"] for m in members)
         printed = [m["printed_sf"] for m in members if m["printed_sf"]]
         bad = [m for m in members if m["sf_check"] == "mismatch"]
         # like-for-like: only the TAGGED members may be compared against the
         # printed total. Summing all members against a partial set of tags
         # manufactures a difference that is really just the untagged regions.
-        tagged_pt2 = sum(m["area_pt2"] for m in members if m["printed_sf"])
+        tagged_pt2 = sum(m["area_pt2"] or 0 for m in members if m["printed_sf"])
         groups.append({
             "group_id": gi,
             "fill": list(fill),
@@ -561,10 +803,13 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
             "name_source": gsrc,
             "n": len(members),
             "region_ids": [m["region_id"] for m in members],
-            "area_pt2": round(a_pt2, 1),
-            "perim_pt": round(p_pt, 1),
-            "area_sf": round(a_pt2 * fpp * fpp, 1) if fpp else None,
-            "perim_lf": round(p_pt * fpp, 1) if fpp else None,
+            "area_pt2": None if n_un else round(a_pt2, 1),
+            "perim_pt": None if n_un else round(p_pt, 1),
+            "area_sf": round(a_pt2 * fpp * fpp, 1) if fpp and not n_un else None,
+            "perim_lf": round(p_pt * fpp, 1) if fpp and not n_un else None,
+            "n_unmeasured": n_un,
+            "unmeasured": next((m["unmeasured"] for m in members
+                                if m["unmeasured"]), None),
             "furniture": all(m["furniture"] for m in members),
             "printed_sf": round(sum(printed), 2) if printed else None,
             # our measurement of ONLY the tagged members - the number that is
@@ -586,7 +831,7 @@ def page_areas(page: pymupdf.Page, scale: dict | None = None,
     # independent check available without a human
     implied = []
     for reg in regions:
-        if reg["printed_sf"] and reg["area_pt2"] > 0:
+        if reg["printed_sf"] and (reg["area_pt2"] or 0) > 0:
             implied.append(math.sqrt(reg["printed_sf"] / reg["area_pt2"]) * 72.0)
     n_ok = sum(1 for r in regions if r["sf_check"] == "ok")
     n_bad = sum(1 for r in regions if r["sf_check"] == "mismatch")

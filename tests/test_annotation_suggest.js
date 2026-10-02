@@ -369,7 +369,9 @@ console.log("\n4. loadResult seeds them OFF - the actual behaviour change");
   ];
   const state = { result: { styles }, include: new Map(), labels: new Map(),
                   seedLabels: new Map() };
-  new Function("state", "sgSuggested", loop)(state, F.sgSuggested);
+  // the seed rule itself moved into includeSeed (UI verify 2026-10-02 #7: "engine's picks" reuses it)
+  const includeSeed = new Function("sgSuggested", fnSrc("includeSeed") + "\nreturn includeSeed;")(F.sgSuggested);
+  new Function("state", "sgSuggested", "includeSeed", loop)(state, F.sgSuggested, includeSeed);
   const inc = state.include;
   eq(inc.get(1), true, "ordinary long solid line work still counts");
   eq(inc.get(2), true,

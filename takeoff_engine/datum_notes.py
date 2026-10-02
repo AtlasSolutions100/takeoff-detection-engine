@@ -1,18 +1,18 @@
 """What the architectural datum 100'-0" equals, read off a set's own words.
 
-Structural sheets call out footings on an architectural datum (Beaumont
+Structural sheets call out footings on an architectural datum (client
 call 2026-09-15: "the arch 100 datum can differ per building; typed per
 structure, auto-read only as a suggestion, never blind"). The civil set is
 where the number lives:
 
-  * Barn Civil C3.0 prints ``[100'=7732']`` beside the entry - the datum
-    statement itself - and an FFE SUMMARY: ``MAIN LEVEL ENTRY:7733.25'``,
-    ``MAIN LEVEL:7732.25'``, ``LOWER LEVEL FFE: 7719.125'``.
-  * Guide Structural S1-1.0 says only what the datum IS:
+  * A residential civil C3.0 prints ``[100'=5000']`` beside the entry - the datum
+    statement itself - and an FFE SUMMARY: ``MAIN LEVEL ENTRY:5001.25'``,
+    ``MAIN LEVEL:5000.25'``, ``LOWER LEVEL FFE: 4987.125'``.
+  * Another structural S1-1.0 says only what the datum IS:
     ``DATUM ELEVATION 100'-0" EQUALS TOP OF MAIN LEVEL SUBFLOOR ELEVATION.
     SEE CIVIL FOR USGS DATUM.`` - a note with no number.
-  * Civil spot labels print shortened elevations (``FFE: 33.25`` for
-    7733.25); those are not a datum and are left out (values under 100).
+  * Civil spot labels print shortened elevations (``FFE: 01.25`` for
+    5001.25); those are not a datum and are left out (values under 100).
 
 Returns suggestions with their evidence (page, the printed text); the
 structure panel offers them and the operator types the value that applies.
@@ -23,7 +23,8 @@ import re
 
 _FT = "['’′]"
 _IN = '["”″]'
-DATUM_EQ_RE = re.compile(r"\[?\s*100" + _FT + r"?\s*=\s*(?P<v>\d{3,5}(?:\.\d+)?)\s*" + _FT + r"?\s*\]?")
+# "[100'=5000']", "ARCH. 100' = CIVIL 5000.0'" (a word such as CIVIL may follow the equals sign)
+DATUM_EQ_RE = re.compile(r"\[?\s*100" + _FT + r"?\s*=\s*(?:[A-Z][A-Z.]*\s+){0,2}(?P<v>\d{3,5}(?:\.\d+)?)\s*" + _FT + r"?\s*\]?", re.I)
 DATUM_NOTE_RE = re.compile(
     r"DATUM\s+ELEV(?:ATION)?\s*(?:OF\s*)?100" + _FT + r"?\s*-?\s*0?" + _IN + r"?\s*(?:=|EQUALS)\s*"
     r"(?P<what>[A-Z][A-Z0-9 ./&\-\n]{3,90}?)(?:\.|;|$)", re.I)   # the note wraps lines

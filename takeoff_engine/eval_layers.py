@@ -41,7 +41,7 @@ def is_textural(layer: str) -> bool:
 
 def _textural_by_geometry(lay_units) -> bool:
     """Texture regardless of the layer's NAME: a fill pattern is thousands
-    of tiny strokes in dense crowds (GCHC 'Shading|GRAVEL': 14,277 stones,
+    of tiny strokes in dense crowds (stair set 'Shading|GRAVEL': 14,277 stones,
     median 3.0pt, 9.7 neighbours within 5pt), while real dashed linework
     runs 8pt+ marks with ~1-2 neighbours. Measured: corpus line layers stay
     below 4 mean-neighbours; hatch/stipple sits above 6."""
@@ -105,13 +105,13 @@ def _congruence_groups(lay_units):
     is the safe direction for a construction quantity.
 
     Measured over 7,583 layer instances on 168 layered pages
-    (client_meet/beaumont + Plans + Ryno Construction), bucket vs the same
+    (the client folders + Plans + a contractor folder), bucket vs the same
     grouping done by sorting on length and splitting on a >2pt gap:
       _symbolic_by_congruence   121 layers either way, zero disagreements
       _scatter_glyphs           569 -> 583, i.e. 16 layers move, 15 of them
                                 the wrong way
     The 15 the gap-walk newly calls texture include L-BOULDER-MOSS (8,363 pt,
-    the layer the standing gate reports as LOST on Guide Civil p3), S-COLS,
+    the layer the standing gate reports as LOST on Res-B civil p3), S-COLS,
     S-BEAM and SECTION - real linework that would silently leave the takeoff
     - and it stops recognising the genuine hatch layer BG-Hatch Stair type 1.
     Single-linkage chaining over-merges here. Do not "fix" this.
@@ -128,7 +128,7 @@ def _symbolic_by_congruence(lay_units) -> bool:
     """A symbol layer is REPEATED CONGRUENT small shapes (tree canopies,
     fixtures, markers) - countable EA, not measurable LF. Symbolic when
     >=50% of the layer's ink sits in congruent groups of >=3 repeats of
-    small shapes. Measured: GCHC TREES = congruent canopy glyphs; real
+    small shapes. Measured: stair-set TREES = congruent canopy glyphs; real
     line layers (contours, walls) have near-zero congruent-repeat ink
     because their mark lengths vary with geometry."""
     if len(lay_units) < 6:
@@ -150,7 +150,7 @@ def _symbolic_by_congruence(lay_units) -> bool:
 
 def _radial_bursts(lay_units) -> bool:
     """Tree/shrub symbols drawn as RAY BURSTS: many strokes fanning out
-    of a shared hub (GCHC TREES: 184 rays, median 21pt, several hubs of
+    of a shared hub (stair-set TREES: 184 rays, median 21pt, several hubs of
     20+ rays each). Signature: >=8 stroke endpoints within a 4pt ball,
     arriving from >=5 distinct directions - dashes crossing a junction
     gather at most 2-4 directions. Symbolic when >=50% of layer ink
@@ -189,7 +189,7 @@ def _radial_bursts(lay_units) -> bool:
 
 def _scatter_glyphs(lay_units) -> bool:
     """Grass/riprap tick texture: dozens of repeats of the SAME tiny open
-    mark scattered across the sheet. Measured: GCHC GRASS = 768 strokes,
+    mark scattered across the sheet. Measured: stair-set GRASS = 768 strokes,
     median 3.4pt, congruent in a handful of groups; dashed lines never
     congregate at such tiny lengths in >=20-repeat congruent groups
     because dash length tracks the pattern, not a glyph template."""
@@ -523,13 +523,13 @@ def print_class_metrics(m: dict) -> None:
 #   ../TakeoffPro AI/Plans/C{3.0,4.0,8.0,9.0}-*.pdf p0   (Loves Lane civil)
 #       P1-PVMT-HATCH, P6-TEXT, P6-SHEET, O-SURFACE-LBL-FG,
 #       E3-ROADNAME-TEXT, P1-PVMT-CORR, E1-MISC (NO HATCH)
-#   ../../client_meet/beaumont/SWR_Guide_Residence_-_Civil_5.8.26.pdf
+#   (client folder) residence B civil set, 5.8.26
 #       G-ANNO-TTLB, C-TOPO-TEXT, TXT-SPOT GRD, SE-P-CONC HATCH AB,
 #       SE-P-GRAVEL HTCH AB RD, BG-L-Beach NON PLOT
-#   ../../client_meet/beaumont/SWR_Barn_Residence_-_Landscaping_4.7.26.pdf
+#   (client folder) residence A landscaping set, 4.7.26
 #       BG-ANNO-TEXT, BG-ANNO-DIMS, BG-ANNO-LGND, BG-ANNO-DETL-IDEN,
 #       BG-ANNO-SHEET-SYMB, A-WALL-PATT, BG-SHEET MATCHLINE, BG-TOPO-NONPLOT
-#   ../../client_meet/beaumont/260603 Thielen Biggerstaff Residence.pdf
+#   (client folder) residence C architectural set
 #       TTL-BLK-B4UDIG, UTIL-NOTES, DETAIL-DIM
 #
 # INFERENCE, not a documented standard: that a layer whose leaf name carries
@@ -543,7 +543,7 @@ def print_class_metrics(m: dict) -> None:
 # Deliberately NOT treated as annotation:
 #   XREF / X-Ref / XR-*  - container names; the strokes under them are the
 #                          real drawing (BG-XREF scores 100% coverage on
-#                          Guide Civil p3, i.e. it is found linework)
+#                          Res-B civil p3, i.e. it is found linework)
 #   PEN3 / BG-01 THIN    - lineweight buckets, they carry real geometry
 #   BOULDER              - measured LF on some sheets, counted EA on others;
 #                          calling it either way would be inventing a
@@ -559,7 +559,7 @@ ANNOTATION_TOKENS = (
 # linework headline: a low number here means "symbols not vectorised", which
 # is a different defect from "a pipe run was missed". Same inference caveat -
 # read off BG-L-PLNT-TREE / BG-L-PLNT-SHRB / BG-Tree Aerial / I-FURN /
-# BG-ANNO-SYMB in the Beaumont sets, and it matches what the existing
+# BG-ANNO-SYMB in the residential sets, and it matches what the existing
 # _symbolic_by_congruence and _radial_bursts detectors flag by geometry.
 SYMBOL_TOKENS = ("PLNT", "TREE", "SHRB", "FURN", "SYMB")
 

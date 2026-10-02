@@ -164,7 +164,7 @@ check(cssSrc.includes("main.sv-open #pageStrip")
   && cssSrc.includes("main.sv-open #stage"),
   "the CSS toggle hides exactly the three workbench columns");
 for (const id of ["svBack", "svBookNote", "svBookTable", "svAddLabel",
-                  "svAddPrice", "svAddBtn", "svMatBox", "svExportBtn",
+                  "svAddPrice", "svAddBtn", "svExportBtn",
                   "svImportBtn", "svImportFile", "svImportPreview", "svFoot"]) {
   check(htmlSrc.includes(`id="${id}"`), `#${id} exists in index.html`);
 }
@@ -202,13 +202,6 @@ check(book.includes("pin.onchange = () => { renderSvBook(); renderSvFoot(); }"),
   "book: re-render on blur, not on keystroke (the field stays attached)");
 check(book.includes('ev.preventDefault()') && book.includes('"wheel"'),
   "book: the wheel guard on a focused number field survives");
-// material citations still come straight out of ew_defaults.js
-const mat = appSrc.slice(appSrc.indexOf("function renderSvMaterials()"),
-                         appSrc.indexOf("function renderSvFoot()"));
-check(mat.includes("m.src") && mat.includes('"local prior: " + sd.local'),
-  "materials: citations rendered verbatim from EW_RESEARCH");
-check(mat.includes("EW_RESEARCH.materials"),
-  "materials: the table is ew_defaults.js, not a copy");
 
 // the swallow block: the projects view's list, Ctrl+Z/Y included
 const sv = appSrc.slice(appSrc.indexOf("SV_SWALLOW_KEYS"),
@@ -220,6 +213,10 @@ check(/e\.key\.toLowerCase\(\) === "z"/.test(sv)
   "swallow: Ctrl+Z and Ctrl+Y never reach the hidden sheet");
 check(sv.includes('e.key === "Escape"'),
   "swallow: Esc is handled (back to the sheet, or to Projects)");
+// T (trim) needs no selection on the sheet, so it must be swallowed with the
+// other single-key tools - it was missing, and armed trim on the hidden sheet
+check(sv.includes('"t"'),
+  "swallow: T (trim) never reaches the hidden sheet while Settings is up");
 
 // the settings page writes through the SAME key scheme the itemized panel
 // uses - priceKey - and never invents a second one
@@ -413,6 +410,10 @@ check(S.svHashTarget("#company") === "svGroupCompany"
   && S.svHashTarget("#scope") === "svGroupScope"
   && S.svHashTarget("#account") === "svGroupAccount",
   "hash: every group has its own hash");
+// the nav's "This machine" entry is href="#machine"; without a mapping here
+// svGoto answered "not ours" and the click did nothing (fixed 2026-09-25)
+check(S.svHashTarget("#machine") === "svGroupMachine",
+  "hash: #machine lands on the This-machine group");
 check(S.svHashTarget("#PRICING") === "svGroupPricing"
   && S.svHashTarget("pricing") === "svGroupPricing",
   "hash: case and a missing # are both tolerated");
@@ -443,14 +444,22 @@ check(!/store\.setItem\([^)]*brand/i.test(appSrc)
   && !/localStorage\.setItem\("core-(company|brand)/.test(appSrc),
   "company: it is NOT quietly mirrored into a browser store as well");
 {
+  // every account sees this example; until 2026-09-28 it was a client's
+  // company name (same names as tests/test_projects_api.py's demo check)
+  const ph = (htmlSrc.match(/id="svBrandCompany"[^>]*?placeholder="([^"]*)"/) || [])[1];
+  check(typeof ph === "string" && ph.length > 0
+    && !/ryno|stice|liberty|beaumont|kayden|ellis|klayton|thielen|aqua vista|barn|swr/i.test(ph),
+    `company: the example name is not a client's ("${ph}")`);
+}
+{
   const co = htmlSrc.slice(htmlSrc.indexOf('id="svGroupCompany"'),
                            htmlSrc.indexOf('id="svGroupAppearance"'));
   check(/Stored on <b>the server<\/b>|the server/.test(
           appSrc.slice(appSrc.indexOf("function renderSvBrand"),
                        appSrc.indexOf("$(\"svBrandCompany\").oninput"))),
     "company: the page says the value is stored on the server");
-  check(/never displace the beta notice|beta notice/i.test(co),
-    "company: the page says the letterhead does not displace the beta notice");
+  check(/never displace\s+the accuracy notice/i.test(co) && !/\bbeta\b/i.test(co),
+    "company: the page says the letterhead does not displace the accuracy notice (no BETA)");
   check(/nothing here changes a\s+quantity/i.test(co.replace(/\s+/g, " ")),
     "company: ...and that branding cannot move a number");
 }
@@ -473,9 +482,8 @@ check(!/store\.setItem\([^)]*brand/i.test(appSrc)
   const sv = htmlSrc.slice(htmlSrc.indexOf('id="settingsView"'),
                            htmlSrc.indexOf('id="pageStrip"'));
   check(sv.indexOf('id="svGroupPricing"') < sv.indexOf('id="svBookTable"')
-    && sv.indexOf('id="svGroupPricing"') < sv.indexOf('id="svMatBox"')
     && sv.indexOf('id="svGroupPricing"') < sv.indexOf('id="svExportBtn"'),
-    "pricing: the book, the material defaults and CSV all sit under the "
+    "pricing: the book and CSV both sit under the "
     + "PRICING group head");
   check(sv.indexOf('id="svGroupAccount"') > sv.indexOf('id="svFoot"'),
     "pricing: the honesty footer still follows the price book");
@@ -490,7 +498,7 @@ check(!/store\.setItem\([^)]*brand/i.test(appSrc)
   const _NL = String.fromCharCode(10);
   const body = _i < 0 ? "" : appSrc.slice(_i, appSrc.indexOf(_NL + "}", _i));
   const order = ["renderSvBrand", "renderSvTheme", "renderSvScope", "renderSvBook",
-                 "renderSvMaterials", "renderSvFoot", "renderSvAccount"];
+                 "renderSvFoot", "renderSvAccount"];
   const at = order.map(f => body.indexOf(f + "("));
   check(at.every(i => i >= 0),
     "renderSettings calls every group renderer ("

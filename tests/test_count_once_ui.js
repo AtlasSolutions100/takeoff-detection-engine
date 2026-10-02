@@ -87,9 +87,13 @@ check(/state\.twins = null; state\.once = new Set\(\); state\.onceRev\+\+;/.test
       "pageReset clears the twins and the choice - a style id means nothing on another sheet");
 check(/out\.once = \[\.\.\.state\.once\]\.sort\(\(a, b\) => a - b\);/.test(js), "the choice is saved with the sheet");
 const csl = fnSrc("calcStateLoad");
-check(/twinsLoad\(gen\);/.test(csl) && csl.indexOf("twinsLoad(gen)") < csl.indexOf("await fetch"),
-      "the twins load with the page, before (and not gated on) the saved-inputs read");
-check(/gzApplySaved\(\);\n  onceApplySaved\(\);/.test(csl), "the saved choice is applied before the snapshot, like the zones");
+// 2026-09-26 (audit D01): the pairing is no longer asked for on page load -
+// that call started O(n^2) work on every civil sheet of a set with a misread
+// schedule. A saved choice asks for it itself (onceApplySaved), the Structure
+// panel and the walls-once button do the rest (tests/test_twins_on_demand.js).
+check(!/twinsLoad\(/.test(csl) && /twinsLoad\(state\.gen\)/.test(fnSrc("onceApplySaved")),
+      "the twins are not loaded with the page; a saved choice loads them when it is applied");
+check(/wzApplySaved\(\);\n  onceApplySaved\(\);/.test(csl), "the saved choice is applied before the snapshot, like the zones");
 check(/if \(gen !== state\.gen\) return;/.test(fnSrc("twinsLoad")), "a late twins answer for another page is dropped");
 check(/if \(!onceFamily\(sid\)\) return;/.test(fnSrc("onceToggle")) && /calcStateDirty\(\);/.test(fnSrc("onceToggle")),
       "toggling is refused for a non-twin family and marks the sheet dirty");

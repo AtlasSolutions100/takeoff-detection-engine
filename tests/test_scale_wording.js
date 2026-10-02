@@ -260,7 +260,7 @@ check(/present: false, nsug: scaleSuggestions\(\)\.length/.test(ckc),
 // ---- the status bar, evaluated ------------------------------------------
 {
   const T = new Function("state",
-    fn("scaleSuggestions") + fn("scaleShort") + fn("sheetFactsText")
+    fn("nWord") + fn("scaleSuggestions") + fn("scaleShort") + fn("sheetFactsText")
     + "return { sheetFactsText };");
   const s2 = T(st(SUG2)).sheetFactsText();
   check(s2 === "914 lines in 180 styles · no scale set — 2 unchecked "

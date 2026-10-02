@@ -3,16 +3,16 @@
 A foundation plan draws every wall as TWO parallel lines, its two faces, and
 every continuous footing as two more, its two edges. Measuring a family as
 drawn therefore bills each wall about twice. Both clients take one run per
-wall: Jeff Ellis measures "the outside dimension of wall" and uses that one
+wall: a foundation client measures "the outside dimension of wall" and uses that one
 line for the footing and the wall alike (footing video 05:48-05:57);
-Beaumont's own 19 length measurements on Barn S1-1.3 total 704.4 ft where
+An excavator's own 19 length measurements on Res-A S1-1.3 total 704.4 ft where
 the dashed footing family is 1,055 ft as drawn (FINDINGS 30).
 
 What the drawings show (measured 2026-09-17 on the local sheets):
-  Barn S1-1.3, 3/16" = 1'-0": the dashed footing family's parallel partners
+  Res-A S1-1.3, 3/16" = 1'-0": the dashed footing family's parallel partners
   sit at 2.0 / 3.0 / 4.0 / 5.0 / 5.5 / 7.0 / 8.0 ft - the footing
   SCHEDULE's own widths - and the heaviest solid family's at 0.75 ft.
-  Ellis S1.02, 1/8" = 1'-0": the wall families pair at 0.5-1.0 ft, beside a
+  Foundation set S1.02, 1/8" = 1'-0": the wall families pair at 0.5-1.0 ft, beside a
   0.25 ft spacing that is not a wall thickness.
 So the pairing band comes from the sheet: a footing family pairs at its
 schedule widths, a wall family at a wall thickness (5-17 in). Nothing is
@@ -35,8 +35,15 @@ THE RULE, per sample (one every `step_ft` along every chain):
 A family's counted length = unpaired + the faces kept. The as-drawn length
 is never changed; the counted length sits beside it.
 
-Count-first crowd guard (the CO3 lesson): a family over `max_samples`
-samples is refused with a reason, not paired.
+Count-first crowd guard (a grading-set lesson): a family over `max_samples`
+samples is refused with a reason, not paired. A second count comes before
+the neighbour lists are built: the sum of neighbours over every sample
+(`return_length=True`, no lists) must stay under `max_pairs`, or the family
+is refused as too big to check. That sum is what a bogus schedule width
+blew up - a 7,715 ft "width" read off Res-A civil C4.3 made the radius
+wider than the sheet, every sample saw every other, and the lists alone
+took the server to 7-17 GB (audit 2026-09-26, D01). Schedule widths over
+MAX_WIDTH_FT are ignored for the same reason.
 """
 from __future__ import annotations
 
@@ -51,6 +58,8 @@ FOOTING_BAND_FT = (1.50, 10.0)    # a footing family whose schedule could not be
 GRID_FT = 0.5
 CLOSE_GAP_FT = 3.0
 MAX_SAMPLES = 60000
+MAX_PAIRS = 3_000_000             # neighbour pairs a family may ask this pass to look at
+MAX_WIDTH_FT = 20.0               # no footing is wider; a wider "width" is a misread
 MAX_CELLS = 6_000_000
 MIN_MEMBER_FT = 0.10              # a line this close to a face is part of the same wall
 
@@ -150,18 +159,24 @@ def _intervals(pos, w, keep_mask):
 
 def twin_shares(chains: list, ft_per_pt: float, widths_ft=None,
                 band_ft=WALL_BAND_FT, step_ft: float = 0.5,
-                ang_deg: float = 8.0, max_samples: int = MAX_SAMPLES) -> dict:
+                ang_deg: float = 8.0, max_samples: int = MAX_SAMPLES,
+                max_pairs: int = MAX_PAIRS) -> dict:
     """{"chains": {chain_id: {"drawn_pt", "counted_pt", "paired_pt",
     "outside_pt", "interior_pt", "spacing_ft", "partner", "skip"}},
     "drawn_ft", "counted_ft", "paired_ft", "interior_ft",
-    "spacing_ft": {bin: ft}, "samples", "refused", "rule"}.
+    "spacing_ft": {bin: ft}, "samples", "pairs", "refused", "rule"}.
 
     `chains`: rows with chain_id and points (page pt), ONE family.
-    `widths_ft`: the schedule's footing widths for a footing family;
+    `widths_ft`: the schedule's footing widths for a footing family
+    (widths over MAX_WIDTH_FT are misreads and are dropped here too);
     otherwise `band_ft`, a wall thickness, bounds the pairing.
+    `max_pairs`: the neighbour pairs the pass may look at; over it the
+    family is refused as too big to check, before any list is built.
     `skip` lists the arc ranges (pt from the chain's start) not counted."""
+    if widths_ft:
+        widths_ft = [float(w) for w in widths_ft if 0 < float(w) <= MAX_WIDTH_FT] or None
     out = {"chains": {}, "drawn_ft": 0.0, "counted_ft": 0.0, "paired_ft": 0.0,
-           "interior_ft": 0.0, "spacing_ft": {}, "samples": 0, "refused": None,
+           "interior_ft": 0.0, "spacing_ft": {}, "samples": 0, "pairs": 0, "refused": None,
            "rule": ("schedule widths " + ", ".join(f"{w:g}" for w in sorted(widths_ft)) + " ft"
                     if widths_ft else f"wall thickness {band_ft[0]:g}-{band_ft[1]:g} ft")}
     if not chains or not ft_per_pt or ft_per_pt <= 0:
@@ -207,16 +222,25 @@ def twin_shares(chains: list, ft_per_pt: float, widths_ft=None,
     wall_mode = not widths_ft and band_ft[1] <= FOOTING_BAND_FT[0]
     hi_ft = (max(widths_ft) + WIDTH_TOL_FT) if widths_ft else band_ft[1]
     lo_ft = (min(widths_ft) - WIDTH_TOL_FT) if widths_ft else band_ft[0]
+    hi_ft = min(hi_ft, MAX_WIDTH_FT + WIDTH_TOL_FT)
     tree = cKDTree(P)
+    radius = hi_ft / ft_per_pt + step
+    # COUNT BEFORE LISTING: the neighbour lists below are what a wide radius
+    # turns into gigabytes. The count costs no memory and bounds the work.
+    n_pairs = int(tree.query_ball_point(P, r=radius, return_length=True).sum())
+    out["pairs"] = n_pairs
+    if n_pairs > max_pairs:
+        return plain(f"too big to check: {n_pairs:,} neighbour pairs at {hi_ft:g} ft, "
+                     f"over the {max_pairs:,} this pass looks at")
     sin_t = math.sin(math.radians(ang_deg))
     best_q = np.full(n, -1)
     best_d = np.full(n, np.inf)
     middle = np.zeros(n, bool)
-    for i, nb in enumerate(tree.query_ball_point(P, r=hi_ft / ft_per_pt + step)):
+    for i, nb in enumerate(tree.query_ball_point(P, r=radius)):
         ci = C[i]
         ux, uy = U[i]
         # WALL MODE: every parallel line within one wall thickness is part of
-        # THIS wall - the two faces and anything drawn between them (Ellis's
+        # THIS wall - the two faces and anything drawn between them (the foundation set's
         # "SPAN DECK PANEL 4\" LEDGE" line sits 4 in inside the face, so its
         # walls are three lines). A line with wall lines on BOTH sides is a
         # middle line and is never counted; a face pairs with the FARTHEST
@@ -339,7 +363,8 @@ def family_twins(chains: list, ft_per_pt: float, schedule_widths=None) -> dict:
     family), pair, and say which rule ran."""
     hist = probe_spacings(chains, ft_per_pt)
     kind = family_kind(hist) if hist else "wall"
-    widths = sorted({float(w) for w in (schedule_widths or []) if w and float(w) >= FOOTING_BAND_FT[0]})
+    widths = sorted({float(w) for w in (schedule_widths or [])
+                     if w and FOOTING_BAND_FT[0] <= float(w) <= MAX_WIDTH_FT})
     if kind == "footing":
         res = twin_shares(chains, ft_per_pt, widths_ft=widths or None,
                           band_ft=FOOTING_BAND_FT)

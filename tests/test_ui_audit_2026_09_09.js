@@ -24,28 +24,10 @@ function fnSrc(name) {
   return m ? m[0] : "";
 }
 
-// ---- A ----
-const renderEw = fnSrc("renderEw");
-check(/src\.className = "ew-src";\s*\n\s*src\.textContent = ewRowSource\(row\);/.test(renderEw),
-  "A: the provenance sentence is its own element under the row (.ew-src), still on the row");
-check(/meta\.textContent = `line \$\{row\.chain_id\} · w \$\{row\.width\}`;/.test(renderEw),
-  "A: the identity beside the buttons is one line - line and weight, no sentence");
-check(/src\.prepend\(cb\);/.test(renderEw) && !/meta\.prepend\(cb\);/.test(renderEw),
-  "A: the evidence badge leads the provenance line, so the identity always fits beside the buttons");
-check(/why\.className = "ew-inf-why";\s*\n\s*why\.textContent = row\.inferredWhy;\s*\n\s*src\.appendChild\(why\);/.test(renderEw),
-  "A: an inferred row's sentence goes under the row too, in the class the disclosure test pins");
-check(/div\.append\(z, meta, seg, x, src\);/.test(renderEw),
-  "A: the source line is appended after the buttons, so the grid puts it on the next line");
-check(/\.ew-src \{[^}]*grid-column: 1 \/ -1/.test(css),
-  "A: .ew-src spans the row's full width in the grid");
-check(/\.ew-row \.ew-meta \{[^}]*white-space: nowrap/.test(css) && !/^\.ew-meta \{[^}]*white-space: nowrap/m.test(css),
-  "A: the identity column no longer wraps - scoped to the contour row, so the cut/fill result line and callout targets still wrap (smoke find, 2026-09-10)");
+// ---- A ---- (the earthwork row layout left with the earthwork calculator on
+// 2026-09-25; the callout-row rule it shared a fix with is still pinned)
 check(/\.co-row \{ grid-template-columns: 1fr auto; \}/.test(css),
   "F: a callout row's text gets the row, not the contour row's 60 px first column");
-check(/Set a limit of work, or draw a work area, to bound it\./.test(js) && !/disturbance\. No input on this panel can bound it/.test(js),
-  "F: the basis text no longer claims nothing can bound the region");
-check(/bounded by <b>" \+ \(state\.ewBound \? "your limit of work" : "the work-area box"\)/.test(js),
-  "F: ...and names what bounded it when something did");
 
 // ---- B ----
 const short = new Function(fnSrc("scaleShort") + "\nreturn scaleShort;")();

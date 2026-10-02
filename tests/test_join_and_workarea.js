@@ -61,42 +61,5 @@ check(/extendClick|snapWeld/.test(fnSrc("extendTo")) || /snapWeld/.test(fnSrc("e
 check(/join: click the other piece of this line\. The two pieces/.test(js),
   "the J prompt says what will happen: the two pieces become one line");
 
-// ---- 2. work area -> earthwork ---------------------------------------------
-const inWz = fnSrc("ewInWorkArea");
-check(!!inWz && /wzChainFrac\(ch\) > 0/.test(inWz),
-  "WORK AREA: a contour stays only if some of its length is inside the boxes");
-check(/return true;\s*\/\/ a typed-in row with no chain: keep/.test(inWz) || /if \(!ch\) return true;/.test(inWz),
-  "WORK AREA: a typed-in row with no chain is never dropped by the filter");
-const view = fnSrc("ewReviewView");
-check(/\.filter\(ewInWorkArea\)/.test(view) && /ewStubs\(\)\.filter\(ewInWorkArea\)/.test(view),
-  "WORK AREA: the review list (rows and no-elevation stubs) is filtered by it");
-const body = js.slice(js.indexOf("existing: state.ew.rows.filter"), js.indexOf("existing: state.ew.rows.filter") + 400);
-check(/isFinite\(r\.z\) && ewInWorkArea\(r\)/.test(body) && (body.match(/ewInWorkArea\(r\)/g) || []).length === 2,
-  "WORK AREA: rows outside never reach either surface in the POST body");
-check(/boundary: state\.ewBound \? state\.ewBound\.pts : ewWorkAreaBoundary\(\)/.test(js),
-  "WORK AREA: one box is the limit of work when none is set");
-const wzb = fnSrc("ewWorkAreaBoundary");
-check(/if \(state\.ewBound\) return null;/.test(wzb) && /if \(z\.length !== 1\) return null;/.test(wzb),
-  "...a set limit of work wins, and several boxes are not one outline");
-check(/wzPtIn\(g\.x, g\.y, state\.workZones\)/.test(js), "WORK AREA: spot grades outside the boxes are not sent");
-check(/ewOutsideWorkArea\(\)/.test(fnSrc("renderEw")) && /outside the work area, so/.test(js),
-  "WORK AREA: the panel says how many contours it left out");
-check(/renderEw\(\); renderEwBound\(\);/.test(fnSrc("wzChanged")),
-  "WORK AREA: drawing or clearing a box repaints the earthwork panel");
-{
-  // run the filter: two chains, one box; the chain outside is dropped, a
-  // typed row with no chain is kept
-  const scope = {
-    state: { workZones: [[0, 0, 100, 100]], wzRev: 1, gen: 1 },
-    wzActive: () => true,
-    chainById: (id) => ({ 1: { chain_id: 1, points: [[10, 10], [50, 50]] }, 2: { chain_id: 2, points: [[500, 500], [600, 600]] } })[id] || null,
-    wzChainFrac: (ch) => ch.chain_id === 1 ? 0.8 : 0,
-  };
-  const names = Object.keys(scope);
-  const f = new Function(...names, inWz + "\nreturn ewInWorkArea;")(...names.map(n => scope[n]));
-  check(f({ chain_id: 1 }) === true && f({ chain_id: 2 }) === false && f({ chain_id: 99, manual: true }) === true,
-    "WORK AREA, run: inside kept, outside dropped, typed row kept");
-}
-
 if (fails) { console.error("\n" + fails + " check(s) failed"); process.exit(1); }
-console.log("\nall join / work-area checks passed");
+console.log("\nall join checks passed");

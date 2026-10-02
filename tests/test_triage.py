@@ -79,9 +79,48 @@ def test_divider_page_scores_without_sheet_number():
 
 
 def test_other_trade_prefix_alone_is_other():
-    r = score("FOUNDATION PLAN NOTES", "S1.02")   # ellis idx 42 replica
+    r = score("STEEL BEAM NOTES", "S1.02")        # a structural detail sheet
     assert r["tier"] == "other", r
     assert r["score"] == server._TRIAGE_OTHER_PREFIX == -6, r
+    assert r["kind"] is None, r
+
+
+# BUILDING PLANS (2026-09-26, audit D38): a floor plan or a foundation plan
+# is a sheet Flooring, Count and Structure work on, and was tiered "looks
+# like another trade" - Seer Stone A2.1 at -12, the Barn set's foundation
+# plan (page 14) at 0. The excavation score is unchanged; the TITLE PHRASE
+# names the kind and lifts the tier to "plan", never past "core".
+def test_foundation_plan_is_a_plan_not_another_trade():
+    r = score("FOUNDATION PLAN NOTES", "S1.02")   # ellis idx 42 replica
+    assert r["tier"] == "plan" and r["kind"] == "foundation plan", r
+    assert r["score"] == server._TRIAGE_OTHER_PREFIX == -6, r   # the score itself did not move
+
+
+def test_floor_plan_with_schedules_is_a_plan():
+    # Seer Stone A2.1's shape: FLOOR PLAN + FLOORING PLAN titles, a door and
+    # a window schedule (-3 each), the A prefix (-6): score -12, tier plan
+    r = score("FLOOR PLAN FLOORING PLAN DOOR SCHEDULE WINDOW SCHEDULE", "A2.1")
+    assert r["tier"] == "plan" and r["kind"] == "floor plan", r
+    assert r["score"] == -12, r
+
+
+def test_footing_vocabulary_without_a_plan_title_is_not_a_plan():
+    # the Barn set's footing-schedule sheet: FOOTING x7, SLAB x10, no plan title
+    r = score("FOOTING SCHEDULE FOOTING FOOTING SLAB SLAB SLAB SEE PLAN", "S0-0.4")
+    assert r["tier"] == "other" and r["kind"] is None, r
+
+
+def test_index_sheet_listing_plans_is_not_a_plan():
+    # an index lists every sheet title: six or more "<X> PLAN" titles
+    txt = ("SITE PLAN GRADING PLAN FLOOR PLAN FOUNDATION PLAN ROOF PLAN "
+           "FRAMING PLAN ELECTRICAL PLAN REFLECTED CEILING PLAN")
+    r = score(txt, "A0.1")
+    assert r["kind"] is None and r["tier"] != "plan", r
+
+
+def test_civil_core_stays_core_even_with_a_plan_title():
+    r = score("GRADING PLAN GRADING EARTHWORK EXCAVATION CONTOURS", "C2.0")
+    assert r["tier"] == "core", r
 
 
 def test_neutral_prefix_adds_nothing():
@@ -128,7 +167,7 @@ def test_tier_thresholds_exact():
     assert score("STORM STORM STORM", None)["tier"] == "core"
     assert score("STORM", None) == {
         "tier": "maybe", "score": 2, "words": 1,
-        "hits": [["STORM", 1, 2]]}                             # boundary
+        "hits": [["STORM", 1, 2]], "kind": None}               # boundary
     assert score("CUT", None)["tier"] == "other"               # score 1
     assert score("LOREM IPSUM", None)["tier"] == "other"       # score 0
 

@@ -200,7 +200,7 @@ for (const [fn, cls] of [["styleEyeBtn", "mark-eye"], ["styleTakeBtn", "mark-tak
 // 5. PICK PATHS FOLLOW THE EYE; QUANTITY PATHS DO NOT
 // =========================================================================
 // what you cannot see, you cannot click
-for (const fn of ["chainHitAt", "snapToChain", "marqueePick", "stPickAt", "ewPickAt"]) {
+for (const fn of ["chainHitAt", "snapToChain", "marqueePick", "stPickAt"]) {
   const i = src.indexOf(`function ${fn}(`);
   check(i >= 0, `${fn} exists`);
   const body = src.slice(i, src.indexOf("\n}\n", i));

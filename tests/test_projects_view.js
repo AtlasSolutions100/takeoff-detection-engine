@@ -241,6 +241,15 @@ check(P.projReachLine(7, 7, 7, "").includes("All 7 plans on this server"),
     "empty (yours): points at the demo tab when there is one");
   check(!P.projEmptyMine(0).includes("demo"),
     "empty (yours): says nothing about demos on a box that has none");
+  // UI verify 2026-10-02 #10: a viewer was told to upload, drop a PDF or open a demo - all refused
+  const view = P.projEmptyMine(8, true);
+  check(!/New project|drop a PDF|upload|demo/i.test(view) && /cannot add or change/.test(view) && /admin/.test(view)
+    && view.split(". ").length <= 3,
+    "empty (yours, view-only): says what a viewer can do, offers nothing that is refused: " + view);
+  check(/const viewOnly = pvViewOnly\(\);/.test(appSrc) && /\$\("uploadBtn"\)\.hidden = viewOnly;/.test(appSrc)
+    && /\$\("pvTabDemo"\)\.hidden = viewOnly;/.test(appSrc) && /if \(viewOnly\) pvTab = "mine";/.test(appSrc)
+    && /projEmptyMine\(demoTotal, viewOnly\)/.test(appSrc) && /svMe && svMe\.role === "viewer"/.test(appSrc),
+    "the Projects page hides + New project and the demo tab for a viewer, and repaints when the role arrives");
 
   const none = P.projEmptyDemo(8, 0, ["a.pdf", "b.pdf"]);
   check(none.includes("None of the 8 demo plans")
@@ -310,6 +319,22 @@ check(appSrc.includes('"svGroupMachine", "svMachineSection", "svNavMachine"'),
   + "controls - an empty group headed 'This machine' reads as a broken page");
 check(!appSrc.includes('$("uploadBtn").textContent = "Upload plans"'),
   "the hosted branch no longer rewrites the button's label over '+ New project'");
+// the key swallow while Projects is up: T (trim) needs no selection on the
+// sheet, so it belongs in the list with the other single-key tools - it was
+// missing, and pressing T over the projects page armed trim on the hidden sheet
+const pvSwallow = appSrc.slice(appSrc.indexOf("PV_SWALLOW_KEYS"),
+                               appSrc.indexOf("end MY PROJECTS"));
+check(pvSwallow.includes('"t"') && pvSwallow.includes('"d"'),
+  "swallow: T (trim) and D (draw) never reach the hidden sheet while Projects is up");
+// the focus rings: --t-focus is a box-shadow value (tokens.css), so an outline
+// that names it is invalid and draws nothing - five rules did, until 2026-09-25
+check(!cssSrc.includes("outline: 2px solid var(--t-focus)")
+  && cssSrc.includes("outline: 2px solid var(--t-accent)"),
+  "focus rings are drawn with the accent, not with the box-shadow token");
+// the sheet head appends its chips only: `name` left with the document name
+// (2026-09-09), and an unqualified `name` in a browser is window.name
+check(!appSrc.includes("el.append(name, meta)") && appSrc.includes("el.append(meta);"),
+  "renderSheetHead appends the chips, not window.name");
 // RECENTS: retired. Nothing may still reach for it.
 check(!htmlSrc.includes('id="recentSel"'), "#recentSel is retired from the markup");
 check(!cssSrc.includes("#recentSel"), "...and from the stylesheet");
@@ -343,11 +368,17 @@ check(fs.existsSync(path.join(__dirname, "..", "demo-plans.json")),
     path.join(__dirname, "..", "demo-plans.json"), "utf8"));
   const names = Object.keys(man.plans);
   check(names.length >= 4, "manifest lists at least the four plans asked for");
-  for (const want of ["Oncor Cloudcrest Substation Civils - 20251212.pdf_safe.pdf",
-                      "C4.0-SITE-GRADING-PLAN-Rev.1.pdf",
+  // 2026-10-01 (owner): only the two shared plan sets ship as cards - the
+  // Loves Lane civil sheets (C<n>.<n>-...-Rev.1.pdf) and Belle Farms
+  for (const want of ["C4.0-SITE-GRADING-PLAN-Rev.1.pdf",
+                      "C6.0-WATER-MAIN-PLAN-AND-PROFILE-Rev.1.pdf",
+                      "C8.0-STORM-LAYOUT-Rev.1.pdf",
                       "Belle Farms Structural Plans.pdf",
                       "Belle Farms Upper Parcel ROAD GRADING 1 of 2.pdf"])
     check(names.includes(want), `manifest carries the named demo "${want}"`);
+  for (const n of names)
+    check(/^C\d+(\.\d+)?-[A-Za-z-]+-Rev\.1\.pdf$/.test(n) || /^Belle Farms /.test(n),
+      `"${n}" is from one of the two shared plan sets`);
   for (const n of names) {
     check(typeof man.plans[n].shows === "string" && man.plans[n].shows.length > 20,
       `"${n}" says what it demonstrates`);
@@ -425,7 +456,7 @@ check(!appSrc.includes('x.className = "pv-x"'),
 // two replacements are pinned by projEmptyMine/projEmptyDemo above; what is
 // pinned HERE is that pvPaint still reaches for them and still names the
 // upload path in the one an empty box actually shows.
-check(appSrc.includes("projEmptyMine(demoTotal)")
+check(appSrc.includes("projEmptyMine(demoTotal, viewOnly)")
   && appSrc.includes("projEmptyDemo(pvDemoInfo.expected"),
   "empty state: pvPaint picks the message that fits the empty tab");
 check(P.projEmptyMine(0).includes("drop a PDF anywhere on this window"),

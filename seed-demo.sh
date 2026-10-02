@@ -56,7 +56,7 @@ if [ -z "$HOST" ]; then
 fi
 # Anything after the host narrows the run to those manifest plans. That
 # exists because seeding is also a PUBLISHING act - see the notice below -
-# and the operator needs a way to put up five of the seven.
+# and the operator needs a way to put up only some of the cards.
 WANT=("${ARGS[@]:1}")
 HOST="${HOST%/}"
 
@@ -90,7 +90,9 @@ JAR="$(mktemp)"
 chmod 600 "$JAR"
 trap 'rm -f "$JAR"' EXIT INT TERM
 
-CURL=(curl -sS $K -b "$JAR" -c "$JAR" --max-time 1800)
+# X-Core-Client: the marker every page of the app sends with a write (webui/client.js); the server refuses a write
+# without it (server.py _client_gate), so this script says it too
+CURL=(curl -sS $K -b "$JAR" -c "$JAR" --max-time 1800 -H 'X-Core-Client: 2')
 
 # ---- sign in ---------------------------------------------------------------
 # /api/login reads a JSON BODY - `body = await request.json()` - not a form.

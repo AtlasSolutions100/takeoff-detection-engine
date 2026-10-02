@@ -64,6 +64,11 @@ def seed(jid, name, pages, owner=None, results=0, approved=0, thumb=False,
 
 NOW = time.time()
 server.JOBS.clear()
+# Since 2026-10-01 an owner-less row is open to every account only when it is
+# a demo card or in a shared set (server._shared_for_all); "barn.pdf" below
+# plays a shared-set sheet, so it is put in the shared set here. The
+# staff-only side is pinned below and in tests/test_shared_rows_manifest.py.
+server.SHARED_NAMES = frozenset({"barn.pdf"})
 # oldest -> newest activity, deliberately seeded out of order
 seed("jobaaaaaaaaa", "upload_ab12cd34ef56_barn.pdf", 15, owner=None,
      results=15, approved=2, thumb=True, mtime=NOW - 500)
@@ -119,6 +124,18 @@ ok(al["jobbbbbbbbbb"]["mine"] is True and al["jobbbbbbbbbb"]["deletable"] is Tru
    "alice's own row is mine + deletable")
 ok(al["jobaaaaaaaaa"]["mine"] is False and al["jobaaaaaaaaa"]["deletable"] is False,
    "shared demo row is not deletable for a plain user")
+
+# an owner-less row that is neither a demo card nor in a shared set (a card
+# removed from an older manifest) is staff-only: alice no longer sees it
+server.SHARED_NAMES = frozenset()
+r = server.list_projects(_Req(user="alice"))
+ok("jobaaaaaaaaa" not in [p["job_id"] for p in r["projects"]],
+   "alice: an owner-less row outside the demo / shared sets is hidden")
+r = server.list_projects(_Req(user="carol", staff=True))
+_st = {p["job_id"]: p for p in r["projects"]}
+ok("jobaaaaaaaaa" in _st and _st["jobaaaaaaaaa"]["shared"] is False,
+   "staff still see it, marked not shared")
+server.SHARED_NAMES = frozenset({"barn.pdf"})
 
 # ---- staff in per-user mode see everything ---------------------------------
 r = server.list_projects(_Req(user="carol", staff=True))
@@ -229,10 +246,34 @@ ok(got["a.pdf"]["page"] == 0 and got["b.pdf"]["page"] == 0,
 _shipped = Path(server.ROOT) / "demo-plans.json"
 ok(_shipped.exists(), "demo-plans.json ships with the repo")
 _names = list(_json.loads(_shipped.read_text(encoding="utf-8"))["plans"])
+# Case- AND separator-insensitive since 2026-10-01: both sides are folded to
+# lowercase letters and digits only, so "aqua-vista", "Aqua Vista",
+# "AquaVista" and "AQUA_VISTA" all hit (the old check spelled "aqua vista"
+# and let "aqua-vista" through). The full on-screen scan, with word
+# boundaries and the server data the UI prints, is
+# tests/test_client_names_on_screen.py.
 _banned = ("ryno", "stice", "liberty", "beaumont", "kayden", "ellis",
-           "klayton", "swr_", "thielen", "aqua vista")
+           "klayton", "swr", "thielen", "biggerstaff", "aqua vista", "sonora",
+           "oncor", "cloudcrest", "gchc", "seer stone", "peony", "wells built",
+           "church", "gurr", "bryce", "approved construction set", "malta",
+           "add1 a2", "add3 door", "rose valley", "clearwater", "ruby crossing",
+           "jaro", "home 2 suites", "pierce", "shamrock", "town pump",
+           "barn", "guide residence", "true north")
+
+
+def _fold(s):
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
+ok(all(any(_fold(b) in _fold(v) for b in _banned)
+       for v in ("aqua-vista", "Aqua Vista", "AquaVista", "AQUA_VISTA",
+                 "Oncor Cloudcrest Substation Civils - 20251212.pdf_safe.pdf",
+                 "Church - Peony G-L w Shop Lot 1 Block 10 - Seer Stone 3-18-2026.pdf",
+                 "GCHC North Stairs Plan 1 Grading.pdf",
+                 "Approved Construction Set_2-17-26 (2).pdf")),
+   "_banned folds case and separators: the old spellings and cards all hit")
 for _n in _names:
-    ok(not any(b in _n.lower() for b in _banned),
+    ok(not any(_fold(b) in _fold(_n) for b in _banned),
        "demo plan %r is not a client document" % _n)
 ok(len(_names) >= 4, "the manifest has at least the four named plans",
    len(_names))

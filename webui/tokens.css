@@ -1,32 +1,42 @@
 /* ==========================================================================
-   CORE Takeoff — design tokens
+   CORE Takeoff - design tokens (REDESIGN, 2026-09-26)
    --------------------------------------------------------------------------
-   Load ORDER, in index.html:
-       <link rel="stylesheet" href="tokens.css?v=1">
-       <link rel="stylesheet" href="style.css?v=53">
+   The redesign is built to the round-3 "multi-trade" mockups
+   (design-mockups/2026-09-25/8-multitrade-steel and 7-multitrade-night-crew).
+   The GROUND and the ACCENT are two independent switches, both in
+   Settings -> Appearance (stored in this browser):
 
-   tokens.css loads FIRST and is the SINGLE source of the palette: style.css
-   no longer declares one. The legacy names (--bg --panel --line --text --dim
-   --accent --accent-deep --ok --hover --chip --stage --field --mono
-   --swatch-line) are re-declared at the bottom of this file on `:root:root`
-   (specificity 0-2-0), so they keep winning even if a later edit puts a
-   plain `:root` block back into style.css. New rules should use --t-* names.
+       <html data-palette="steel">       blue-black ground (DEFAULT)
+       <html data-palette="nightcrew">   graphite ground, uppercase card titles
+       <html data-accent="green">        CORE's own green (DEFAULT)
+       <html data-accent="yellow">       equipment yellow
+       <html data-theme="light">         paper - the light working theme
+
+   Koby, 2026-09-26, on the steel set's safety orange: "go green or the
+   yellow in the mockups". Orange is gone; green (the brand the product
+   already wears) is the default and yellow is one click away.
+
+   Load ORDER, in index.html:  tokens.css -> style.css -> shell.css.
+   tokens.css is the SINGLE source of the palette. The legacy names (--bg
+   --panel --line --text --dim --accent ...) are re-declared at the bottom on
+   `:root:root` so every older rule in style.css keeps resolving.
+
+   Shared by every palette (from the mockup README):
+     * cut is RED, fill is BLUE - the industry convention every client dirt
+       model uses. The old tokens had them the other way round; flipped here.
+     * ONE accent, spent only on the primary action, the active tab/tool and
+       the selected thing. Everything else is neutral so the plan and the
+       cut/fill colours are the loudest things on screen.
+     * tabular monospace numerals for every quantity; a neutral grotesque for
+       labels. No gradients, no glow.
 
    NOTHING here changes a number. Presentation only.
    ========================================================================== */
 
 /* ------------------------------------------------------------------ FONTS
-   Self-hosted. The mocks pulled IBM Plex from fonts.googleapis.com; the
-   shipped app must render identically in a field office with no internet,
-   so the latin subsets live in webui/fonts/ (SIL OFL 1.1 — see
-   webui/fonts/LICENSE). Every stack still ends in a real system fallback
-   so a missing/blocked font file degrades to Segoe UI / Consolas rather
-   than to a default serif.
-
-   IBM Plex Sans latin is ONE variable file (fvar/avar/HVAR/STAT present),
-   so a single face covers 400/500/600. IBM Plex Mono latin is static, one
-   file per weight. unicode-range matches Google's own `latin` subset. */
-
+   Self-hosted IBM Plex (SIL OFL 1.1, webui/fonts/LICENSE): the app must
+   render identically in a field office with no internet. Plex Sans latin is
+   one variable file (100-700); Plex Mono is static 400 + 500. */
 @font-face {
   font-family: "IBM Plex Sans";
   font-style: normal;
@@ -60,29 +70,33 @@
 
 :root {
   /* ------------------------------------------------------------------ TYPE
-     Two faces, one family: IBM Plex Sans for prose/labels, IBM Plex Mono
-     for DATA ONLY — quantities, ids, evidence strings. Mono is a meaning:
-     "this came off the sheet / out of the engine". It is never a heading
-     style, and nothing in the UI is uppercase+letterspaced by default.
-     Uppercase survives in exactly two places: the 4-letter brand and the
-     severity badge words (CHECK FIRST / OK / STOP). */
+     Plex Sans for prose/labels, Plex Mono for DATA - quantities, ids,
+     evidence strings. Mono means "this came off the sheet / out of the
+     engine"; it is never a heading style. */
   --t-font-ui:   "IBM Plex Sans", "Segoe UI", -apple-system, system-ui, sans-serif;
   --t-font-data: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
-  /* Type scale — 14px base. The floor is 12px: field-office monitors sit
-     further away than a laptop and the app had 161 rules between 8.5 and
-     11.5px. Nothing below --t-fs-xs. */
-  --t-fs-xs:   12px;   /* chips, meta, footnotes — the FLOOR */
-  --t-fs-sm:   13px;   /* secondary rows, hints */
+  /* Type scale. The 12px floor stays: field-office monitors sit further
+     away than a laptop. Nothing below --t-fs-xs. */
+  --t-fs-xs:   12px;   /* chips, meta, footnotes - the FLOOR */
+  --t-fs-sm:   13px;   /* rail rows, secondary text */
   --t-fs-base: 14px;   /* body, controls */
-  --t-fs-md:   16px;   /* card titles, sheet name */
-  --t-fs-lg:   20px;   /* page titles, key quantities */
-  --t-fs-xl:   26px;   /* the money number on the approve bar */
+  --t-fs-md:   15px;   /* card titles, sheet name */
+  --t-fs-lg:   20px;   /* page titles, readouts */
+  --t-fs-xl:   28px;   /* the big readout numerals (project tiles, totals) */
   --t-lh-tight: 1.3;
   --t-lh-body:  1.5;
 
   /* every quantity cell: lining, equal-width digits */
   --t-numeric: tabular-nums lining-nums;
+
+  /* Card / section titles. Steel: sentence case, semibold. Night crew
+     overrides these three to uppercase letter-spaced (its "industrial
+     voice"); nothing else about the markup changes. */
+  --t-title-case:   none;
+  --t-title-track:  0;
+  --t-title-size:   var(--t-fs-md);
+  --t-title-weight: 600;
 
   /* -------------------------------------------------------------- SPACING */
   --t-sp-1: 4px;
@@ -94,133 +108,215 @@
   --t-sp-7: 48px;
   --t-sp-8: 64px;
 
-  /* ---------------------------------------------------------------- RADII */
-  --t-r-1: 4px;      /* inputs, chips-with-corners */
-  --t-r-2: 8px;      /* buttons, rows */
-  --t-r-3: 12px;     /* cards, panels, menus */
-  --t-r-pill: 999px; /* provenance chips, status pills */
+  /* ---------------------------------------------------------------- RADII
+     The mockups are instrument-like: small corners, hairline borders. */
+  --t-r-1: 3px;      /* inputs, chips-with-corners */
+  --t-r-2: 5px;      /* buttons, rows */
+  --t-r-3: 7px;      /* cards, panels, menus */
+  --t-r-pill: 999px; /* status pills */
+
+  /* ------------------------------------------------------------ THE SHELL
+     Frame sizes for shell.css: top bar (wordmark, project . sheet, module
+     tabs), tool ribbon, left rail (sheets + the module's card), right rail
+     (takeoff by trade + questions). */
+  --t-topbar-h: 52px;
+  --t-ribbon-h: 46px;
+  --t-rail-l:   264px;
+  --t-rail-r:   344px;
+  --t-gap:      8px;
 
   /* ------------------------------------------------------------ ELEVATION
-     Dark UIs elevate with lighter surfaces + shadow, not shadow alone. */
-  --t-el-1: 0 1px 2px rgba(0,0,0,.30);
-  --t-el-2: 0 4px 14px rgba(0,0,0,.35);
-  --t-el-3: 0 12px 40px rgba(0,0,0,.45);     /* menus, modals */
-  --t-focus: 0 0 0 2px var(--t-accent);
+     Dark UIs elevate with lighter surfaces + a border, shadow only on
+     things that float (menus, popovers, modals). */
+  --t-el-1: 0 1px 2px rgba(0,0,0,.35);
+  --t-el-2: 0 6px 18px rgba(0,0,0,.40);
+  --t-el-3: 0 16px 44px rgba(0,0,0,.50);     /* menus, modals */
+  --t-focus: 0 0 0 2px var(--t-accent-hi);   /* the TEXT-safe accent: yellow on paper is 1.6:1 */
 
-  /* ------------------------------------------------- DARK PALETTE (default)
-       stage (deepest, the "table" the sheet lies on)
-       < surface-1 (chrome: header, rails, sidebar ground)
-       < surface-2 (cards ON the sidebar / floating toolbars)
-       < surface-3 (menus, hovers, modals — highest).
-     The white sheet is the brightest thing on screen BY DESIGN; chrome
-     stays two stops darker so linework wins every contrast contest. */
-  --t-stage:     #0c0e10;
-  --t-surface-1: #16191b;
-  --t-surface-2: #1e2224;
-  --t-surface-3: #262b2e;
-  --t-field:     #24292c;   /* inputs sit slightly above their card */
-  --t-border:    #2e3438;
-  --t-border-strong: #3d454a;
+  /* ----------------------------------------- STEEL PALETTE (the default)
+       stage      the table the sheet lies on (deepest)
+     < surface-1  chrome: top bar, ribbon, rail ground
+     < surface-2  cards on the rails, floating toolbars
+     < surface-3  menus, hovers, modals (highest)
+     Tuned to the rendered mockups Koby picked (blue-black chrome, panels a
+     step lighter), not only to the README hexes. */
+  --t-stage:     #060c12;
+  --t-surface-1: #0a1219;
+  --t-surface-2: #0f1922;
+  --t-surface-3: #16222d;
+  --t-field:     #121e28;   /* inputs sit slightly above their card */
+  --t-border:    #1d2a36;
+  --t-border-strong: #2b3c4b;
 
-  --t-text:      #e9ecee;
-  --t-text-dim:  #9aa5ab;
-  --t-text-faint:#6b757b;
-  /* hairline around a color swatch, so a dark family chip still has an edge */
-  --t-swatch-line: rgba(255,255,255,.25);
+  --t-text:      #e6eaee;
+  --t-text-dim:  #9aa8b6;
+  --t-text-faint:#7d8b99;   /* 5.1:1 on a card - the faintest legible grey */
+  --t-swatch-line: rgba(255,255,255,.28);
 
-  /* Brand: Work Optional forest green, ONE accent. */
+  /* the plan sheet, "like a light table": the page raster keeps its own
+     paper; this is the frame and empty-state colour around it */
+  --t-paper:     #f2f0ec;
+  --t-paper-ink: #1f2326;
+
+  /* ONE accent: CORE green (the default; yellow below). Text ON it is dark
+     ink (5.7:1) - white on this green is 2.97:1, below AA for button-size
+     text. One token, so it is a one-line change if white is preferred. */
   --t-accent:      #3fa873;
-  --t-accent-deep: #1f5c3e;
-  --t-accent-ink:  #06210f;   /* text on solid accent */
+  --t-accent-hi:   #5ccb92;   /* accent as TEXT on dark (8.8:1) */
+  --t-accent-deep: #1f5c3e;   /* pressed / tinted active ground */
+  --t-accent-bg:   rgba(63,168,115,.15);
+  --t-accent-ink:  #06210f;
 
-  /* ------------------------------------------------ SEMANTIC — VERDICTS
-     The app's confidence grammar, promoted to tokens:
-       ok    = a second independent source corroborates (green)
-       warn  = one source, or a choice the operator must make (amber)
-       stop  = two sources contradict / no scale (red)
-       info  = neutral fact, no verdict (blue-gray)
+  /* ------------------------------------------------ SEMANTIC - VERDICTS
+     The app's confidence grammar:
+       ok    = supplied / a second source corroborates   (teal-green)
+       warn  = assumed / one source / operator's choice  (amber)
+       stop  = missing / two sources contradict          (red)
+       info  = neutral fact                               (steel blue)
      A confident wrong number is worse than no number: warn is the default
-     state of everything unverified. Never restyle warn to look like ok. */
-  --t-ok:        #3fa873;
-  --t-ok-bg:     rgba(63,168,115,.14);
-  --t-ok-ink:    #06210f;     /* text on a solid ok badge */
-  --t-warn:      #d79b3a;
-  --t-warn-bg:   rgba(215,155,58,.13);
-  --t-warn-ink:  #241703;     /* text on a solid warn badge */
-  --t-stop:      #e0574a;
-  --t-stop-bg:   rgba(224,87,74,.13);
-  --t-stop-ink:  #2a0503;     /* text on a solid stop badge */
-  --t-info:      #6d93c8;
-  --t-info-bg:   rgba(109,147,200,.13);
+     state of everything unverified. Never restyle warn to look like ok.
+     ok is TEAL, not the accent green, so "verified" never reads as
+     "selected"; warn is amber, so "assumed" never reads as either. */
+  --t-ok:        #2fb5a2;
+  --t-ok-bg:     rgba(47,181,162,.14);
+  --t-ok-solid:  #0f6b62;     /* the "supplied" chip ground (mockup) */
+  --t-ok-ink:    #d6f5f0;     /* text on the solid ok chip (5.5:1) */
+  --t-warn:      #e5a33d;
+  --t-warn-bg:   rgba(229,163,61,.14);
+  --t-warn-ink:  #241703;
+  --t-stop:      #e5533d;
+  --t-stop-bg:   rgba(229,83,61,.14);
+  --t-stop-solid:#b22d2e;     /* the "missing" chip ground (mockup) */
+  --t-stop-ink:  #ffffff;
+  --t-info:      #6fa3e0;
+  --t-info-bg:   rgba(111,163,224,.13);
 
   /* Danger controls (delete, remove-from-server) */
-  --t-danger:      #e0574a;
-  --t-danger-deep: #8f2f26;
+  --t-danger:      #e5533d;
+  --t-danger-deep: #8f2a1f;
 
-  /* ------------------------------------------------ SEMANTIC — EARTHWORK
-     The industry map convention the app already uses (AGTEK et al.):
-     cut = blue, fill = orange. These are DATA colors, exempt from the
-     one-accent rule, and must never be reassigned to UI meanings. */
-  --t-cut:      #4f8ff7;
-  --t-cut-bg:   rgba(79,143,247,.16);
-  --t-fill:     #e8912d;
-  --t-fill-bg:  rgba(232,145,45,.16);
-  /* the existing/proposed surface assignment pair (earthwork rows) */
-  --t-exist:    #35b26b;
-  --t-exist-bg: rgba(53,178,107,.16);
-  --t-prop:     #4f8ff7;
-  --t-prop-bg:  rgba(79,143,247,.16);
+  /* ------------------------------------------------ SEMANTIC - EARTHWORK
+     Cut RED, fill BLUE (the convention; the cut / fill engine and every
+     client dirt model agree). --t-cut is text-safe on a card (4.8:1); the
+     map tints are for areas drawn over the paper sheet. */
+  --t-cut:      #e5533d;
+  --t-cut-bg:   rgba(217,68,46,.16);
+  --t-cut-map:  rgba(217,68,46,.42);
+  --t-fill:     #3b82f6;
+  --t-fill-bg:  rgba(59,130,246,.16);
+  --t-fill-map: rgba(59,130,246,.40);
+  /* the existing / proposed surface pair (trench and structure rows) */
+  --t-exist:    #9aa8b6;
+  --t-exist-bg: rgba(154,168,182,.14);
+  --t-prop:     #e6eaee;
+  --t-prop-bg:  rgba(230,234,238,.10);
 
-  /* selection / measure — ONE interactive highlight for "the thing you are
-     drawing or measuring right now", replacing magenta measure + cyan
-     structure + orange armed states. It is deliberately NOT the canvas
-     chain-selection magenta (#ff00cc, set in app.js) and not cut blue. */
-  --t-select:    #58b7e6;
-  --t-select-bg: rgba(88,183,230,.18);
+  /* selection / measure: "the thing you are drawing or measuring right
+     now" - the accent, because it IS the active state. */
+  --t-select:    #3fa873;
+  --t-select-bg: rgba(63,168,115,.16);
 }
 
-/* ------------------------------------------------------- LIGHT ("paper") */
+/* ------------------------------------------------ ACCENT: equipment yellow
+   (black text on it, 11.5:1) - the night-crew mockups' accent */
+:root[data-accent="yellow"] {
+  --t-accent:      #f5c400;
+  --t-accent-hi:   #ffd633;
+  --t-accent-deep: #5c4a00;
+  --t-accent-bg:   rgba(245,196,0,.14);
+  --t-accent-ink:  #111111;
+  --t-select:      #f5c400;
+  --t-select-bg:   rgba(245,196,0,.16);
+}
+
+/* --------------------------------------------- GRAPHITE (night crew)
+   Graphite chrome and uppercase letter-spaced card titles - "night-shift
+   chrome, industrial voice". The accent is its own switch (above). */
+:root[data-palette="nightcrew"] {
+  --t-stage:     #0d1012;
+  --t-surface-1: #15181a;
+  --t-surface-2: #1e2224;
+  --t-surface-3: #262b2e;
+  --t-field:     #23282b;
+  --t-border:    #2c3236;
+  --t-border-strong: #3b4348;
+  --t-text:      #e9ecee;
+  --t-text-dim:  #a0a9af;
+  --t-text-faint:#848d93;
+
+  --t-title-case:   uppercase;
+  --t-title-track:  .12em;
+  --t-title-size:   12px;
+  --t-title-weight: 700;
+}
+
+/* ------------------------------------------------------- LIGHT ("paper")
+   Engineering-paper white with a graphite frame (round 1, "1-paper") and
+   the green, deepened for paper. The theme for daylight and print review. */
 :root[data-theme="light"] {
-  --t-stage:     #dcdfd8;   /* darker than the panels: the sheet still pops */
-  --t-surface-1: #f4f5f1;
+  --t-stage:     #e4e1da;   /* darker than the panels: the sheet still pops */
+  --t-surface-1: #f7f6f2;
   --t-surface-2: #ffffff;
   --t-surface-3: #ffffff;
-  --t-field:     #eef0ea;
-  --t-border:    #d9ddd4;
-  --t-border-strong: #b9c0b6;
+  --t-field:     #efede7;
+  --t-border:    #d9d6cf;
+  --t-border-strong: #bdb8ae;
 
-  --t-text:      #24272a;
-  --t-text-dim:  #5f6a64;
-  --t-text-faint:#8a938d;
+  --t-text:      #1f2326;
+  --t-text-dim:  #5a5f64;
+  --t-text-faint:#767b80;
   --t-swatch-line: rgba(0,0,0,.25);
+  --t-paper:     #ffffff;
 
-  --t-accent:      #1f5c3e;
-  --t-accent-deep: #1f5c3e;
+  --t-accent:      #1f7a4d;   /* white text on it: 5.3:1 */
+  --t-accent-hi:   #1a6b43;   /* accent as TEXT on paper (6.0:1) */
+  --t-accent-deep: #d5eee0;
+  --t-accent-bg:   rgba(31,122,77,.12);
   --t-accent-ink:  #ffffff;
 
-  --t-ok:      #1f7a4d;  --t-ok-bg:   rgba(31,122,77,.12);   --t-ok-ink:   #ffffff;
-  --t-warn:    #a86c14;  --t-warn-bg: rgba(168,108,20,.12);  --t-warn-ink: #241703;
-  --t-stop:    #bb3a2e;  --t-stop-bg: rgba(187,58,46,.10);   --t-stop-ink: #ffffff;
+  --t-ok:      #0f7f73;  --t-ok-bg:   rgba(15,127,115,.12); --t-ok-solid: #0f7f73;  --t-ok-ink: #ffffff;
+  --t-warn:    #9a6412;  --t-warn-bg: rgba(154,100,18,.12); --t-warn-ink: #241703;
+  --t-stop:    #b8352a;  --t-stop-bg: rgba(184,53,42,.10);  --t-stop-solid: #b8352a; --t-stop-ink: #ffffff;
   --t-info:    #3d6ca8;  --t-info-bg: rgba(61,108,168,.10);
-  --t-danger:  #bb3a2e;  --t-danger-deep: #8f2f26;
+  --t-danger:  #b8352a;  --t-danger-deep: #8f2a1f;
 
-  --t-cut:     #2f6fd6;  --t-cut-bg:  rgba(47,111,214,.14);
-  --t-fill:    #c4761a;  --t-fill-bg: rgba(196,118,26,.14);
-  --t-exist:   #1f7a4d;  --t-exist-bg: rgba(31,122,77,.14);
-  --t-prop:    #2f6fd6;  --t-prop-bg:  rgba(47,111,214,.14);
-  --t-select:  #1a7fb5;  --t-select-bg: rgba(26,127,181,.14);
+  --t-cut:     #c23b27;  --t-cut-bg:  rgba(194,59,39,.12);  --t-cut-map:  rgba(217,68,46,.38);
+  --t-fill:    #2563d6;  --t-fill-bg: rgba(37,99,214,.12);  --t-fill-map: rgba(59,130,246,.36);
+  --t-exist:   #5a5f64;  --t-exist-bg: rgba(90,95,100,.12);
+  --t-prop:    #1f2326;  --t-prop-bg:  rgba(31,35,38,.08);
+  --t-select:  #1f7a4d;  --t-select-bg: rgba(31,122,77,.14);
+
+  --t-title-case:   none;
+  --t-title-track:  0;
+  --t-title-size:   var(--t-fs-md);
+  --t-title-weight: 600;
 
   --t-el-1: 0 1px 2px rgba(20,24,20,.10);
-  --t-el-2: 0 4px 14px rgba(20,24,20,.12);
-  --t-el-3: 0 12px 40px rgba(20,24,20,.18);
+  --t-el-2: 0 6px 18px rgba(20,24,20,.12);
+  --t-el-3: 0 16px 44px rgba(20,24,20,.18);
+}
+
+/* paper + yellow: yellow fills keep black ink; yellow as TEXT on paper is
+   unreadable, so the text form is a deep ochre (5.7:1) */
+:root[data-theme="light"][data-accent="yellow"] {
+  --t-accent:      #f5c400;
+  --t-accent-hi:   #7a5d00;
+  --t-accent-deep: #fbeeb0;
+  --t-accent-bg:   rgba(245,196,0,.20);
+  --t-accent-ink:  #111111;
+  --t-select:      #c99a00;
+  --t-select-bg:   rgba(245,196,0,.20);
 }
 
 /* ==========================================================================
-   LEGACY REMAP — the names style.css already consumes, now sourced here.
+   LEGACY REMAP - the names style.css already consumes, now sourced here.
    `:root:root` (0-2-0) out-specifies any plain `:root` regardless of file
    order. Delete each line as style.css migrates to the --t-* names.
    ========================================================================== */
 :root:root {
+  /* fl3d.js's overlay has always painted `var(--t-bg)`, which no palette
+     defined - so the 3D view was see-through until three.js mounted. */
+  --t-bg:        var(--t-stage);
   --bg:          var(--t-surface-1);
   --panel:       var(--t-surface-2);
   --line:        var(--t-border);

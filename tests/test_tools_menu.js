@@ -12,7 +12,7 @@
 //      must appear exactly once in index.html, INSIDE #toolsMenu, with
 //      #detectBtn (the workflow) and #fbBtn left outside; and app.js must
 //      still attach a handler to every one of them. A moved DOM node keeps
-//      its listeners and its element identity ($("ewBtn") resolves to the
+//      its listeners and its element identity ($("cfBtn") resolves to the
 //      same node wherever it sits), so id-in-menu + handler-still-attached
 //      IS the "every button still fires" guarantee - plus a propagation
 //      simulation below that pins the close-then-fire contract the menu's
@@ -46,10 +46,10 @@ const T = new Function(appSrc.slice(a, b) +
   " return { TOOLS_MENU_ITEMS, toolsMenuModel, toolsMenuNextIdx };")();
 
 // ---- the registry is exactly the nine required tools ------------------------
-const WANT = ["aiBtn", "ewBtn", "trBtn", "symBtn", "rollBtn",
+const WANT = ["aiBtn", "cfBtn", "flBtn", "trBtn", "symBtn", "rollBtn",
               "xsBtn", "coBtn", "stBtn", "legendBtn"];
 const got = T.TOOLS_MENU_ITEMS.map((it) => it[0]);
-check(got.length === 9, `registry lists 9 tools (got ${got.length})`);
+check(got.length === 10, `registry lists 10 tools (got ${got.length})`);
 check(WANT.every((id) => got.includes(id)),
   "registry covers ANALYZE..LEGEND SHEET exactly");
 check(!got.includes("detectBtn"), "DETECT LINES is not in the menu registry");
@@ -70,14 +70,14 @@ check(!got.includes("detectBtn"), "DETECT LINES is not in the menu registry");
 {
   // a result loaded, earthwork panel open: 9 rows, exactly one dot
   const rows = T.TOOLS_MENU_ITEMS.map(([id, p]) => ({
-    id, hidden: false, panelHidden: p ? (id !== "ewBtn") : null,
+    id, hidden: false, panelHidden: p ? (id !== "cfBtn") : null,
   }));
   const m = T.toolsMenuModel(rows);
-  check(m.visible.length === 9, "after detect: all 9 rows visible");
+  check(m.visible.length === 10, "after detect: all 10 rows visible");
   check(m.note === false, "after detect: note gone");
-  check(m.dots.ewBtn === true, "open earthwork panel carries the dot");
+  check(m.dots.cfBtn === true, "open cut / fill stage carries the dot");
   const others = Object.entries(m.dots)
-    .filter(([id]) => id !== "ewBtn").map(([, v]) => v);
+    .filter(([id]) => id !== "cfBtn").map(([, v]) => v);
   check(others.every((v) => v === false), "no other row carries a dot");
 }
 {
@@ -179,8 +179,8 @@ const menuHtml2 = htmlSrc.slice(menuStart2, menuEnd2);
 for (const g of ["Calculators", "Counts", "Document"])
   check(menuHtml2.includes(`<div class="tm-group" aria-hidden="true">${g}</div>`),
     `"${g}" group header is an aria-hidden div, not a menu item`);
-check((menuHtml2.match(/<button/g) || []).length === 9,
-  "the menu still holds exactly nine buttons, headers included");
+check((menuHtml2.match(/<button/g) || []).length === 10,
+  "the menu still holds exactly ten buttons, headers included");
 check((menuHtml2.match(/class="tm-sep"/g) || []).length === 2,
   "two separators for three groups");
 check(cssSrc.includes(".tm-group") && /\.tm-group\s*{[^}]*pointer-events:\s*none/
@@ -200,13 +200,13 @@ check(!/const btns = TOOLS_MENU_ITEMS\.map/.test(appSrc),
 {
   // the two orders really are different now, which is why the above matters
   const domOrder = [...menuHtml2.matchAll(/<button[^>]*id="(\w+)"/g)].map(m => m[1]);
-  check(domOrder.length === 9, "nine rows read out of the markup");
+  check(domOrder.length === 10, "ten rows read out of the markup");
   check(domOrder.join() !== got.join(),
     "DOM order and registry order differ (grouping moved Analyze last)");
   check(domOrder[domOrder.length - 1] === "aiBtn",
     "Analyze is the last row on screen");
-  check(domOrder[0] === "ewBtn", "Earthwork is the first row on screen");
-  check(new Set(domOrder).size === 9 && WANT.every(id => domOrder.includes(id)),
+  check(domOrder[0] === "cfBtn", "Earthwork is the first row on screen");
+  check(new Set(domOrder).size === 10 && WANT.every(id => domOrder.includes(id)),
     "grouping moved the rows but lost none of them");
 }
 
@@ -231,7 +231,7 @@ check(!/const btns = TOOLS_MENU_ITEMS\.map/.test(appSrc),
       && menu.hidden,
       `menu click on #${btn.id}: handler fired, menu closed after`);
   }
-  check(fired.length === 9, "all nine simulated clicks reached a handler");
+  check(fired.length === 10, "all ten simulated clicks reached a handler");
 }
 
 // ---- STRUCTURE: every tool panel lives in the dock at the top -------------
@@ -243,7 +243,7 @@ check(!/const btns = TOOLS_MENU_ITEMS\.map/.test(appSrc),
 // this pins. It does NOT pin who shows or hides a panel: that is still each
 // panel's own button and close handler, unchanged.
 {
-  const PANELS = ["ewPanel", "trPanel", "coPanel", "rollPanel", "xsPanel",
+  const PANELS = ["trPanel", "coPanel", "rollPanel", "xsPanel",
                   "symPanel", "stPanel"];
   const dockAt = htmlSrc.indexOf('<div id="toolDock"');
   const scrollAt = htmlSrc.indexOf('<div id="sideScroll"');

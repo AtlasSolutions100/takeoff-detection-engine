@@ -5,9 +5,9 @@
     "THE DEMO TAB IS THIS FILE. /api/demo-plans answers from here alone, so",
     "the tab shows exactly these plans, one card each, on a box holding zero",
     "jobs for them or sixty-three. It is NOT built from job rows any more:",
-    "that showed the box's history (15 jobs for Oncor, 14 for Belle Farms",
-    "Structural) and every one of them carried a detection computed weeks",
-    "ago, which is a pre-warmed cache presented as a live run.",
+    "that showed the box's history (a dozen or more jobs for one sheet) and",
+    "every one of them carried a detection computed weeks ago, which is a",
+    "pre-warmed cache presented as a live run.",
     "",
     "AND THEY OPEN FRESH. POST /api/demo/{name}/open sweeps everything",
     "derived from the PDF before handing it over, so a visitor always meets",
@@ -28,59 +28,85 @@
     "  seed-demo.sh    uploads these onto a hosted box, and refuses to run if",
     "                  it does not seed every name here. Any pre-detection it",
     "                  does is swept by the first demo open, by design.",
-    "  provision_demo.py  keeps owner=None on exactly these when it hands",
-    "                  every other document on the box to staff.",
+    "  provision_demo.py  --rewrite-owners keeps an OWNER-LESS row wearing one",
+    "                  of these names (or a shared_names name) shared while",
+    "                  it moves the other owner-less rows to staff; a row that",
+    "                  has an owner is never touched, whatever it is named.",
+    "",
+    "WHO SEES A SHARED ROW (2026-10-01). An owner-less row is open to every",
+    "account ONLY when its display name is a key below or one of",
+    "`shared_names` (exactly; case does not matter). Any other owner-less row - a card that was removed",
+    "from this file, a sheet seeded under an older manifest - is STAFF-ONLY",
+    "(server.py _shared_for_all). It is hidden, never deleted. So shrinking",
+    "this file takes a card off every client's screen with no server step.",
+    "",
+    "`shared_names`: the sheets of the two shared plan sets (the Loves Lane",
+    "civil sheets and Belle Farms) as they are named on a seeded store, from",
+    "this file's history and provision_demo.py's old prefixes. Some are",
+    "shared but are not demo cards; these names keep those open to everyone.",
+    "EXACT names, not prefixes: a prefix let an owner-less \"C4.0-SITE-GRADING-",
+    "PLAN for <someone>.pdf\" open for every account (critic bid-content-1,",
+    "RISK-3).",
     "",
     "The key is the DISPLAY name, which is the filename with our own",
     "upload_<hash>_ prefix stripped (server.py _display_name). That is what",
     "makes one list work for a laptop that opened the file by path and for a",
     "hosted box that received it through /api/upload.",
     "",
-    "PROVENANCE RULE, not negotiable: every file here is ours - the",
-    "TakeoffPro AI corpus (Plans, Plans 2) or the Oncor sheet beside it.",
-    "Nothing from Ryno Construction and nothing from client_meet may ever",
-    "appear in this file: those are named clients' drawings, and stice /",
-    "Liberty Park is a live bid. tests/test_projects_api.py enforces this.",
+    "PROVENANCE RULE, not negotiable: only the two shared plan sets (the",
+    "Loves Lane civil sheets and Belle Farms) may appear here. Every other",
+    "set in the corpus or in the client folders is a client's drawing and",
+    "staff-only, and eighteen accounts on the box compete with each other.",
+    "tests/test_projects_api.py and tests/test_demo_seed.py enforce this.",
     "",
     "`page` is the sheet a visitor should land on (engine page index, 0-based",
     "- printed sheet number is page+1 on these sets).",
     "",
     "`shows` is printed on the card. EVERY ONE OF THESE LINES WAS WRITTEN",
-    "FROM A LIVE RUN ON THAT SHEET, 2026-08-31, not from what a sheet of its",
-    "type usually carries - see out/verify/2026-08-31/projects-landing/. If",
+    "FROM A LIVE RUN ON THAT SHEET, not from what a sheet of its type usually",
+    "carries. Re-measured 2026-10-02 on the 2.0 build (out/verify/2026-10-02/",
+    "demo-cards/): the 2026-08-31 lines carried counts the engine no longer",
+    "gives (1,429 runs / 113 styles where the page says 1402 / 109) and",
+    "promises the page does not keep (a door count that shows nowhere, a",
+    "scale it \"refuses to pick\" where it picks one and warns). So: NO EXACT",
+    "COUNTS on a card - they go stale with every engine change. If",
     "you add a plan, open it and detect it first, and describe what actually",
     "came out. A card that promises a capability the sheet does not exercise",
     "is the one thing a demo set must never do.",
     "",
-    "DROPPED after testing, and why:",
-    "  window_takeoff_benchmark_plan.pdf - it opens and detects fine (44",
-    "  chains, 6 styles, scale read from its caption), but its own title",
-    "  block reads 'AUTOMATION TAKEOFF BENCHMARK PLAN - WINDOW TEST BED /",
-    "  PROJECT: MOCK-01'. It is our synthetic fixture, not a drawing, and a",
-    "  visitor who opens it sees us demonstrating on a rectangle we drew",
-    "  ourselves. It stays in the corpus as a test bed; it is not a demo.",
-    "  This leaves symbol COUNTING undemonstrated - the only counting sheets",
-    "  in the corpus (Marked Up Window Plans, Window - Storefront - Door",
-    "  schedules) are under client_meet/Bill and are excluded by the rule",
-    "  above. That gap is real and is not papered over here."
+    "REMOVED 2026-10-01 (owner's decision): every card that was not from the",
+    "two shared sets - the substation civils, the stair-plan grading sheet,",
+    "the house set, the residential construction set and the two",
+    "commercial addenda sheets. They were other parties' drawings.",
+    "",
+    "DROPPED earlier after testing: window_takeoff_benchmark_plan.pdf - our",
+    "synthetic fixture, not a drawing. It stays in the corpus as a test bed."
   ],
   "version": 1,
+  "shared_names": [
+    "C3.0-Site-Plan-Rev.1.pdf",
+    "C4.0-SITE-GRADING-PLAN-Rev.1.pdf",
+    "C4.0-SITE-GRADING-PLAN-Rev.1 (1).pdf",
+    "C6.0-WATER-MAIN-PLAN-AND-PROFILE-Rev.1.pdf",
+    "C8.0-STORM-LAYOUT-Rev.1.pdf",
+    "C9.0-ROAD-LAYOUT-Rev.1.pdf",
+    "C10.4-TYPICAL-ROAD-SECTIONS-Rev.1.pdf",
+    "Belle Farms Structural Plans.pdf",
+    "Belle Farms Upper Parcel ROAD GRADING 1 of 2.pdf",
+    "Belle Farms Upper Parcel ROAD GRADING 2 of 2.pdf"
+  ],
   "plans": {
-    "Oncor Cloudcrest Substation Civils - 20251212.pdf_safe.pdf": {
-      "page": 2,
-      "shows": "Substation civils drawn with no CAD layer names at all — 314 runs sorted into 49 styles by line pattern alone."
-    },
     "C4.0-SITE-GRADING-PLAN-Rev.1.pdf": {
       "page": 0,
-      "shows": "The densest sheet we score: 1,429 runs in 113 styles, every one carrying the drafter's own layer name."
+      "shows": "A busy site grading sheet: more than a thousand lines in over a hundred styles, each carrying the drafter's own layer name."
     },
     "Belle Farms Structural Plans.pdf": {
-      "page": 0,
-      "shows": "A building sheet, not a civil one — and the only one here whose scale is confirmed twice: printed and drawn agree."
+      "page": 1,
+      "shows": "A building floor plan. Pick rooms fills a room with one click. Some printed dimensions do not match the scale, and the app flags it."
     },
     "Belle Farms Upper Parcel ROAD GRADING 1 of 2.pdf": {
       "page": 0,
-      "shows": "Heavy topography: 685 contour runs, 254k ft of line. It prints three scales, and the app refuses to pick one for you."
+      "shows": "Heavy topography on a road grading sheet. It prints three scales. The app shows all three and tells you to set the one for your drawing."
     },
     "C6.0-WATER-MAIN-PLAN-AND-PROFILE-Rev.1.pdf": {
       "page": 0,
@@ -88,11 +114,7 @@
     },
     "C8.0-STORM-LAYOUT-Rev.1.pdf": {
       "page": 0,
-      "shows": "A storm drain network: O-PIPE runs between structures. Its scale came from OCR, and the app says not to trust that."
-    },
-    "GCHC North Stairs Plan 1 Grading.pdf": {
-      "page": 0,
-      "shows": "The cleanest read in the set — 52 of its 53 styles arrive already named by the drafter, leaving one thing to check."
+      "shows": "A storm drain layout with O-PIPE runs. Its scale caption had to be read by OCR, and the drawn scale bar confirms the reading: 20 ft to the inch both ways."
     }
   }
 }

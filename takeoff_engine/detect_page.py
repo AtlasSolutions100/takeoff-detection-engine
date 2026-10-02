@@ -42,8 +42,8 @@ def error_path(job_dir: str, page: int) -> Path:
 
 # Sheet-number tokens as title blocks actually print them, measured on three
 # document families (2026-08-30): discipline letter(s), optional dash, short
-# number, optional decimal - "C1.0" (Beaumont Barn, 20.4pt spans), "C-04"
-# (Oncor, 26.2pt), "C5.1" (Kayden Springs, 40.2pt). Digits are capped at 3 so
+# number, optional decimal - "C1.0" (a residential civil, 20.4pt spans), "C-04"
+# (a substation set, 26.2pt), "C5.1" (a 48-page civil set, 40.2pt). Digits are capped at 3 so
 # sheet series like C-101 pass while title-block job numbers (24105,
 # 2024.15 - 4+ digits, no letter) never can. Digits-only tokens are accepted
 # ONLY with a decimal point ("3.1"-style series): a bare integer in the
@@ -53,8 +53,8 @@ def error_path(job_dir: str, page: int) -> Path:
 _SHEET_TOKEN = re.compile(r"^[A-Z]{1,3}-?\d{1,3}(\.\d{1,2})?[A-Z]?$")
 _SHEET_TOKEN_NUM = re.compile(r"^\d{1,2}\.\d{1,2}$")
 # Cross-references to OTHER sheets print small: measured 5.6pt ("CF3.0"
-# plumbing refs) and 9.1pt ("C2.0" callout) on Barn C4.3, 10.1pt ("EOS-1")
-# on Oncor C-05, vs 20.4-40.2pt for every real sheet number seen. The floor
+# plumbing refs) and 9.1pt ("C2.0" callout) on Res-A C4.3, 10.1pt ("EOS-1")
+# on substation C-05, vs 20.4-40.2pt for every real sheet number seen. The floor
 # sits under the real ones with margin; the largest-wins rule handles pages
 # that print both.
 _SHEET_MIN_PT = 8.0
@@ -79,9 +79,9 @@ def read_sheet_number(page) -> "str | None":
 
     ABSTAINS (returns None) when nothing qualifies: raster/scanned pages
     have no text spans there, and a guessed sheet id is worse than an index.
-    Measured 2026-08-30: 15/15 on Beaumont Barn civil (C1.0-C5.1, incl.
-    C4.3 whose name row is a foundation plan), 9/9 on Oncor (C-01..C-09),
-    43/48 on Kayden Springs u2 - the 5 abstains (idx 0/6/16/30/37) are
+    Measured 2026-08-30: 15/15 on a residential civil set (C1.0-C5.1, incl.
+    C4.3 whose name row is a foundation plan), 9/9 on a substation set (C-01..C-09),
+    43/48 on a 48-page civil set - the 5 abstains (idx 0/6/16/30/37) are
     section pages whose bottom-right corner was render-verified to hold
     border ink and no text at all. tests/test_sheet_no.py asserts all of it.
     """
@@ -143,7 +143,7 @@ def read_sheet_number(page) -> "str | None":
     pool = lettered or cands
     best = max(c[1] for c in pool)
     # 0.5pt: same-cell text repeats at identical size; distinct cells differ
-    # by whole points (20.4 vs 9.1 on Barn C4.3)
+    # by whole points (20.4 vs 9.1 on Res-A C4.3)
     top = [c for c in pool if c[1] >= best - 0.5]
     return max(top, key=lambda c: c[2])[3]
 
@@ -163,7 +163,7 @@ _ENGINE_FILES = ("extract.py", "chain.py", "scale_detect.py",
                  # classify_page.py picks WHICH of the above even runs, so a
                  # change there can swap every chain on the page. It was
                  # missing from this list until 2026-08-22, which meant the
-                 # routing fix for Thielen A0.0 would have read back out of
+                 # routing fix for Res-C A0.0 would have read back out of
                  # the cache as the old raster result.
                  "classify_page.py",
                  # __init__.py runs on EVERY import of this package and no
@@ -384,7 +384,7 @@ def detect_page(pdf_path: str, page: int) -> dict:
     except Exception:
         openings = []
     # texture styles: a shading fill is MANY parallel chains at a tight
-    # regular pitch. Measured: GCHC 'SHADING ASPHALT' strips pitch
+    # regular pitch. Measured: stair set 'SHADING ASPHALT' strips pitch
     # 1-4pt; real parallel features sit far wider (contours 20-40pt,
     # curb pairs are 2 members). Flagged styles default OFF in the UI
     # and render faint - they are area shading, not takeoff linework.
@@ -412,7 +412,7 @@ def detect_page(pdf_path: str, page: int) -> dict:
         ang = _np.arctan2(D[:, 1], D[:, 0]) * 2
         R = float(_np.hypot(_np.mean(_np.cos(ang)), _np.mean(_np.sin(ang))))
         if R < 0.80:
-            continue  # 0.80: GCHC EXST-CONCRETE shading bends with the
+            continue  # 0.80: stair-set EXST-CONCRETE shading bends with the
                       # slope and measured R=0.84; real mixed-direction
                       # linework sits far lower (L-PVMT-CONC: 0.21)
         mean_ang = _np.arctan2(_np.mean(_np.sin(ang)), _np.mean(_np.cos(ang))) / 2
@@ -420,8 +420,8 @@ def detect_page(pdf_path: str, page: int) -> dict:
         off = _np.sort(_np.asarray(mids) @ nrm)
         gaps = _np.diff(off)
         gaps = gaps[gaps > 0.05]
-        # pitch 9.0: measured shading pitches 1-4pt (GCHC South) and
-        # 6.2-6.6pt (GCHC North EXST-CONCRETE, escaped the first 6.0
+        # pitch 9.0: measured shading pitches 1-4pt (stair set South) and
+        # 6.2-6.6pt (stair set North EXST-CONCRETE, escaped the first 6.0
         # gate by 0.2-0.6pt); nearest real parallel features are
         # contour fields at 18-40pt - margin stays > 2x
         if len(gaps) >= 10 and float(_np.median(gaps)) <= 9.0:

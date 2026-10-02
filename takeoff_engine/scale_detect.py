@@ -55,7 +55,7 @@ _FT = r"""(?:['’′]|(?:feet|ft)\.?(?![a-z]))"""
 # and a bare `\d+(?:/\d+)?` cannot hold one: it matched only the "1/2" and
 # reported 2.0 ft/in where the truth is 0.667, a 3x error on length and 9x
 # on area. Found on three sheets independently by the 201-sheet audit
-# (Barn Structural S6-0.0, Guide Structural S6-0.0, Barn Landscaping L801),
+# (Res-A structural S6-0.0, Res-B structural S6-0.0, Res-A landscaping L801),
 # and confirmed against drawn geometry: L801 detail 2's printed 6" dimension
 # spans exactly 54.000 pt, i.e. 0.75 paper inches, which is 0.667 ft/in.
 # Alternation order matters - mixed, then fraction, then integer - or `\d+`
@@ -64,14 +64,14 @@ _FT = r"""(?:['’′]|(?:feet|ft)\.?(?![a-z]))"""
 # The mixed form is deliberately restricted to ONE AND A HALF. A general
 # `\d+[-\s]\d+/\d+` regressed two pages in the 208-page sweep, because the
 # space-separated form is ambiguous: `A5.20 1 1/2" = 1'-0"` is a real scale,
-# but `SWR - GR 1 3/4" = 1'-0"` is the 3/4" scale with a detail reference in
+# but `XYZ - GR 1 3/4" = 1'-0"` is the 3/4" scale with a detail reference in
 # front of it, and `2 3/4" 1 3/4" 1/2"` is a row of dimensions. Read greedily
 # those became 1.75 and 2.75 paper inches.
 #
 # CONVENTION, and the reason the restriction is safe: an architect's scale
 # rule carries fixed graduations - 3/32, 1/8, 3/16, 1/4, 3/8, 1/2, 3/4, 1,
 # 1-1/2 and 3 inches to the foot - and 1-1/2 is the only one of them that is
-# a mixed number. Source: every scale caption in the Beaumont and Thielen
+# a mixed number. Source: every scale caption in the Res-A/B and Res-C
 # sets is drawn from that set; 1-3/4 and 2-3/4 appear in the corpus only as
 # dimensions. Labelled an INFERENCE for other drawing standards. If a real
 # mixed scale outside 1-1/2 ever turns up, widen this with its sheet as
@@ -80,7 +80,7 @@ _FT = r"""(?:['’′]|(?:feet|ft)\.?(?![a-z]))"""
 # The mixed number's joiner is SPACE, TAB or HYPHEN - deliberately not `\s`,
 # which matches a NEWLINE. get_text() separates lines with newlines, so with
 # `\s` a whole number ending one line welds onto a fraction starting the
-# next: Barn Structural engine page index 25 = printed sheet S5.1 prints
+# next: Res-A structural engine page index 25 = printed sheet S5.1 prints
 # `PROJECT #24004520.01` in the title block directly above `1/2" = 1'-0"`,
 # and the weld read `1\n1/2" = 1'-0"` as 1-1/2" = 0.6667 ft/in - a scale the
 # sheet does not print, and since 36f3dd5 a clickable picker option that
@@ -100,10 +100,10 @@ _NUM = r"""(?:1[ \t-]1/2|\d+/\d+|\d+)"""
 _FEET_NUM = r"""(?:\d{1,3}(?:,\d{3})+|\d+)"""
 
 # OCR does not always give the inch mark back as an inch mark. Tesseract
-# reads Beaumont's structural title blocks - SCALE: 1/4"=1'-0" - as
+# reads Res-A/B's structural title blocks - SCALE: 1/4"=1'-0" - as
 # `1/4�=1'-0"`, mangling the double prime into U+FFFD. The pattern then
 # cannot advance past that character and the whole caption is missed, which
-# is why all 37 Barn Structural and 17 Guide Structural pages reported no
+# is why all 37 Res-A structural and 17 Res-B structural pages reported no
 # scale even though OCR had read the text correctly at every dpi tried
 # (150/300/450 all produce `SCALE: 1/4�=1'-0"`).
 #
@@ -421,13 +421,13 @@ def _scan(text: str) -> list[ScaleCandidate]:
         # Plausible drawing scales: 1/8"=1' (8) up to 1"=200'.
         #
         # The 0.5 floor was discarding a real and frequently printed scale.
-        # Barn Landscaping L804 prints `SCALE: 3" = 1'-0"` FOUR times - more
+        # Res-A landscaping L804 prints `SCALE: 3" = 1'-0"` FOUR times - more
         # often than any other caption on that sheet - and 3 paper inches to
         # the foot is 0.3333 ft/in, so every one was thrown away and the
         # engine settled on the 3/4" detail scale instead.
         #
         # The floor cannot simply be lowered, because a dimension string
-        # computes to the same number: `6" - 2'` on Thielen p18 is also
+        # computes to the same number: `6" - 2'` on Res-C p18 is also
         # 0.3333, and `6" - 1'` and `8" - 1'` sit below it. What separates
         # them is the RELATION - a scale says "=" or ":" between its two
         # sides, a dimension callout is joined by a hyphen. So the floor
@@ -437,12 +437,12 @@ def _scan(text: str) -> list[ScaleCandidate]:
         # (3/32, 1/8, 3/16, 1/4, 3/8, 1/2, 3/4, 1, 1-1/2, 3 inches to the
         # foot), and 3 paper inches to the foot is exactly 1/3 ft/in - so 0.33
         # is the floor, sitting just under it. Source: 3" is also the largest
-        # caption printed anywhere in the Beaumont or Thielen sets. Anything
+        # caption printed anywhere in the Res-A/B or Res-C sets. Anything
         # larger is half- or full-size shop detailing and stays rejected until
         # a sheet shows otherwise. INFERENCE for other drawing standards.
         #
-        # Confirmed against drawn geometry, not the caption: on Barn
-        # Landscaping L804 detail 9 the three stacked dimensions measure
+        # Confirmed against drawn geometry, not the caption: on Res-A
+        # landscaping L804 detail 9 the three stacked dimensions measure
         # tick-to-tick 36.00 / 72.00 / 108.00 pt for 2" / 4" / 6", which is
         # 18.000 pt per real inch on all three - exactly 3" = 1'-0".
         floor = 0.33 if _REL.search(m.group(0)) else 0.5
@@ -482,9 +482,9 @@ def _scan(text: str) -> list[ScaleCandidate]:
             1" = 16'-0"; or
           * the ground side is exactly 1'-0", which is what the notation
             means - "an eighth of an inch to the foot". CONVENTION, from
-            these sheets: every architectural caption in the Beaumont sets
+            these sheets: every architectural caption in the Res-A/B sets
             is written X" = 1'-0", i.e. the ground side is one foot. OCR
-            drops the '=' often enough (Thielen p57/p58 read
+            drops the '=' often enough (Res-C p57/p58 read
             '1/8" 1'-0" SCALE:') that the form has to survive without it.
 
         Anything else - 5'-2", 11'-3 1/2" - is a callout, not a ratio.
@@ -505,10 +505,10 @@ def _scan(text: str) -> list[ScaleCandidate]:
         # Every part of this pattern but <feet> is optional, so without a
         # shape test it reduces to "the word SCALE followed by a number" -
         # and a keyword hit outranks everything in _choose. Two live cases:
-        # Guide C3.0 (engine page index 2) row-joined to "... SCALE 2% 2% W
+        # Res-B C3.0 (engine page index 2) row-joined to "... SCALE 2% 2% W
         # CONSTRUCTION ..." and read 1" = 2 ft over the sheet's own "1 inch
         # = 10 ft." (5x on every length, 25x on every area and volume);
-        # Barn Civil (engine page index 1) row-joined the bar caption to a
+        # Res-A civil (engine page index 1) row-joined the bar caption to a
         # 5'-2" dimension callout and read 1" = 5.17 ft over "1 inch = 20
         # ft.". Requiring any ONE token is not enough - the second case
         # carries a foot mark, but it belongs to the dimension, not to a
@@ -526,7 +526,7 @@ def _scan(text: str) -> list[ScaleCandidate]:
     for m in _PAT_KEYWORD_PRE.finditer(text):
         # No separator between the sides -> the ground term has to declare
         # its own unit, else these are two unrelated numbers that only
-        # happen to sit beside the word SCALE ('3/8" 6 SCALE', Guide Civil
+        # happen to sit beside the word SCALE ('3/8" 6 SCALE', Res-B civil
         # engine page index 6, from OCR).
         if not ((m.group("sep") or "").strip() or m.group("gmark")):
             continue
@@ -544,18 +544,18 @@ def _scan(text: str) -> list[ScaleCandidate]:
 # detail sheet that runs exactly backwards: many small details, one big
 # plan, so caption count is INVERSELY related to how much drawing a scale
 # governs. Audit RC-2, root of eight findings; live regression F113: 08e818d
-# made `3" = 1'-0"` readable and count promptly handed Barn Landscaping L804
+# made `3" = 1'-0"` readable and count promptly handed Res-A landscaping L804
 # (engine page index 29 = printed sheet 30) to it over the `3/4"` scale.
 #
 # So rank by WHAT EACH CAPTION GOVERNS. The document asserts the binding:
 # every multi-scale sheet in the corpus prints a detail's caption in a TITLE
 # BAR beneath the detail - bubble number, title, `SCALE: ...`, and a
 # horizontal rule - and the drawing is the linework above that rule. Three
-# independent drafters agree (SWR landscaping/structural, Thielen): all 104
+# independent drafters agree (Res-A/B landscaping/structural, Res-C): all 104
 # caption sites on the corpus' 16 multi-candidate pages sit on such a rule
 # (per-page counts in the sweep's sites/rules fields, 2026-08-22 choose
-# sweep). Measured rule-to-caption gaps: 7.1 pt on L804, 3.2 on Guide
-# Structural S6-0.0, 1.0 on Thielen A1.2; the next horizontal stroke above
+# sweep). Measured rule-to-caption gaps: 7.1 pt on L804, 3.2 on Res-B
+# structural S6-0.0, 1.0 on Res-C A1.2; the next horizontal stroke above
 # a caption is the detail's own linework, 20+ pt up. CONVENTION, from these
 # sheets: the title bar sits BELOW its drawing. Labelled an INFERENCE for
 # drafters outside the corpus; where it fails to locate a caption the sheet
@@ -569,9 +569,9 @@ def _scan(text: str) -> list[ScaleCandidate]:
 # chaining - minus whiteout and HATCH-layer strokes (the chain stage's own
 # two cheapest demotions). That is a PROXY for the live chains: checked
 # against build_chains' live chains under the same assignment on 15 of the
-# corpus' 16 multi-candidate pages (the 16th, Barn Structural engine p1,
+# corpus' 16 multi-candidate pages (the 16th, Res-A structural engine p1,
 # is OCR-sourced and was not cross-checked): same winner on 15 of 15,
-# winner's share within 8.5 points everywhere (worst: Thielen p8, 73.6%
+# winner's share within 8.5 points everywhere (worst: Res-C p8, 73.6%
 # raw vs 65.1% chains; see chains_vs_paths.log in
 # out/verify/2026-08-22/choose/work/). A caller that already built the
 # page's chains can pass them to detect_scale(linework=...) and the
@@ -588,7 +588,7 @@ def _scan(text: str) -> list[ScaleCandidate]:
 # rule never sits below the caption on any corpus sheet; 2 pt of slop).
 _RULE_ABOVE = 12.0
 _RULE_BELOW = 2.0
-# The shortest horizontal stroke read as a rule candidate. Thielen draws
+# The shortest horizontal stroke read as a rule candidate. Res-C draws
 # the narrowest title bars in the corpus; its shortest rule measures
 # 100.7 pt (A1.2). Text underlines in note blocks are shorter than 60.
 _RULE_MIN_PT = 60.0
@@ -597,7 +597,7 @@ _RULE_MIN_PT = 60.0
 # every caption on the interior side, cuts a SHEET-FURNITURE strip off the
 # drawing area (the title-block column: logo, consultant list, revision
 # grid). The far side is not counted at all - neither governed nor
-# unassigned. Both conditions are load-bearing: the SWR template's divider
+# unassigned. Both conditions are load-bearing: the Res-A/B template's divider
 # at x = 2736 of 3024 spans 0.93 of the page height and its strip holds
 # 24,111 pt of exploded logo and consultant text (L804, measured), which
 # would otherwise be assigned to whatever detail column sits nearest - on
@@ -734,7 +734,7 @@ def _page_linework(page: pymupdf.Page) -> tuple[list, list, list]:
         # "Straight" tolerances are sliver widths, not hairlines: a rule or
         # a divider is routinely PLOTTED as a thin filled box, and
         # extract_strokes collapses those to centrelines that keep a little
-        # width (the SWR divider at x=2736 is a 4.5 pt sliver whose
+        # width (the Res-A/B divider at x=2736 is a 4.5 pt sliver whose
         # centreline units carry 2.3-4.5 pt of bbox width; a 0.6 pt test
         # missed all three and the title block silently rejoined the
         # drawing). 4 pt for a rule, 6 for a divider - both far under the
@@ -781,7 +781,7 @@ def _governance(sites: list, paths: list, dividers: list, skip: set,
     denominator. Paths in `skip` - the title-bar rules and the dividers
     themselves - are not counted either: a rule is one per caption, and
     counting it would be the caption-count bias coming back in through the
-    geometry (531 pt per caption on the SWR template).
+    geometry (531 pt per caption on the Res-A/B template).
     """
     W, H = page_wh
     far: list = []
@@ -878,14 +878,14 @@ def _rank(cands: list[ScaleCandidate], page: pymupdf.Page | None = None,
     #   PROFILE 1"=80' (HOR), 1"=20' (VERT)
     #     Belle Farms Upper Parcel ROAD GRADING 1 of 2.pdf engine page index 0
     #   H: 1" = 20';  V: 1" = 5'
-    #     East Gallatain River sheet C101, engine page index 3 of both
+    #     a river set's sheet C101, engine page index 3 of both
     #     Plans/Plans.pdf and Addenda/Addenda/1.pdf - the same drawing twice
     # `_caption_sites` makes one site per (line, value), so those two get an
     # IDENTICAL box and rule, and `_governance`'s strict `cost < bc` then
     # hands the WHOLE line's ink to whichever value it visits first - the
     # smaller, since the sites are emitted sorted. Defect shape B,
     # first-writer-wins, inside the new ranker: the runner-up gets a literal
-    # zero, so the near-tie guard cannot fire either (East Gallatain C101
+    # zero, so the near-tie guard cannot fire either (the river set's C101
     # reported `governs 100.0%` with `runner_up_pct 0.0` while taking the
     # profile's VERTICAL exaggeration as the sheet scale - 4x wrong on every
     # length, 16x on every area, and `agrees` null because the sheet draws
@@ -966,16 +966,16 @@ _TICK = re.compile(r"^(\d{1,4})\s*[\'’]?$")
 # What the corpus actually captions a drawn scale bar. Enumerated from a
 # census of every >=3-numeric-label tick row over the 650-page coverage set
 # (out/verify/2026-08-22/bar/caption_census.jsonl), not guessed:
-#   GRAPHIC SCALE (22 text pages; Oncor, SWR Barn Civil, CO3),
-#   GRAPHIC SCALE IN FEET (RC Ontario), SCALE IN FEET (Thielen C1.0,
-#   Loves Lane C0.00), (SCALE IN FEET) (all GCHC sheets, OCR),
-#   lowercase `scale` alone (8 Barn Landscaping sheets), SCALE FEET
-#   (Sheridan), HORIZ. SCALE IN FEET / HORIZONTAL SCALE: 1"=  (Gardiner,
-#   Bozeman profile sheets), SCALE: <ratio> (Barn Landscaping details,
-#   Thielen L-1/L-2 scans).
+#   GRAPHIC SCALE (22 text pages; substation, Res-A civil, grading set),
+#   GRAPHIC SCALE IN FEET (a commercial set), SCALE IN FEET (Res-C C1.0,
+#   Loves Lane C0.00), (SCALE IN FEET) (all stair-set sheets, OCR),
+#   lowercase `scale` alone (8 Res-A landscaping sheets), SCALE FEET
+#   (water main 2), HORIZ. SCALE IN FEET / HORIZONTAL SCALE: 1"=  (water main 1,
+#   mixed-use profile sheets), SCALE: <ratio> (Res-A landscaping details,
+#   Res-C L-1/L-2 scans).
 # Every one of those starts a word whose ALPHABETIC CORE is exactly
 # GRAPHIC or SCALE. The core must be exact: `GRAPHICALLY` inside a survey
-# note manufactured both of CO3's bar readings (p7 180.0 and p10 18.0,
+# note manufactured both of the grading set's bar readings (p7 180.0 and p10 18.0,
 # against bars that truly draw 300.0 and 30.0), and `TOPOGRAPHIC` /
 # `SCALE.DWG`-style tokens are title-block text, not captions.
 _BAR_HEAD_CORES = ("GRAPHIC", "SCALE")
@@ -983,14 +983,14 @@ _BAR_HEAD_CORES = ("GRAPHIC", "SCALE")
 # plan's horizontal drawing scale:
 #   VERT/VERTICAL - profile sheets draw a second, exaggerated bar
 #     ("VERT. SCALE IN FEET" under a 5 ft bar beside a 40 ft horizontal
-#     one, Gardiner p297); reading it would shrink every plan length.
+#     one, water main 1 p297); reading it would shrink every plan length.
 #     This head test is NOT the refusal - it only stops a VERT-captioned
-#     head from starting a search. Both of Gardiner p297's bars sit
+#     head from starting a search. Both of water main 1 p297's bars sit
 #     inside the reach of the surviving HORIZ. head, and the vertical
 #     row loses to the horizontal one there purely because
 #     `sorted(rows, key=len, reverse=True)` is stable and the horizontal
 #     bar happens to be drawn above; traced by hand the vertical row
-#     returns 10.0, a 4x error. Ryno Plan Set p4 is the same shape and
+#     returns 10.0, a 4x error. A contractor's plan set p4 is the same shape and
 #     is right today only because 150-dpi OCR drops its pale-grey
 #     VERTICAL labels. `_row_axis`, applied per row, is the real
 #     refusal; sort order is not allowed to carry a correctness
@@ -999,10 +999,10 @@ _BAR_HEAD_CORES = ("GRAPHIC", "SCALE")
 #     (checks the sheet was not reduced on a copier), not a drawing scale
 #     (F112; 46 pages across two documents).
 #   MAP - `Soil Map may not be valid at this scale.` sits beside two
-#     soil-report exhibit bars (White Sulfer p418) whose ratios are not
+#     soil-report exhibit bars (a sewer project p418) whose ratios are not
 #     drawing scales.
 #   NOTED/SHOWN - `scale: AS NOTED` / `SCALE: AS SHOWN` is the sheet
-#     asserting its scale VARIES per view (Bill's schedule sheets, F112's
+#     asserting its scale VARIES per view (a client's schedule sheets, F112's
 #     correct refusals); no single number near that head speaks for the
 #     page, and on a scanned schedule the numbers nearby are door tags.
 _BAR_HEAD_STOP = ("VERT", "VERTICAL", "INCHES", "MAP", "MAPS",
@@ -1045,9 +1045,9 @@ def _page_ticks(page) -> list:
     """Vertical stroke edges in display space: [(x, y0, y1), ...].
 
     These are the drawn tick marks a bar's labels sit on - short vertical
-    'l' segments (Oncor, Barn Landscaping box edges) and the vertical
+    'l' segments (substation, Res-A landscaping box edges) and the vertical
     edges of the thin filled boxes a checkerboard bar is built from
-    (GCHC, CO3, Gardiner). Long strokes are excluded so borders and
+    (stair set, grading set, water main 1). Long strokes are excluded so borders and
     gridlines do not offer themselves as ticks.
     """
     out = []
@@ -1083,13 +1083,13 @@ def _row_ticks(ticks: list, row_words: list, near: list) -> tuple:
     """(tick x-positions, drawn band) available to one label row.
 
     Band: the row's own x-range (padded) by 2.5 label-heights above and
-    below - Oncor draws ticks under the labels, Barn Landscaping above,
-    GCHC's bar boxes sit below. A stroke that lies mostly INSIDE some
-    word's box is a glyph stroke, not a tick (GCHC's vector-outlined '4'
+    below - the substation draws ticks under the labels, Res-A landscaping above,
+    the stair set's bar boxes sit below. A stroke that lies mostly INSIDE some
+    word's box is a glyph stroke, not a tick (the stair set's vector-outlined '4'
     is itself a vertical line exactly where a tick would be) - but only a
     word CONTAINING a letter or digit vetoes: OCR reads the drawn bar
     itself back as punctuation ('|', '\\\\'), and letting those boxes veto
-    ate the real end tick on GCHC North Stairs Improvement.
+    ate the real end tick on the stair set's improvement sheet.
 
     The second return value is where the drawn bar actually SITS -
     (y0, y1), the MEDIAN vertical extent of the accepted strokes, or None
@@ -1129,15 +1129,15 @@ def _row_ticks(ticks: list, row_words: list, near: list) -> tuple:
 
 # Axis captions. A plan-and-profile sheet draws TWO scale bars: the
 # horizontal one measures distance along the plan, the vertical one is
-# deliberately exaggerated so the grades are readable. Gardiner p297
-# prints 40 ft/in horizontal against 5 ft/in vertical (8x); Ryno Plan Set
+# deliberately exaggerated so the grades are readable. Water main 1 p297
+# prints 40 ft/in horizontal against 5 ft/in vertical (8x); a contractor's set
 # p4 prints 30 against 5 (6x). Reading the vertical bar as the page scale
 # divides every plan length by that factor - silently.
 #
 # CONVENTION: on a plan-and-profile sheet the HORIZONTAL scale governs
 # plan lengths and the vertical is a deliberate exaggeration. Source:
-# these sheets print both bars captioned exactly so - Gardiner "HORIZ.
-# SCALE IN FEET" / "VERT. SCALE IN FEET", Ryno "HORIZONTAL" /
+# these sheets print both bars captioned exactly so - water main 1 "HORIZ.
+# SCALE IN FEET" / "VERT. SCALE IN FEET", the contractor's "HORIZONTAL" /
 # "VERTICAL" - and F126 measured a 4x vertical exaggeration on Belle
 # Farms from the profile's own axis labels. Labelled an INFERENCE for any
 # drafter who captions differently: if a sheet ever means something else
@@ -1179,7 +1179,7 @@ def _row_axis(ri: int, boxes: list, bands: list, marks: list) -> str:
     """Which axis this label row belongs to: "VERT", "HORIZ" or "".
 
     NOT "the nearest axis word to the row". Proximity does not separate
-    these and the corpus says so: on Gardiner p297 the vertical bar's
+    these and the corpus says so: on water main 1 p297 the vertical bar's
     labels sit 3.37pt from the HORIZ. caption - which belongs to the bar
     ABOVE them - and 4.98pt from their own VERT. one. A rule that took
     the nearer would be memorising 1.6pt of noise (AGENT-BRIEF 1.5) and
@@ -1190,7 +1190,7 @@ def _row_axis(ri: int, boxes: list, bands: list, marks: list) -> str:
     What separates them is WHAT KIND of axis word it is:
 
       A full caption line - the axis word shares its line with the head
-      word, "HORIZ. SCALE IN FEET" - captions a BAR. Gardiner water main
+      word, "HORIZ. SCALE IN FEET" - captions a BAR. A water main set,
       2025.pdf, engine page index 297 stacks two of them:
           354.2-359.5  20 10 0 20 40
           361.2-365.8  [bar 1]
@@ -1203,7 +1203,7 @@ def _row_axis(ri: int, boxes: list, bands: list, marks: list) -> str:
       bar by a 3.4x and 5.0x margin, and each row inherits its bar's.
 
       A bare axis word labels the NUMBERS beside it.
-      Ryno Construction/Plan Set.pdf, engine page index 4 draws ONE bar
+      <contractor folder>/Plan Set.pdf, engine page index 4 draws ONE bar
       serving both axes, with a label row on each side:
           401.8-407.0  VERTICAL
           ~408 -413.3  5 2.5 5           (dropped by 150-dpi OCR today)
@@ -1265,7 +1265,7 @@ def _snap_label(w, row_ticks: list) -> float | None:
 
     The tick must fall within the label's own box (pad 1.2 pt): drafters
     place the label over its tick, but not all of them CENTRE it there.
-    Barn Landscaping aligns the end labels by outer edge - the '0' box
+    Res-A landscaping aligns the end labels by outer edge - the '0' box
     edge is 0.66 pt from its tick while the centre is 2.49 pt inside, and
     the '16' centre is 5.64 pt inside. Spanning centres instead of ticks
     read those bars 12.5-12.7% high (audit finding 16), which is +26.8%
@@ -1306,13 +1306,13 @@ def _mirror_zero(row: list, row_ticks: list) -> float | None:
 
     Civil bars draw one unit of the scale LEFT of zero as a finer
     subdivision, so the first major value appears on BOTH sides at equal
-    distance: "30 | 0 | 15 30 60 120" (CO3), "2 | 0 | 2 4" (GCHC),
-    "20 10 | 0 | 20 40" (Gardiner). CONVENTION from those sheets and SWR
-    Barn Civil, five independent drafters. When the row has no zero but
+    distance: "30 | 0 | 15 30 60 120" (grading set), "2 | 0 | 2 4" (stair set),
+    "20 10 | 0 | 20 40" (water main 1). CONVENTION from those sheets and
+    Res-A civil, five independent drafters. When the row has no zero but
     two equal labels, the zero is their midpoint - accepted ONLY if a
     drawn tick sits within 2 pt of it, so the geometry asserts the zero
     rather than the labels implying one. OCR drops exactly this '0' often
-    enough to matter: every GCHC page, CO3 p7/p10 (which today ship 18.0
+    enough to matter: every stair-set page, grading set p7/p10 (which today ship 18.0
     and 180.0 against drawn 30.0 and 300.0 because the zero-less fallback
     spans pre-zero label to far label).
     """
@@ -1375,8 +1375,8 @@ def _ocr_words_loud(img, px_to_pt: float, min_conf: int = 35) -> tuple:
 def _ocr_zoom(page, region, min_conf: int = 35, psm: int = 11) -> list:
     """Re-OCR one small region at high dpi; words in page display coords.
 
-    The 150-dpi full-page pass reads GCHC's small bar labels only
-    partially ('2' alone on North Stairs Demo); a 600-dpi render of just
+    The 150-dpi full-page pass reads the stair set's small bar labels only
+    partially ('2' alone on its demolition sheet); a 600-dpi render of just
     the caption window reads the full '2 0 2 4' row. Cost is bounded by
     the region size and only paid when a caption head was already found.
 
@@ -1404,7 +1404,7 @@ def _ocr_zoom(page, region, min_conf: int = 35, psm: int = 11) -> list:
 
 # OCR confusion immediately before an inch mark: the leading "1" of a
 # stylised caption comes back as a bar/bracket ('SCALE: |"=20\'' measured on
-# Approved Construction Set p2, 2026-09-01). Only the character glued to a
+# a residential construction set p2, 2026-09-01). Only the character glued to a
 # quote mark is rewritten - a bare | elsewhere stays untouched.
 _OCR_ONE_CONFUSION = re.compile(r"[|Il!{\[]\s*(?=[\"“”″])")
 
@@ -1417,7 +1417,7 @@ _CAPTION_HEAD_OCR = re.compile(r"^(?:SCALE[:.]?|GRAPHIC)$", re.I)
 def _ground_value_marked(text: str) -> bool:
     """Does the caption's GROUND value carry its own unit mark?
 
-    OCR eats the '0\" tail of an architectural scale: Thielen ID-1.04
+    OCR eats the '0\" tail of an architectural scale: Res-C ID-1.04
     prints SCALE: 1/4\" = 1'0\" and comes back 'SCALE: 1/4\" = 10',
     which _scan reads as a quarter inch to TEN FEET - 40 ft/in where the
     truth is 4, silently 10x wrong (measured 2026-09-01, three pages).
@@ -1437,7 +1437,7 @@ def _ocr_caption_rescue(page, words) -> list:
 
     Measured failure this recovers (survey 2026-09-01, FABLE-002): on
     sheets whose text is vector outlines, the 150-dpi pass reads the
-    caption only partially - Hurricane C.3.1 comes back 'SCALE: = 40'
+    caption only partially - storage site C.3.1 comes back 'SCALE: = 40'
     with the 1\" dropped, so _scan has nothing to match even though every
     word of 'SCALE: 1" = 40\'' is printed on the sheet. 296 of 728
     plan-like corpus pages return no reading, and the three
@@ -1464,7 +1464,7 @@ def _ocr_caption_rescue(page, words) -> list:
     for h in heads:
         x0, y0 = h[0], h[1]
         # Three window shapes per head, because the window CONTENT steers
-        # Tesseract's segmentation (measured on Hurricane C.3.1: a tight
+        # Tesseract's segmentation (measured on storage site C.3.1: a tight
         # single-row window reads 'SCALE: 1" 40" ='; a wider one drops the
         # 1" entirely). Tight row first, then wide, then the band BELOW the
         # head for bar-style captions whose ratio prints under the ruler.
@@ -1524,7 +1524,7 @@ def _label_rows(cand: list) -> list:
     # gap between neighbours rather than fixed buckets: a "0"
     # glyph box centres ~0.7pt below its "10"/"40" neighbours,
     # and round(cy / 9) splits them whenever that straddles a
-    # bucket edge (Barn p4/p11).
+    # bucket edge (Res-A p4/p11).
     labs.sort(key=lambda t: t[2])
     rows: list = []
     for t in labs:
@@ -1579,9 +1579,9 @@ def graphic_scale_bar(words: list, page=None,
     A tick span is measured, NOT exact, and the earlier comment here
     claiming otherwise oversold it. Two things put a tick reading off a
     round number: the drafter's own rounding when the bar was placed
-    (Hurricane Storage p5 ships 40.0167 against its own printed `HORIZ.
+    (a storage-site set p5 ships 40.0167 against its own printed `HORIZ.
     SCALE: 1" = 40'`, +0.042%), and `_snap_label` taking a neighbouring
-    stroke when several sit inside one label box (Malta Cu2.05 p0 ships
+    stroke when several sit inside one label box (vehicle shop Cu2.05 p0 ships
     19.9543 because it took a stroke at 338.73 where the regular tick
     series puts the end tick at 338.40, -0.229%). Both are well inside
     any useful tolerance and neither is a defect; the accurate claim is
@@ -1602,7 +1602,7 @@ def graphic_scale_bar(words: list, page=None,
     non-monotone zero-less row is a bar whose zero OCR dropped -
     _mirror_zero recovers it from the drawn geometry or the row is
     refused. Every label on the row must then agree with the measured
-    rate (a misread label like RC Ontario's '20'->'0' otherwise ships a
+    rate (a misread label like a commercial set's '20'->'0' otherwise ships a
     5x error), or the row is refused.
 
     WHERE THE LABELS CAME FROM is recorded on the returned candidate as
@@ -1624,7 +1624,7 @@ def graphic_scale_bar(words: list, page=None,
 
     THE ZOOM RUNS on three conditions, not one. It used to run only when
     `not rows`, which let a corrupt ladder suppress the independent pixel
-    read: on RC Ontario page index 3 the 150-dpi pass returns `10 0 4`
+    read: on a commercial set page index 3 the 150-dpi pass returns `10 0 4`
     (printed 0 10 20 40 - the 20 read as 0 and the 40 as 4), that
     satisfies "rows exist", the zoom is skipped and the corrupt row then
     fails the rate check, so the page returns nothing where the sheet
@@ -1665,11 +1665,11 @@ def graphic_scale_bar(words: list, page=None,
             # page is a ruler here, so the row is just numbers. Believe a
             # bar only when the drafter drew one. Four inventions on real
             # construction documents came through the label-centre branch
-            # with zero ticks - Town Pump #3 A2.8 Equipment Schedule p0
+            # with zero ticks - a fuel-stop set's A2.8 Equipment Schedule p0
             # and its ADD1 re-issue read 1" = 236.56' off the word SCALE
             # inside "SCALE OUNCE 12#-192 oz", spanning the QTY column,
-            # the ITEM NO. column and the 3 of "PREP TABLE 3 FT"; Million
-            # Air p196 read 454.43' off spec 22 05 19's "Scale Range for
+            # the ITEM NO. column and the 3 of "PREP TABLE 3 FT"; an aviation
+            # set p196 read 454.43' off spec 22 05 19's "Scale Range for
             # Domestic Cold-Water Piping: 0 to 150 deg F"; Orig Full Spec
             # Manual p56 read 4.92' off "Per Section 01 00 00". All four
             # returned None before the bar rewrite. The cost is one true
@@ -1688,7 +1688,7 @@ def graphic_scale_bar(words: list, page=None,
             # disabled across all 6,724 corpus pages and got a ZERO diff -
             # it changes no page in either direction - while introducing a
             # rank-1 failure on a 0.81 pt margin: move only the two caption
-            # LINES on Gardiner p297 into the ordinary caption-above-its-own-
+            # LINES on water main 1 p297 into the ordinary caption-above-its-own-
             # bar layout (no tick, label or stroke touched) and VERT. lands
             # 5.24 pt from the HORIZONTAL band against 6.05 from its own,
             # refuses the correct 40 ft/in row, and the 10 ft/in row then
@@ -1758,7 +1758,7 @@ def graphic_scale_bar(words: list, page=None,
                 # genuinely odd bar is reported as measured rather than
                 # forced onto a value it is not. A tick-measured span is
                 # never snapped - it is not exact either (see the
-                # docstring: 40.0167 on Hurricane p5, 19.9543 on Malta
+                # docstring: 40.0167 on storage site p5, 19.9543 on vehicle shop
                 # Cu2.05), but its residual is the drafter's own, and
                 # reporting it as measured keeps that visible.
                 for std in (10, 20, 30, 40, 50, 60, 80, 100, 200):
@@ -1794,7 +1794,7 @@ def graphic_scale_bar(words: list, page=None,
                 # Nothing from the caller's words and nothing at psm 6.
                 # The psm-11 zoom is what this page had BEFORE this stage,
                 # and psm 6 is better on average, not everywhere: measured
-                # over the 6,460-page OCR sweep, Bozeman Yards Block 104
+                # over the 6,460-page OCR sweep, a mixed-use block set
                 # p44 (`0 20' 40'` under SCALE IN FEET, truth 20 ft/in) is
                 # read by the psm-11 zoom and not by the psm-6 one. Keeping
                 # it as a last resort makes this stage strictly additive on
@@ -1814,8 +1814,8 @@ def graphic_scale_bar(words: list, page=None,
 
 # How far apart two words can sit and still read as one line. The
 # row-join used to weld text from opposite ends of a 42-inch sheet into one
-# "line" - which is how both keyword misreads were manufactured. On Barn
-# Civil p1 the bar caption "GRAPHIC SCALE" (x=810..897pt) and an unrelated
+# "line" - which is how both keyword misreads were manufactured. On Res-A
+# civil p1 the bar caption "GRAPHIC SCALE" (x=810..897pt) and an unrelated
 # 5'-2" dimension callout (x=1341pt) shared a row and joined as
 # `SCALE 5'-2"`. This cap now decides row MEMBERSHIP in _row_text rather
 # than marking a gap after the fact, so a hole this wide starts another row
@@ -1827,7 +1827,7 @@ def graphic_scale_bar(words: list, page=None,
 #   widest gap INSIDE a real caption   23.5pt at 9.1pt glyphs  = 2.6x
 #     (C9.0 OCR "SCALE: 1" 20'" - the hole where OCR dropped the '=')
 #   narrowest FALSE weld              424.8pt at 12.6pt glyphs = 34x
-#     (Barn Civil p1 "1 inch = 20 ft." -> "STBK", and 444pt for the 5'-2")
+#     (Res-A civil p1 "1 inch = 20 ft." -> "STBK", and 444pt for the 5'-2")
 # 6x sits between the two with 2.3x headroom over the widest real caption
 # gap. An earlier 2.5x missed C9.0's caption by 0.7pt and cost it its scale.
 _ROW_GAP_MIN = 24.0      # pt, floor for small text
@@ -1839,10 +1839,10 @@ _ROW_GAP_HEIGHTS = 6.0   # x the taller of the two neighbouring words
 # answered with a fixed grid, `round(y0 / 8)`. A grid answers a different
 # question. Two words 1.5pt apart land in different 8pt bins whenever a bin
 # edge falls between them, and the caption is then emitted with a hole in
-# it. Measured on Guide Civil engine page index 8 (printed sheet 9): '20'
+# it. Measured on Res-B civil engine page index 8 (printed sheet 9): '20'
 # sits at y0=1245.47 (bin 156) while '1', 'inch', '=' and 'ft.' sit at
 # y0=1243.93 (bin 155), so the join emitted `1 inch = ft.` and the '20'
-# surfaced 40 words later. Thielen engine page indices 11 and 12 lose their
+# surfaced 40 words later. Res-C engine page indices 11 and 12 lose their
 # '=' to the same edge, 1.9pt low.
 #
 # Replacing the grid with a vertical proximity test alone is NOT enough, and
@@ -1851,13 +1851,13 @@ _ROW_GAP_HEIGHTS = 6.0   # x the taller of the two neighbouring words
 # rule that groups on y alone puts them in one row, where the second line's
 # box then defines the band and evicts the first line's own '='. Measured:
 # a "keep the band all the words share" walk drops `1 inch = 10 ft.` on
-# C4 GRADING PLAN p0 (welded to `PAID BY HURRICANE CITY PUBLIC WORKS`,
-# 250pt to its left, whose box ends 0.0pt above the '=') and on Hurricane
-# Storage p3, and C4 p0 then falls through to the graphic bar and reports
+# C4 GRADING PLAN p0 (welded to `PAID BY <CITY NAME> PUBLIC WORKS`,
+# 250pt to its left, whose box ends 0.0pt above the '=') and on storage site
+# p3, and C4 p0 then falls through to the graphic bar and reports
 # 6.008 ft/in against the sheet's own 10 - a wrong number where there was a
 # right one. Nearest-neighbour walks fail the other way: "new row when the
 # y gap exceeds half a glyph height" chains rows up to 448pt tall and
-# destroys the Barn Civil p1 and Guide Civil p2 captions.
+# destroys the Res-A civil p1 and Res-B civil p2 captions.
 #
 # So the row is assembled in BOTH dimensions, which is what "the same
 # printed line" actually means: sweep the words left to right, and a word
@@ -1866,7 +1866,7 @@ _ROW_GAP_HEIGHTS = 6.0   # x the taller of the two neighbouring words
 # the boxes' own overlap, and the height-keyed gap that was already measured
 # for the "|" guard. Nothing is bucketed and no new constant is introduced.
 #
-# Scored against mupdf's own line ids over the 208-page client_meet corpus
+# Scored against mupdf's own line ids over the 208-page client-folder corpus
 # (60,110 printed lines that are horizontal in display space), printed lines
 # split across more than one row: 8pt grid 948 (1.577%), y-only band 716
 # (1.191%), this 594 (0.988%); worst number of printed lines welded into one
@@ -1877,7 +1877,7 @@ def _row_text(words: list) -> str:
     """Join word boxes into printed lines: rows top to bottom, words left to right.
 
     A "|" separates two rows that are NOT one line continuing into the next:
-    same band, different column (the Barn Civil p1 case - the bar caption
+    same band, different column (the Res-A civil p1 case - the bar caption
     "GRAPHIC SCALE" at x=810..897pt and a 5'-2" dimension callout at
     x=1341pt), or any other pair that is not stacked-and-aligned. "|" is not
     a scale separator and \\s* cannot cross it, so no pattern matches over a
@@ -1959,7 +1959,7 @@ def _corroborate(res: ScaleResult, words: list, page=None) -> ScaleResult:
 
     Callers that can pass `page` should: it lets the bar measure from the
     drawn tick strokes instead of label centres, which on edge-aligned-label
-    drafters (Barn Landscaping) reads up to 12.7% truer.
+    drafters (Res-A landscaping) reads up to 12.7% truer.
     """
     if not res.best:
         return res
@@ -2074,7 +2074,7 @@ def read_text_layer(text: str, words: list | None, page=None,
     def with_joins(res: ScaleResult) -> ScaleResult:
         # A refused join whose value the intact readings ALSO carry adds
         # nothing but a duplicate: the weld happened to land on the right
-        # number (Bozeman Yards Block 104 engine page index 38 welds
+        # number (the mixed-use block set's engine page index 38 welds
         # `1" =` to a bar whose ladder prints the sheet's own 10, and the
         # row-assembled text reads `1" = 10'` regardless). Only a join
         # that stands for a value nothing else read is worth showing.
@@ -2139,13 +2139,13 @@ def _ocr_promotion(best, cands, nts, pick, page, native_words,
     arrive (CLAUDE.md section 5, fourth shape). Measured on this branch,
     2026-09-02, with the bar read at psm 6:
 
-      RC Ontario p10 promotes 10 off a DETAIL 1 caption while the sheet's
+      A commercial p10 promotes 10 off a DETAIL 1 caption while the sheet's
         own bar draws `0 10 20 40` under `1" = 20'` - 2x on length, 4x on
         area.
-      Hurricane Storage p1 promotes 1.0 off a detail's `1" = 1'-0"` while
+      A storage-site p1 promotes 1.0 off a detail's `1" = 1'-0"` while
         the site plan's bar draws `0 40' 80'` under `SCALE: 1" = 40'` -
         40x low.
-      Hurricane Storage p3 promotes 10 where the sheet prints
+      The storage-site p3 promotes 10 where the sheet prints
         `SCALE: 1" = 40'` - 4x low.
 
     So a caption an independent bar CONTRADICTS is refused: `best` is None,
@@ -2164,20 +2164,20 @@ def _ocr_promotion(best, cands, nts, pick, page, native_words,
     contradicts the caption, and 77 where no bar could be read at all. Of
     those 77, five were checked against 400-dpi crops of the sheets and
     FOUR were already right:
-      CO3 Rifle p8   `1 inch = 30 ft.` under a 15/30/60/120 ladder - right
-      Town Pump E1.1 `1/8"=1'-0"` (8 ft/in), no bar printed at all - right
-      RC Ontario p9  SECTION A-A `HORIZONTAL SCALE: 1" = 10'` - right
-      RC Ontario p13 `GRAPHIC SCALE: 1"=50'` over a 50/0/50/100/150 bar
+      grading set p8 `1 inch = 30 ft.` under a 15/30/60/120 ladder - right
+      fuel stop E1.1 `1/8"=1'-0"` (8 ft/in), no bar printed at all - right
+      commercial p9  SECTION A-A `HORIZONTAL SCALE: 1" = 10'` - right
+      commercial p13 `GRAPHIC SCALE: 1"=50'` over a 50/0/50/100/150 bar
                      whose checkerboard draws no stroke `_page_ticks`
                      accepts, so the tick guard refuses it - right
-      Hurricane p3   promotes 10 where the sheet prints `1" = 40'` - WRONG
+      storage p3     promotes 10 where the sheet prints `1" = 40'` - WRONG
     Abstaining on all 77 to catch that one costs 13 correct readings per
     wrong one removed. The refusal ON CONTRADICTION removes all 6 wrong
     ones and costs nothing.
 
     WHAT THIS LEAVES OPEN, stated because it is the real hole: a caption
     that is wrong and has no readable bar to refute it still ships, and
-    Hurricane p3 is exactly that page. `corroborated: False` discloses it
+    Storage p3 is exactly that page. `corroborated: False` discloses it
     and a disclosure is weaker than an abstention (CLAUDE.md section 5).
     Closing it needs a reader that recovers the captions OCR drops - the
     outline lanes, stages 3-4 - not a blanket refusal of the OCR path.
@@ -2263,7 +2263,7 @@ def detect_scale(page: pymupdf.Page, ocr_if_needed: bool = True,
             # remaining source. This block returns on EVERY path so the
             # legacy pageless bar call below it never runs - its
             # label-centre measurement would resurrect exactly the
-            # readings the tick guards refuse (RC Ontario p3's 4.43).
+            # readings the tick guards refuse (a commercial set p3's 4.43).
             # The legacy lines are left textually untouched because
             # feat/choose edits them; whichever lands second deletes them.
             if not cands:
@@ -2282,9 +2282,9 @@ def detect_scale(page: pymupdf.Page, ocr_if_needed: bool = True,
                     # Rescued candidates NEVER become best, even a lone
                     # value. Measured the same evening this was built,
                     # promotion produced two confident wrong scales by two
-                    # different mechanisms: OCR ate the '0" of Thielen's
+                    # different mechanisms: OCR ate the '0" of Res-C's
                     # 1/4" = 1'0" (read 40 ft/in, truth 4 - the unit-mark
-                    # filter now refuses that shape), and on Hurricane
+                    # filter now refuses that shape), and on storage
                     # C.3.5 the only caption whose OCR survived was the
                     # KEY MAP's 1"=300' while the sheet's own HORIZ
                     # 1"=40' / VERT 1"=10' did not scan - a "single"

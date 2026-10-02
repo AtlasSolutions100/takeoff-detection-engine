@@ -32,12 +32,12 @@ def _is_usable_label(t: str) -> bool:
     """A legend label an estimator could act on.
 
     A legend row's text is only worth propagating if it says something. On
-    Beaumont's Barn civil C4.3 the swatch for the footer drain has blue flow
+    a client's residential civil C4.3 the swatch for the footer drain has blue flow
     CHEVRONS drawn inside the sample bar, and the row reader picked up the
     chevrons as the label: six styles, 12,379 pt, all named `> > >`. One of
     them is `SE-P-FND DRN` at 10,437 pt = 1,449.6 ft of perimeter drain - the
-    most valuable line item on the sheet, and per the client's own Estimate
-    #853 the one they price at $31/ft. Sheet 2 does the same with dimension
+    most valuable line item on the sheet, and per the client's own estimate
+    the one they price highest per foot. Sheet 2 does the same with dimension
     fragments (`"> 12'-1`, 17,761 pt).
 
     Worse than useless: the legend label OVERWRITES the CAD layer name, which
@@ -85,6 +85,10 @@ def _assign_label(store: dict, sid, label: str) -> None:
 ROW_TOL = 7.0
 SAMPLE_W = 240.0
 SAMPLE_H = 7.0
+# A legend row names a plan style only in the swatch's own pen: max per-channel
+# RGB difference between the swatch and the style it may name (see the dashed
+# matcher for the measured case that set it).
+LEGEND_COLOR_TOL = 0.1
 
 
 def read_legend(words: list, chains: list, units: list | None = None) -> dict:
@@ -177,7 +181,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
             # A row shaped "TAG = LONG NAME" is an ABBREVIATION DEFINITION -
             # the vocabulary a spot-elevation or callout table teaches - not
             # a line type. Its "sample" here is usually whatever plan
-            # linework happens to cross the strip left of the table: on Barn
+            # linework happens to cross the strip left of the table: on Res-A
             # C3.0 the existing-contour family itself (grey d9.0 g4.5, 105
             # chains, 87,441 pt) satisfied the 60%-containment test with a
             # short near-horizontal fragment and was named "BOW = BOTTOM OF
@@ -247,7 +251,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
     # the sample IS a chain of some style; the join is exact - label that
     # style and nothing else. But only when the style is DISTINCTIVE: a
     # legend sample landing in the generic black-solid bucket would smear
-    # its label over every plain solid on the sheet (Oncor masonry wall
+    # its label over every plain solid on the sheet (substation masonry wall
     # labeled 118 unrelated lines). Dashed cadences, non-black colors, and
     # heavy weights identify a real style; plain thin solids do not.
     by_style_count: dict = defaultdict(int)
@@ -256,7 +260,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
     # exact joins that land on the SWATCH'S OWN style are self-joins: the
     # legend bar chained into a tiny style of its own instead of sharing
     # the plan style (LTSCALE: paper-space swatch, model-space plan).
-    # Measured (Oncor p4): ADJACENT PROPERTY LINE joined a 261pt 3-chain
+    # Measured (substation p4): ADJACENT PROPERTY LINE joined a 261pt 3-chain
     # 'misc' style holding its own swatch bar, while the real 2437pt
     # d9-d45-g9 family sat unlabeled. A style that is mostly legend-strip
     # ink (or nearly absent outside the strips) is no plan match.
@@ -301,31 +305,41 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
                 continue
             if not r.klass.startswith("dash"):
                 continue
-            # class must match - EXCEPT at exact weight: a compound
-            # linetype's slash ticks don't chain (they slant off-axis),
-            # so the plan chains as dash1 while the swatch reads dash2
-            # (Oncor property line: bars d45.7 g45.7)
-            if r.klass != e["klass"] \
-                    and _weight_class(r.width) != e["weight"]:
+            # class must match - EXCEPT for a COMPOUND swatch (two or more
+            # dash lengths, max_dash well above the average): its slash
+            # ticks don't chain (they slant off-axis), so the plan chains
+            # as dash1 while the swatch reads dash2 (substation property line:
+            # bars d45.7 g45.7). A plain swatch and a plan style of another
+            # class are two linetypes: Res-A C2.0's "EXISTING IRRIGATION
+            # DITCH FLOWLINE" (a dash-dot swatch) named 1,739 LF of dash1
+            # water service through the old exact-weight exemption.
+            compound = bool(e.get("max_dash")) and \
+                e["max_dash"] > 1.6 * max(e["avg_dash"], 1e-6)
+            if r.klass != e["klass"] and not compound:
                 continue
             # +-2 weight classes: paper-space swatches print heavier than
-            # the model-space line (Oncor PROPERTY LINE swatch weight 4 vs
+            # the model-space line (substation PROPERTY LINE swatch weight 4 vs
             # the real d9-d45-g9 family at weight 2 - human-confirmed map)
             wdiff = abs(_weight_class(r.width) - e["weight"])
             if wdiff > 2:
                 continue
             # near-WHITE candidates are the cores of OUTLINED thick lines
-            # (Oncor property line: black hairline edges + white w3.3
+            # (substation property line: black hairline edges + white w3.3
             # core) - their visible color IS the outline, so the color
             # gate must not compare against the swatch's black
             white_core = r.color and min(r.color) > 0.9
+            # 0.1 per channel (was 0.2): the swatch is drawn in the plan
+            # style's own pen, and a 0.15 difference is another pen - the
+            # irrigation-ditch row's (0.5, 0.62, 1.0) against the water
+            # service's (0.35, 0.51, 0.99). Screened variants of one pen
+            # differ by far more than 0.1 and were never caught by 0.2.
             if not white_core and e["color"] and r.color and \
-                    max(abs(a - b) for a, b in zip(e["color"], r.color)) > 0.2:
+                    max(abs(a - b) for a, b in zip(e["color"], r.color)) > LEGEND_COLOR_TOL:
                 continue
             rd = (r.ink or r.length) / max(r.n_dashes, 1)
             # LTSCALE: swatch lengths are paper-space - test the window
             # against BOTH the swatch's average and its longest mark
-            # (Oncor PL: swatch avg 10.2 / max 27.2 vs plan bars 45.7)
+            # (substation PL: swatch avg 10.2 / max 27.2 vs plan bars 45.7)
             fits = False
             for ref in (e["avg_dash"], e.get("max_dash") or 0):
                 if ref <= 0:
@@ -339,7 +353,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
             cand = sum(c2.length for c2 in chains if c2.style_id == sid)
             # closest WEIGHT wins first; true-color matches outrank the
             # white-core bypass; then closest COLOUR (0.05 buckets), then
-            # ink. Colour before ink: the Barn "7900 EXISTING CONTOUR
+            # ink. Colour before ink: the Res-A "7900 EXISTING CONTOUR
             # INTERVAL" swatch (grey 0.459) matched the 0.59-grey regular
             # contours at 9x the ink instead of the exact-0.46 index
             # family - a 0.13-off colour must not beat an exact one on
@@ -364,7 +378,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
             # doing the matching, not a stored template.
             # COMPOUND swatches (dash-dot-dot: max_dash >> avg) never take
             # this tier - a uniform-bar solid style cannot be that
-            # linetype (Oncor PL swatch max/avg 2.67 wrongly took the
+            # linetype (substation PL swatch max/avg 2.67 wrongly took the
             # 45.7pt fence bars; honest unmatched beats a wrong label).
             want = e.get("max_dash") or e["avg_dash"]
             for sid, r in reps.items():
@@ -373,7 +387,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
                 if abs(_weight_class(r.width) - e["weight"]) > 1:
                     continue
                 if e["color"] and r.color and \
-                        max(abs(a - b) for a, b in zip(e["color"], r.color)) > 0.2:
+                        max(abs(a - b) for a, b in zip(e["color"], r.color)) > LEGEND_COLOR_TOL:
                     continue
                 sib = [c for c in chains if c.style_id == sid]
                 if not (2 <= len(sib) <= 150):
@@ -404,7 +418,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
                 if abs(_weight_class(r.width) - e["weight"]) > 2:
                     continue
                 if e["color"] and r.color and \
-                        max(abs(a - b) for a, b in zip(e["color"], r.color)) > 0.2:
+                        max(abs(a - b) for a, b in zip(e["color"], r.color)) > LEGEND_COLOR_TOL:
                     continue
                 rats = curv.get(sid) or []
                 if not rats or float(np.median(rats)) < 1.3:
@@ -496,6 +510,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
                 or min(base.color) > 0.9):
             white_pen = min(base.color) > 0.9
             base_wc = _weight_class(base.width)
+            base_dash = (base.ink or base.length) / max(base.n_dashes, 1)
             for sid, r in reps.items():
                 if sid in style_labels or r.klass == "dash-text":
                     continue
@@ -504,9 +519,20 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
                     continue
                 if white_pen and abs(_weight_class(r.width) - base_wc) > 1:
                     continue
-                if r.color and max(abs(a - b) for a, b in
-                                   zip(base.color, r.color)) <= 0.2:
-                    _assign_label(style_labels, sid, e["label"])
+                # the same pen (0.1 per channel, as the matcher) AND the
+                # same linetype: the sample's class, or its dash length
+                # within the matcher's window when a variant re-measured
+                # (Belle shear centreline: native 3-3 beside two dash2
+                # readings of the same red symbol)
+                if not (r.color and max(abs(a - b) for a, b in
+                                        zip(base.color, r.color)) <= LEGEND_COLOR_TOL):
+                    continue
+                if r.klass != base.klass and r.klass.startswith("dash"):
+                    rd = (r.ink or r.length) / max(r.n_dashes, 1)
+                    lo, hi = sorted([base_dash, rd])
+                    if hi > 1.9 * lo + 3.0:
+                        continue
+                _assign_label(style_labels, sid, e["label"])
     _extend_by_continuation(style_labels, chains)
     return {"entries": entries, "style_labels": style_labels}
 
@@ -514,7 +540,7 @@ def read_legend(words: list, chains: list, units: list | None = None) -> dict:
 def _extend_by_continuation(style_labels: dict, chains: list) -> None:
     """A labeled line that BREAKS mid-run keeps its name across the break.
 
-    The chainer sometimes reads one physical line as two styles: on Barn C3.0
+    The chainer sometimes reads one physical line as two styles: on Res-A C3.0
     the grey existing contours (d9.0 g4.5) continue end-to-end into a sibling
     style reading d9.0 g44.3 - same 9pt dashes, gaps read one-dash-sparse -
     11 chains / 14,343 pt (5,976 ft at 1"=30') of contour footage that would
@@ -526,7 +552,7 @@ def _extend_by_continuation(style_labels: dict, chains: list) -> None:
         (dot < -0.6): geometric continuation, not proximity
       * joints >= 0.25 x the target style's chain count - a 174-chain
         generic-solid pool with 3 incidental joints must NOT inherit the
-        name (that is the Oncor masonry smear with extra steps); a small
+        name (that is the substation masonry smear with extra steps); a small
         fragment family with joints on a quarter of its chains is the same
         physical line
       * colors within 0.15 per channel, and never onto annotation class
@@ -587,7 +613,7 @@ def _extend_by_continuation(style_labels: dict, chains: list) -> None:
     def _sparse_kin(cs, ssid):
         """Same physical linetype read one-dash-sparse by the chainer.
 
-        Barn C3.0: existing contours are d9.0 g4.5 (period 13.5); their broken
+        Res-A C3.0: existing contours are d9.0 g4.5 (period 13.5); their broken
         siblings read d9.0 g44.3 - the same 9pt dashes with the gap spanning
         an integer number of periods minus one dash ((44.3+9.0)/13.5 = 3.95).
         Demands: dash within 10%, color within 0.1, and gap+dash an integer
@@ -622,6 +648,109 @@ def _extend_by_continuation(style_labels: dict, chains: list) -> None:
         if a and b is not None and b.color and                 max(abs(x - y) for x, y in zip(a, b.color)) > 0.15:
             continue
         _assign_label(style_labels, sid, style_labels[ssid])
+
+    # KIN BY CADENCE, no joints needed - two shapes measured on substation C-04
+    # (2026-09-26 audit, "6 of 6 named" and still 22.8 % of the adjacent
+    # property line and every index contour unnamed):
+    #  * SCALED KIN: the same linetype plotted at a multiple of its scale.
+    #    Index contours are the regular contour's pen at twice the LTSCALE
+    #    (d18 g9 over d9 g4.5, 13,599 pt on C-04): dash AND gap both k x the
+    #    named style's (k = 2 or 3), same pen, and both families curvy
+    #    (contours bend; a straight border at 2x cadence is not kin).
+    #  * COMPOUND KIN: a compound linetype (two or more dash classes) whose
+    #    chain lost some marks reads with the same dash classes and a gap
+    #    that spans whole periods - the ADJACENT PROPERTY LINE's d9 d42.9
+    #    g63.0 variant beside the named d9 d45 g9 (63 + 9 = 4 x 18). Dash
+    #    classes within 10 %, same pen and weight class, an integer period
+    #    count within 15 %.
+    def _vec(c):
+        ds, gs = [], []
+        for tok in (c.dash_signature or "").split():
+            try:
+                if tok[0] == "d":
+                    ds.append(float(tok[1:]))
+                elif tok[0] == "g":
+                    gs.append(float(tok[1:]))
+            except (ValueError, IndexError):
+                return None
+        if not ds or not gs:
+            return None
+        return sorted(ds), gs[0]
+
+    from .chain import _sample_polyline
+
+    def _samples(cs):
+        out = []
+        for c in cs:
+            s, _ = _sample_polyline(np.asarray(c.pts, float), 4.0, 100000)
+            if len(s):
+                out.append(s)
+        return np.vstack(out) if out else np.zeros((0, 2))
+
+    _ptree: dict = {}
+
+    def _among(cs, ssid):
+        """The child runs AMONG the parent's lines (index contours sit between
+        regular contours): median distance from the child's samples to the
+        parent's within 80 pt, four fifths within 160 pt. A border drawn at
+        twice the contour cadence sits at the edge of the field and fails.
+        Measured on substation C-04: the thin index family's median is 56 pt,
+        p80 108 pt, against the regular contours."""
+        t = _ptree.get(ssid)
+        if t is None:
+            ps = _samples(by_sid.get(ssid) or [])
+            t = cKDTree(ps) if len(ps) else False
+            _ptree[ssid] = t
+        if t is False:
+            return False
+        s = _samples(cs)
+        if not len(s):
+            return False
+        d, _ = t.query(s)
+        return float(np.median(d)) <= 80.0 and float(np.percentile(d, 80)) <= 160.0
+
+    parents = []
+    for ssid in list(style_labels):
+        cs = by_sid.get(ssid) or []
+        if not cs or not cs[0].klass.startswith("dash") or cs[0].klass == "dash-text":
+            continue
+        rep = max(cs, key=lambda c: c.length)
+        v = _vec(rep)
+        if v:
+            parents.append((ssid, rep, v))
+    for sid, cs in sorted(by_sid.items()):
+        if sid in style_labels or not cs:
+            continue
+        rep = max(cs, key=lambda c: c.length)
+        if not rep.klass.startswith("dash") or rep.klass == "dash-text":
+            continue
+        v = _vec(rep)
+        if not v:
+            continue
+        ds, g = v
+        for ssid, prep, (pds, pg) in parents:
+            if not (rep.color and prep.color and
+                    max(abs(x - y) for x, y in zip(rep.color, prep.color)) <= LEGEND_COLOR_TOL):
+                continue
+            if abs(_weight_class(rep.width) - _weight_class(prep.width)) > 1:
+                continue
+            hit = False
+            if len(ds) == 1 and len(pds) == 1 and pds[0] > 0 and pg > 0:
+                k = ds[0] / pds[0]
+                kr = int(round(k))
+                if kr in (2, 3) and abs(k - kr) <= 0.10 * kr \
+                        and abs(g / pg - kr) <= 0.25 * kr and _among(cs, ssid):
+                    hit = True
+            elif len(ds) >= 2 and len(ds) == len(pds):
+                if all(abs(a - b) <= 0.10 * max(a, b) for a, b in zip(ds, pds)):
+                    period = pds[0] + pg
+                    if period > 0:
+                        n = (g + ds[0]) / period
+                        if 1.0 <= n <= 6.0 and abs(n - round(n)) <= 0.15:
+                            hit = True
+            if hit:
+                _assign_label(style_labels, sid, style_labels[ssid])
+                break
 
 
 def read_legend_sheet(words: list, chains: list) -> list:
@@ -761,7 +890,7 @@ def _sample_from_units(units: list, x0: float, x1: float, cy: float):
     # A mark contributes only if it LIVES in the strip - >=95% of its points
     # inside the (slightly widened) box - not merely if its centroid lands
     # here. The old centroid test admitted plan strokes CROSSING the legend
-    # region: on Barn C3.0 the strips beside the spot-elevation table and the
+    # region: on Res-A C3.0 the strips beside the spot-elevation table and the
     # grading notes hold fragments of the grey existing-contour family, and
     # their cadence read as a plausible dash swatch, which is how
     # "DRAINAGE DIRECTION/SLOPE 2.0%" and a numbered note came to label
@@ -778,7 +907,7 @@ def _sample_from_units(units: list, x0: float, x1: float, cy: float):
         return None
     # A linetype swatch is a HANDFUL of bars - the corpus's genuine samples
     # run 3-15 marks over a 30-110pt strip. A strip holding dozens of
-    # sub-2pt marks is a TEXTURE field: on Barn C3.0 the strips beside the
+    # sub-2pt marks is a TEXTURE field: on Res-A C3.0 the strips beside the
     # notes column hold 300+ dots of SE-P-GRAVEL HATCH stipple at ~1.6pt
     # each, and their "cadence" (avg 2.1) matched the grey contour family,
     # which is how "DRAINAGE DIRECTION/SLOPE 2.0%" came to name 105 chains
@@ -845,7 +974,7 @@ def _sample_in_strip(chains: list, x0: float, x1: float, cy: float,
     for c in cands:
         by_style[c.style_id].append(c)
     # A swatch bar is judged by its own plausible size, not by the strip's
-    # width: legends that park labels far from the bars (Oncor p4) make the
+    # width: legends that park labels far from the bars (substation p4) make the
     # strip wide, and 0.45x of wide rejected every genuine 38-98pt sample.
     need = min_span if min_span is not None else min(0.45 * (x1 - x0), 34.0)
     hits = []

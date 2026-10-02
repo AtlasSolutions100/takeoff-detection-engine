@@ -35,26 +35,30 @@ const H = new Function("state", "calls",
   "const $ = () => ({ textContent: '' }); const setStatus = (m, k) => calls.status.push([m, k || '']);\n"
   + "const renderSt = () => { calls.rendered++; }; const stResultText = () => ''; const stCalc = () => ({});\n"
   + "const stSync = () => state.st; const stFetchFootings = () => {}; const stGroupsTable = () => stMk('div', 'st-groups');\n"
+  + "const twinsLoad = () => {};\n"
   + "function stMk(tag, cls, text) { const el = { tag, className: cls || '', textContent: text || '', children: [], classList: { add(c) { el.className += ' ' + c; } }, appendChild(c) { el.children.push(c); return c; } }; return el; }\n"
   + fnSrc("stFt") + "\n" + fnSrc("stFootingsBlock") + "\n" + fnSrc("stApplyFooting")
   + "\nreturn { stFootingsBlock, stApplyFooting };")(null, calls);
-const state = { job: "j", page: 3, gen: 1, st: { draft: null, footings: null } };
+const state = { job: "j", page: 3, gen: 1, twins: null, st: { draft: null, footings: null } };
 const H2 = new Function("state", "calls",
   "const $ = () => ({ textContent: '' }); const setStatus = (m, k) => calls.status.push([m, k || '']);\n"
   + "const renderSt = () => { calls.rendered++; }; const stResultText = () => ''; const stCalc = () => ({});\n"
   + "const stSync = () => state.st; const stFetchFootings = () => { calls.fetched = (calls.fetched || 0) + 1; }; const stGroupsTable = () => stMk('div', 'st-groups');\n"
+  // the panel asks for the twin-line pairing itself (2026-09-26, audit D01: the page load no longer does)
+  + "const twinsLoad = () => { calls.twins = (calls.twins || 0) + 1; };\n"
   + "function stMk(tag, cls, text) { const el = { tag, className: cls || '', textContent: text || '', title: '', children: [], classList: { add(c) { el.className += ' ' + c; } }, appendChild(c) { el.children.push(c); return c; } }; return el; }\n"
   + fnSrc("stFt") + "\n" + fnSrc("stFootingsBlock") + "\n" + fnSrc("stApplyFooting")
   + "\nreturn { stFootingsBlock, stApplyFooting };")(state, calls);
 let b = H2.stFootingsBlock(state.st);
 check(calls.fetched === 1 && state.st.footings.loading && /reading the footing marks/.test(b.children[0].textContent), "first render starts the fetch and says so");
+check(calls.twins === 1, "the first render also asks for the twin-line pairing (the page load no longer does)");
 state.st.footings = { job: "j", page: 3, loading: false, err: null, data: {
   by_mark: { "CF2.0": { count: 14, unpaired: 1, bof: { "86": 3, "84.1667": 3 }, schedule: { from: "schedule", kind: "continuous", width_ft: 2, depth_ft: 1, page: 11, reinf: "(2)#5 BOTTOM #5@16\"" } },
              "F5.5": { count: 5, unpaired: 0, bof: { "96": 3 }, schedule: { from: "mark digits", kind: "spread", width_ft: 5.5, length_ft: 5.5, depth_ft: null } } },
   slabs: [{ text: "(87'-0\")", elev_ft: 87 }], schedule: { pages: [11], rows: 17 } } };
 b = H2.stFootingsBlock(state.st);
 const chips = b.children.find(c => c.className === "st-chips").children;
-check(chips.length === 2 && chips[0].textContent.startsWith("CF2.0 ×14 · 2 ft wide × 1 ft deep · BOF"), "the busiest mark first, with its schedule width and depth and the bottom-of-footing elevations (" + chips[0].textContent + ")");
+check(chips.length === 2 && chips[0].textContent.startsWith("CF2.0 ×14 · 2 ft wide × 1 ft thick · BOF"), "the busiest mark first, with its schedule width and depth and the bottom-of-footing elevations (" + chips[0].textContent + ")");
 check(/86′ ×3/.test(chips[0].textContent) && /from the footing schedule \(page 12\)/.test(chips[0].title), "elevations carry their counts; the tooltip names the schedule page");
 check(/st-chip-guess/.test(chips[1].className) && /5\.5 ft × 5\.5 ft/.test(chips[1].textContent) && /no schedule row/.test(chips[1].title), "a mark without a schedule row is a dashed guess chip from its digits");
 check(/schedule read from page 12/.test(b.children[0].textContent) && b.children.some(c => /slab elevations printed: \(87'-0"\)/.test(c.textContent)), "the head names the schedule page; the slab elevations are listed");
@@ -64,9 +68,9 @@ check(calls.status[calls.status.length - 1][1] === "err" && /outline first/.test
 state.st.draft = { footing_w_ft: 2, footing_ft: 0, depth_ft: 8 };
 H2.stApplyFooting("CF3.0", { from: "schedule", width_ft: 3, depth_ft: 1 });
 check(state.st.draft.footing_w_ft === 3 && state.st.draft.footing_ft === 1 && state.st.draft.footing_mark === "CF3.0" && calls.rendered >= 1, "a click sets the draft's footing width and depth from the schedule row");
-check(/3 ft wide, 1 ft below the slab \(from the footing schedule\)/.test(calls.status[calls.status.length - 1][0]), "and says where the numbers came from");
+check(/3 ft wide, 1 ft thick/.test(calls.status[calls.status.length - 1][0]) && /\(from the footing schedule\)/.test(calls.status[calls.status.length - 1][0]), "and says where the numbers came from");
 H2.stApplyFooting("F-24", { from: "mark digits", width_ft: 2, depth_ft: null });
-check(state.st.draft.footing_w_ft === 2 && state.st.draft.footing_ft === 1 && /depth not in the schedule/.test(calls.status[calls.status.length - 1][0]), "a digits-only mark sets the width, keeps the depth, and asks for it");
+check(state.st.draft.footing_w_ft === 2 && state.st.draft.footing_ft === 1 && /thickness not in the schedule/.test(calls.status[calls.status.length - 1][0]), "a digits-only mark sets the width, keeps the depth, and asks for it");
 check(/\.st-chip\.st-chip-guess \{ border-style: dashed; color: var\(--t-warn\); \}/.test(css), "guess chips are dashed and warning-coloured");
 check(+((/style\.css\?v=(\d+)/.exec(html) || [])[1]) >= 88 && +((/app\.js\?v=(\d+)/.exec(html) || [])[1]) >= 183, "cache busters moved");
 

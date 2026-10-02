@@ -1,0 +1,61 @@
+CORE Takeoff - bid sheet,upload_f62cc07cd24c_C4.0-SITE-GRADING-PLAN-Rev.1.pdf
+template,your account's bid sheet
+approved sheets,1
+note,quantities are sums of the approved sheets' rows; a row drawn on several sheets counts once per sheet
+
+#,Item,Unit,Qty,Rows,From
+1,Mobilization,LS,,0,
+2,Clear & Grub,SF,107931,1,p1: Clear & Grub 107931 SF
+3,Strip Topsoil,CY,2230,2,p1: Strip Topsoil 1999 CY; p1: Zone 1 topsoil strip 231 CY
+4,Site Cut,CY,646,1,p1: Site Cut 646 CY
+5,Site Fill,CY,1221,2,p1: Site Fill 749 CY; p1: Zone 1 fill 472 CY
+6,Mass Excavation,CY,,0,
+7,Perimeter Drain,LF,,0,
+8,Structure Excavation,CY,,0,
+9,Structure Backfill,CY,,0,
+10,Mass Backfill - Import,CY,,0,
+11,Slab Prep,SF,,0,
+12,Rough Place Topsoil,CY,,0,
+13,Drive Sub Grade Prep,SF,,0,
+14,"4"" Sewer",LF,167,2,p1: C-PRO-SS MAIN 148.3 LF; p1: C-PRO-SS MAIN [FUTURE] 18.7 LF
+15,Water,LF,757.2,4,p1: P2-WATER-LINE 486.6 LF; p1: C-PRO-WATER MAIN 196.4 LF; p1: P2-FIREWATER-LINE 74.2 LF; p1: C-PRO-WATER HYDRANT 2 EA (not summed: other unit) [also 2 EA in other units]
+16,Elec/Phone/TV - Trench,LF,539.5,1,p1: E2-ELECTRIC-LINE-OH 539.5 LF
+17,Gas Trench only,LF,65.9,1,p1: p2-gas-service 65.9 LF
+18,Outside Slab Prep,SF,0,1,p1: P1-WALK 3294 LF (not summed: other unit) [also 3294 LF in other units]
+19,Radon,LF,,0,
+20,Site Drains,LF,1893.1,3,p1: P2-STORM-SWALE 493.2 LF; p1: P2-STORM-SUBSURFACE 1298.1 LF; p1: P2-STORM UNDERDRAIN LEFT 101.8 LF
+21,Boulder walls,SF,,0,
+22,Silt Fence,LF,2206.6,2,p1: P1-FENCE 887.6 LF; p1: Silt / Construction Fence 1319 LF
+23,Septic Tank,EA,,0,
+24,Propane Tank,EA,,0,
+
+,Not on the bid sheet,,,,"rows no line matched - add a word to a line in Settings, or leave them out on purpose"
+,P5-GRADE-BREAK,LF,67.7,1,p1
+,Export Topsoil,CY,1999,1,p1
+,O-PIPE,LF,3202.2,1,p1
+,P1-CONCRETE,LF,2687.2,1,p1
+,E1-CONCRETE,LF,991.3,1,p1
+,P3-EASEMENT,LF,345.5,1,p1
+,O-SURFACE-EXISTING COMBINED,LF,5660.5,1,p1
+,O-SURFACE-FG,LF,4411,1,p1
+,P1-PARKING,LF,3421.4,1,p1
+,P1-PVMT,LF,2875.5,1,p1
+,P1-GUT-FL,LF,2456.5,1,p1
+,V-X-PROP-BNDY,LF,1551.2,1,p1
+,P1-PVMT-CL,LF,1501.4,1,p1
+,P1-BLDG,LF,1390.5,1,p1
+,P1-PVMT-CORR,LF,1345.3,1,p1
+,E3-LOTS,LF,1133.5,1,p1
+,E3-BOUNDARY,LF,1124.7,1,p1
+,E1-MISC,LF,1001.4,1,p1
+,P1-LSCAPE-EDGE,LF,979.9,1,p1
+,O-SURFACE-LBL-FG,LF,879.7,1,p1
+,P1-CONSTRUCTION-LIMITS,LF,655.6,1,p1
+,E1-BLDG,LF,404.6,1,p1
+,P3-BOUNDARY,LF,356,1,p1
+,E1-PVMT,LF,306.1,1,p1
+,E1-MISC (NO HATCH),LF,171,1,p1
+,P1-BLDG-DOORS,LF,37,1,p1
+,P1-SIGN,LF,36,1,p1
+,P2-APPURTENANCE,LF,11.3,1,p1
+,Import Structural,CY,103,1,p1

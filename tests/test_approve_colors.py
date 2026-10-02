@@ -96,6 +96,7 @@ def approve(**over):
     body = dict(labels={3: "FIBER OPTIC", 7: "EXISTING CONTOUR"},
                 image_dpi=300)
     body.update(over)
+    body.setdefault("scale_seen", server._scale_stamp(JOB, PAGE))   # the page loaded the record just now
     server.approve(JOB, PAGE, server.ApproveBody(**body))
     return json.loads((_d / f"p{PAGE}_elements.json").read_text())
 

@@ -1,52 +1,62 @@
 {
   "measureBtn": {
     "file": "measure.webm",
-    "caption": "Measuring between geothermal wells on Barn C3.0",
+    "caption": "Measuring a two-leg run along a curb line — the readout keeps the total",
     "key": "M"
   },
   "splitBtn": {
     "file": "split.webm",
-    "caption": "Splitting an existing contour in two on Barn C3.0",
+    "caption": "Splitting an existing-ground contour in two",
     "key": "S"
   },
   "extendBtn": {
     "file": "extend.webm",
-    "caption": "Extending a contour to where it should reach on Barn C3.0",
+    "caption": "Extending a pavement edge across its gap to where it should reach",
     "key": "E"
   },
   "cutSpanBtn": {
     "file": "cutspan.webm",
-    "caption": "Cutting a span out of an index contour on Barn C3.0",
+    "caption": "Cutting a span out of an existing-ground contour",
     "key": "X"
   },
   "drawBtn": {
     "file": "drawline.webm",
-    "caption": "Drawing a new run into the selected family on Barn C3.0",
+    "caption": "Drawing a new run into the selected family",
     "key": "D"
   },
   "reclassBtn": {
     "file": "reclass.webm",
-    "caption": "Moving a contour into the 7900-interval family on Barn C3.0",
+    "caption": "Moving an existing-ground contour into the finished-grade family",
     "key": "R"
   },
   "mergeBtn": {
     "file": "merge.webm",
-    "caption": "Merging a label-broken run — the gap is bridged and counted",
+    "caption": "Joining two pieces of one concrete edge into a single run",
     "key": "J"
   },
   "sepBtn": {
     "file": "separate.webm",
-    "caption": "Naming one well loop so it gets its own itemized row",
+    "caption": "Naming one contour so it gets its own itemized row",
     "key": null
   },
   "removeBtn": {
     "file": "delete.webm",
-    "caption": "Deleting a picked point, then a whole line — Ctrl+Z restores",
+    "caption": "Deleting a whole line — Ctrl+Z restores it",
     "key": "Del"
   },
   "wzBtn": {
     "file": "workarea.webm",
     "caption": "Dragging a work-area box — only what is inside counts",
     "key": null
+  },
+  "flattenBtn": {
+    "file": null,
+    "caption": "Make a bumpy run straight — every corner stays",
+    "key": "R"
+  },
+  "trimBtn": {
+    "file": null,
+    "caption": "Cut every line at a match line, so a run that goes on to the next sheet counts once",
+    "key": "T"
   }
 }

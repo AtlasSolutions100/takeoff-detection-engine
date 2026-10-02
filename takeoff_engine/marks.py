@@ -2,7 +2,7 @@
 
 A "mark bubble" (also "tag") is the little outlined shape a drafter puts
 next to an opening with a short code inside it.  On the sheet this module
-was built against - Kevin Tsai Architecture, Aqua Vista Apartments - the
+was built against - a client's apartment window set, one architect - the
 sheet's OWN "SYMBOL LEGEND" block spells the convention out, so none of it
 is an industry guess:
 
@@ -31,8 +31,8 @@ Pipeline
     bubble's interior -> group identical codes -> read one averaged image
     per group -> map back to page points for the UI.
 
-Every constant below was measured on "Marked Up Window Plans - Aqua Vista"
-page 1 at 300 dpi; the evidence is in out/verify/2026-08-21/bill-marks/.
+Every constant below was measured on the marked-up window plans of the apartment set
+page 1 at 300 dpi; the evidence is in out/verify/2026-08-21/ (the marks folder).
 
   * The tag is 31 x 35 px (0.10 x 0.12 in on paper), ~2 px stroke, ~12 px
     cap-height text inside.
@@ -140,7 +140,7 @@ class MarkPage:
 
     def off_schedule(self) -> dict[str, int]:
         """Bubbles read confidently as something the schedule does not list
-        (on Bill's floor plans: the WALL tags, L04/L06/L26)."""
+        (on the estimator's floor plans: the WALL tags, L04/L06/L26)."""
         out: dict[str, int] = {}
         for t in self.tags:
             if t.kind == "other-tag":
@@ -314,7 +314,7 @@ def seed_tags(ink: np.ndarray) -> list[tuple]:
 def size_families(seeds: list[tuple]) -> list[tuple]:
     """Group the seeds into congruent-size families, biggest family first.
 
-    A sheet carries several bubble shapes at once - on Bill's A110 the
+    A sheet carries several bubble shapes at once - on the estimator's A110 the
     window hexagon (31x35 px), the wall-tag diamond, the small keynote
     circle (~14x18 px) and the detail callout - and they are NOT
     interchangeable: mixing sizes into one template set makes the keynote
@@ -331,19 +331,19 @@ def size_families(seeds: list[tuple]) -> list[tuple]:
     # below, and THAT is the proximity question. The bucket itself is NOT
     # bin-shift invariant - adding 1 or 2 px to every seed's w and h (same
     # relative geometry, every bin edge moved) changes the family list on all
-    # 20 raster pages in client_meet/Bill - so it must never be read as the
+    # 20 raster pages in the client's folder - so it must never be read as the
     # answer, only as a seed for the radius test.
     # Measured end-to-end over 19 of those pages, this bucket vs a bin-free
     # mode seek (every seed proposes its own centre, same radius membership,
     # same dedup): 10 pages identical, 9 different, and the differences run
-    # BOTH ways - Mission Bell A-2.0 24/45, 68/92, 101/193, 144/192, 101/153,
+    # BOTH ways - window set 2 A-2.0 24/45, 68/92, 101/193, 144/192, 101/153,
     # 97/136 (mode seek higher) but Windows-and-Balcony p1 48/35 and Interior
     # Storefront p0 46/37 (lower).
-    #   * Aqua Vista p0-p5, the ONLY sheet family with a human-confirmed key
+    #   * Apartment set p0-p5, the ONLY sheet family with a human-confirmed key
     #     (F68/F72), is identical on every page: 0/32/35/34/34/35. Its window
     #     hexagon is 31x35 and the next family up is 25x28 - many bin widths
     #     apart, so no edge can fall between them.
-    #   * The 9 that move have no confirmed bubble count, and on Mission Bell
+    #   * The 9 that move have no confirmed bubble count, and on window set 2
     #     every extra detection reads as unnamed, i.e. the mode seek is
     #     pulling in room tags and grid bubbles (F70's failure mode), not
     #     finding marks. Which number is right there is UNKNOWN.
@@ -744,7 +744,7 @@ def read_image(g: np.ndarray, vocab: list[str],
     # `agree` counts how many page-segmentation modes produced it: a read
     # three or more of them agree on is a real string, just not one of this
     # schedule's marks - almost always a neighbouring tag family (the WALL
-    # tags on Bill's A110 read L04/L06 and land here).
+    # tags on the estimator's A110 read L04/L06 and land here).
     from collections import Counter
     top_raw, agree = ("", 0)
     if raws:
@@ -757,7 +757,7 @@ def read_image(g: np.ndarray, vocab: list[str],
 
 # A read is only believed when the page-setter modes agree well enough:
 # one exact vocabulary hit (2.0), or several lookalike-corrected ones.
-# Measured: real groups on Bill's A110 land at 2.0-6.0, while the keynote
+# Measured: real groups on the estimator's A110 land at 2.0-6.0, while the keynote
 # circles' noise tops out at 1.2.
 READ_MIN_WEIGHT = 1.5
 
@@ -766,15 +766,15 @@ READ_MIN_WEIGHT = 1.5
 
 # How a legend block is HEADED, enumerated from the corpus rather than
 # guessed.  Over the 6,714 vector pages under ../TakeoffPro AI/{Plans,
-# Plans 2,Ryno Construction} and ../client_meet (out/verify/2026-08-22/
-# billscope/work/headings.py, output in HEADINGS.txt) the heading of a block
+# Plans 2,<contractor>} and the client folders (out/verify/2026-08-22/
+# <scope>/work/headings.py, output in HEADINGS.txt) the heading of a block
 # that keys a sheet's symbols reads:
 #     LEGEND (173 lines) / "LEGEND:" (18)      - much the commonest form
 #     <qualifier> LEGEND (24 distinct forms: SPOT ELEVATION LEGEND, LINE
 #         STYLE LEGEND, SURVEY SYMBOL LEGEND, PLUMBING SYMBOLS LEGEND, ...)
 #     <qualifier> SYMBOLS (COMMON FRAMING SYMBOLS:, ELECTRICAL SYMBOLS,
-#         LITHOLOGIC SYMBOLS, WELL CONSTRUCTION SYMBOLS, ... - and Mission
-#         Bell's FLOOR SYMBOLS)
+#         LITHOLOGIC SYMBOLS, WELL CONSTRUCTION SYMBOLS, ... - and window
+#         set 2's FLOOR SYMBOLS)
 # The pattern this function used to require - the word SYMBOL immediately
 # followed by a word starting LEGEN - fires on 13 of the corpus's 502,992
 # text lines, in 7 spellings.  The bare phrase "SYMBOL LEGEND" is ONE of
@@ -782,15 +782,15 @@ READ_MIN_WEIGHT = 1.5
 # UTILITY / WATER UTILITY / SANITARY SEWER / STORM DRAIN SYMBOL LEGEND).
 # The rule below fires on 358 lines in 59 spellings, of which 14 are plainly
 # not headings ("VARIES BY LEGEND" x10, "ENGRAVED LEGEND" x2, "SEE KEYNOTE
-# LEGEND", "LEGEND10").  On Bill's Mission Bell set the old pattern fires on
+# LEGEND", "LEGEND10").  On the estimator's window set 2 the old pattern fires on
 # nothing at all: the block is headed FLOOR SYMBOLS, and it counted itself 34
 # times across the six sheets.
 #
 # The invariant that IS stable across all of those is that the block is
 # named by WHAT IT IS - the heading's LAST word is LEGEND(S) or SYMBOL(S).
-# startswith(), not equality, because OCR clips the tail off a scan: Aqua
-# Vista's heading comes back as SYMBOL (with a stray quote glued on the
-# front) followed by LEGEN! , and Mission Bell's as FLOOR SYMBOLS.
+# startswith(), not equality, because OCR clips the tail off a scan: the apartment
+# set's heading comes back as SYMBOL (with a stray quote glued on the
+# front) followed by LEGEN! , and window set 2's as FLOOR SYMBOLS.
 _LEGEND_TAIL = ("LEGEN", "SYMBO")
 _LEGEND_MAX_WORDS = 5        # the longest real form measured is 5 words
                              # ("SANITARY SEWER UTILITY SYMBOL LEGEND",
@@ -799,8 +799,8 @@ _LEGEND_MAX_WORDS = 5        # the longest real form measured is 5 words
                              # would regress two corpus sheets.  The cap is
                              # only there to keep a sentence out of the match.
 # A legend prints ONE key per symbol type, so its key column is short: the
-# biggest measured is 6 (Mission Bell FLOOR SYMBOLS - the 100 door key, the A
-# window key and the SD/CO/OS/DS sensor keys); Aqua Vista's SYMBOL LEGEND puts
+# biggest measured is 6 (window set 2 FLOOR SYMBOLS - the 100 door key, the A
+# window key and the SD/CO/OS/DS sensor keys); the apartment set's SYMBOL LEGEND puts
 # 1 counted-family key inside the box.  A box holding more than this many is
 # not a key column, it is plan area, and it is REJECTED rather than allowed to
 # drop real openings with no symptom.  That bound matters because the heading
@@ -811,13 +811,13 @@ LEGEND_MAX_KEYS = 12
 # and the heading share the block's left margin, so this is 0 when the OCR
 # reads the heading whole; it is needed because the OCR clips a scan - on
 # A-2.00 "FLOOR SYMBOLS" comes back as "DR SYMBOLS" and the anchor lands 47 px
-# right of the keys.  Measured worst case 47 px over the six Mission Bell and
-# five Aqua Vista sheets; 120 is 2.5x that.  It only widens the SEARCH: the
+# right of the keys.  Measured worst case 47 px over the six window set 2 and
+# five apartment-set sheets; 120 is 2.5x that.  It only widens the SEARCH: the
 # box returned is drawn round the seeds actually found.
 _LEGEND_FIND_LEFT = 120
 _LEGEND_PAD = 6
 # The quarter turns tried, in order.  0 first because that is where the
-# heading is when upright() got the page right, which is every Aqua page.
+# heading is when upright() got the page right, which is every apartment page.
 _LEGEND_ROTS = (0, 90, 270, 180)
 
 
@@ -831,7 +831,7 @@ def _legend_lines(d: dict, f: float) -> list[tuple]:
     rather than tesseract's own line grouping: psm 11 sometimes puts
     "SYMBOL" and "LEGEND" in one line group and sometimes swallows the whole
     legend into one, and a rule that depends on which it did that run stops
-    firing at random (measured on Aqua Vista p4, where the block IS read but
+    firing at random (measured on apartment set p4, where the block IS read but
     the grouping buried it).
 
     Returns [(text, x0, y0, x1, y1), ...] in FULL-scale px of the OCR frame.
@@ -877,7 +877,7 @@ def _legend_boxes(img: np.ndarray,
     says WHERE to look; the symbols found there - seeds, the free-standing
     outlined shapes seed_tags returns - set how far the box actually
     reaches, left and down.  Seeds are a refinement, NOT a gate: measured on
-    Aqua Vista, whose SYMBOL LEGEND prints 11 rows, exactly ONE row traces as
+    the apartment set, whose SYMBOL LEGEND prints 11 rows, exactly ONE row traces as
     a seed on p1 and NONE does on p2, p3, p4 or p5 - so requiring a seed
     would stop excluding a legend this module has excluded correctly since
     F72.  With no seed under it the search window stands as the box, which
@@ -889,7 +889,7 @@ def _legend_boxes(img: np.ndarray,
       * the heading is not one fixed phrase - see _LEGEND_TAIL above;
       * THE PAGE MAY NOT BE STANDING UP.  upright() asks tesseract's OSD
         which way is up, and OSD is a quarter turn wrong on five of the six
-        Mission Bell scans (measured 2026-08-22: it stood engine pages
+        window set 2 scans (measured 2026-08-22: it stood engine pages
         0,1,2,4,5 at 0/180 deg where upright is 90).  A heading rule that
         only reads `img` as handed to it can never fire on those pages, so
         the OCR is retried at each quarter turn until a heading appears and
@@ -966,7 +966,7 @@ def _legend_boxes(img: np.ndarray,
             # strictly BELOW the heading: the closed counters of the heading's
             # own letters trace as seeds too, and counting them collapses the
             # box onto the heading line (measured: it did, on A-2.50 and on
-            # Aqua Vista p4/p5, and the legend then counted itself again).
+            # apartment set p4/p5, and the legend then counted itself again).
             col = [s for s in rseeds
                    if win[0] <= s[0] <= win[2] and y1 < s[1] <= win[3]]
             bx0 = min([x - 30] + [c[0] - c[2] - _LEGEND_PAD for c in col])
@@ -991,12 +991,12 @@ def dedup_across_families(tags: list[Tag]) -> list[Tag]:
     find_tags suppresses non-maxima INSIDE one family and nothing suppresses
     them across families, so when size_families legitimately hands the same
     population to two near-congruent families every symbol in it is emitted
-    twice.  Measured on Bill's Mission Bell A-2.30 (engine page index 3 =
+    twice.  Measured on the estimator's window set 2 A-2.30 (engine page index 3 =
     printed sheet 4 of 6): families 39x43 (46 tags), 37x37 (54) and 43x42
     (44) produce 144 detections over 100 sites - 44 pairs, every pair one
     39x43 with one 43x42, centres at most 0.64 pt apart, and the 37x37
-    circles never involved.  The other nine pages measured (Mission Bell
-    p0/p1/p2/p4/p5, Aqua Vista p1-p5) have ZERO overlapping pairs, including
+    circles never involved.  The other nine pages measured (window set 2
+    p0/p1/p2/p4/p5, apartment set p1-p5) have ZERO overlapping pairs, including
     the four that also keep two families - so this is a positional test, not
     a size test, and it cannot merge two genuinely different symbols that
     happen to be similar sizes.
@@ -1038,12 +1038,12 @@ def scope_state(tags: list[Tag], trade: str | None) -> dict:
 
     THE DEFAULT IS TO ABSTAIN, and on every sheet measured so far abstaining
     is the answer.  Refusing to narrow, and saying so, beats guessing a scope
-    and silently dropping real openings - measured against Bill's answer key
-    on the Mission Bell set (out/verify/2026-08-22/bill-truth/SCORE.md, 285
+    and silently dropping real openings - measured against the estimator's answer key
+    on window set 2 (out/verify/2026-08-22/, the truth SCORE.md, 285
     openings), where each of the three obvious geometric shortcuts is wrong:
 
       * SHAPE.  This sheet set's own FLOOR SYMBOLS legend says circle =
-        (N) DOOR SYMBOL, hexagon = (N) WINDOW SYMBOL.  But 100 of Bill's 285
+        (N) DOOR SYMBOL, hexagon = (N) WINDOW SYMBOL.  But 100 of the estimator's 285
         openings ARE circles - balcony doors 001 x75 and 003 x10, the one
         printed 002, storefront doors 004 x2 / 005 x1, and interior
         storefront doors 100-107 x11 - so "keep the hexagons" throws away 35%
@@ -1058,10 +1058,10 @@ def scope_state(tags: list[Tag], trade: str | None) -> dict:
 
     What DOES separate them is the schedule row's own material cell, read
     from the vector text layer of Window - Storefront - Door schedules.pdf
-    (dumped in out/verify/2026-08-22/billscope/SCHEDULES.txt): 001/003 VINYL
+    (dumped in out/verify/2026-08-22/<scope>/SCHEDULES.txt): 001/003 VINYL
     "UNIT PATIO", 004/005 and 100-107 ALUM "WITH TEMPERED GLASS LITE",
     against 006-008 STEEL "EXIT STAIR"/"TRASH", 108-111 STEEL and 200-208
-    SC,WOOD.  Over the 50 codes this project prints - Bill's 40 and the other
+    SC,WOOD.  Over the 50 codes this project prints - the estimator's 40 and the other
     trade's 10 - that rule is right on 46; it is wrong on the three aluminium
     yard GATES G01-G03, which are ALUM but are not glazing work, and it has
     nothing to say about 002, whose row reads NOT USED.
@@ -1100,10 +1100,15 @@ def scope_state(tags: list[Tag], trade: str | None) -> dict:
 # table's QTY column; that cross-check is the whole point of reading it.
 
 # The column that holds the mark.  Different offices head it differently -
-# Kevin Tsai's A830 says MARK, Mission Bell's A-6.00 says WINDOW TYPE - and
+# the apartment set's A830 says MARK, window set 2's A-6.00 says WINDOW TYPE - and
 # both mean "the code you will see inside the bubbles".
 _MARK_HEADS = ("MARK", "TYPE", "SYMBOL", "TAG")
 _TYPE_PREFIX = ("WINDOW", "DOOR", "STOREFRONT", "GLAZING", "FRAME", "OPENING")
+# A residential schedule heads its mark column "No." (a builder's house
+# set A2.1: WINDOW SCHEDULE No. 1/2/3, DOOR SCHEDULE No. A/B/C/D, each
+# with a QTY column). "No." is a mark head ONLY when a strong quantity head
+# sits on the same row - alone it is the weak quantity head it always was.
+_NUM_HEADS = ("NO", "NO.", "#", "NUMBER")
 # The column that holds how many.  NO. is ambiguous (it also heads "DOOR NO.")
 # so it is accepted only when nothing better is on the header row.
 _QTY_HEADS = ("QTY", "QTY.", "QUANTITY", "COUNT", "TOTAL", "EA")
@@ -1111,7 +1116,7 @@ _QTY_WEAK = ("NO", "NO.", "#")
 
 # A mark code: one to three letters then an optional number then an optional
 # suffix letter (W1L, SF2, D101A), or a bare letter used as a type name
-# (Mission Bell heads its window types A..Z).
+# (window set 2 heads its window types A..Z).
 _MARK_RE = re.compile(r"^[A-Z]{1,3}-?\d{1,3}[A-Z]?$")
 _LETTER_RE = re.compile(r"^[A-Z]{1,2}$")
 
@@ -1120,8 +1125,8 @@ def _txt(w) -> str:
     return str(w[4]).strip().upper()
 
 
-# A wide table on a SKEWED scan does not have a flat header row. Bill Dunn's
-# Aqua Vista schedule is OCR'd off a 300 dpi scan that marks.upright measures
+# A wide table on a SKEWED scan does not have a flat header row. The estimator's
+# apartment-set schedule is OCR'd off a 300 dpi scan that marks.upright measures
 # at 2.2 deg, and its MARK and QUANTITY headers sit ~700 pt apart, so their
 # y centres differ by ~28 pt - six times the flat y_tol. The row match has to
 # widen with horizontal distance or a quantity column is simply never seen.
@@ -1138,7 +1143,7 @@ def _row_tol(y_tol: float, dx: float) -> float:
 def _is_qty_head(t: str) -> bool:
     """QTY column header, tolerant of OCR noise.
 
-    A table rule touching the word comes back glued to it - Bill's schedule
+    A table rule touching the word comes back glued to it - the estimator's schedule
     OCRs as "LQUANTITY" - so a head token is accepted when it sits inside a
     slightly longer word as well as when it matches outright.
     """
@@ -1160,7 +1165,7 @@ def read_mark_schedule(words: list, y_tol: float = 5.0,
              "box": (x0, y0, x1, y1) or None, "header": "MARK"|"WINDOW TYPE",
              "fuzzy": [raw, ...], "source": "text"|"ocr"|"none"}.
 
-    QTY is OPTIONAL.  A schedule with no quantity column - Mission Bell's
+    QTY is OPTIONAL.  A schedule with no quantity column - window set 2's
     A-6.00 lists 22 readable window types and never says how many - is still
     worth reading, because the type list IS the legal vocabulary the bubbles
     must come from, and constraining the read to it is what stops OCR
@@ -1175,10 +1180,11 @@ def read_mark_schedule(words: list, y_tol: float = 5.0,
            "fuzzy": [], "source": "none"}
     if not words:
         return out
-    best = None
+    cands = []
     for hw in words:
         t = _txt(hw)
-        if t not in _MARK_HEADS:
+        num_head = t in _NUM_HEADS
+        if t not in _MARK_HEADS and not num_head:
             continue
         hy = (hw[1] + hw[3]) / 2.0
         hx = (hw[0] + hw[2]) / 2.0
@@ -1195,6 +1201,17 @@ def read_mark_schedule(words: list, y_tol: float = 5.0,
                 header = texts[j - 1] + " TYPE"
             elif len(set(texts)) < 3:
                 continue        # a bare "TYPE" with no table around it
+        if num_head:
+            # only with a real quantity column beside it, and it must be
+            # the first column: "DOOR NO." mid-row is not a mark head
+            if not any(_is_qty_head(x) for x in texts if x != t):
+                continue
+            # the row match has no x limit (a skewed scan needs the slope
+            # widening), so "row" holds every word on the sheet at this
+            # height: only a NEIGHBOUR to the left disqualifies
+            if any(w is not hw and w[2] < hw[0] - 1 and hw[0] - w[2] < 60 for w in row):
+                continue
+            header = _schedule_title(words, hw, y_tol) + " NO."
         qcol = None
         for w in row:
             if _is_qty_head(_txt(w)):
@@ -1205,10 +1222,59 @@ def read_mark_schedule(words: list, y_tol: float = 5.0,
                 if _txt(w).rstrip(".") in [q.rstrip(".") for q in _QTY_WEAK]:
                     qcol = w
                     break
-        cand = _harvest(words, hw, qcol, row, header, y_tol, fuzzy)
-        if cand and (best is None or len(cand["marks"]) > len(best["marks"])):
-            best = cand
-    return best or out
+        # THE NEXT TABLE DOWN ENDS THIS ONE. Two schedules stacked in one
+        # corner share a mark column x, and without a stop the upper one
+        # harvested the lower one's marks as its own (house set A2.1: the
+        # window table came back holding A-D as well as 1-3).
+        y_stop = None
+        for hw2 in words:
+            if hw2 is hw or _txt(hw2) not in (_MARK_HEADS + _NUM_HEADS):
+                continue
+            if hw2[1] > hw[3] and abs((hw2[0] + hw2[2]) / 2.0 - hx) <= 40:
+                y_stop = hw2[1] if y_stop is None else min(y_stop, hw2[1])
+        cand = _harvest(words, hw, qcol, row, header, y_tol, fuzzy,
+                        digits_ok=num_head, y_stop=y_stop)
+        if cand:
+            cands.append(cand)
+    if not cands:
+        return out
+    cands.sort(key=lambda c: -len(c["marks"]))
+    best = dict(cands[0])
+    # TWO SCHEDULES ON ONE SHEET (windows 1/2/3 and doors A-D): when their
+    # marks do not collide, the vocabulary and quantities are the union - a
+    # bubble reading "2" and one reading "B" are both on this sheet. The
+    # box stays the largest table's; `tables` carries each one.
+    best["tables"] = [{"header": c["header"], "marks": list(c["marks"]),
+                       "qty": dict(c["qty"]), "box": c["box"]} for c in cands]
+    for c in cands[1:]:
+        if set(c["marks"]) & set(best["marks"]):
+            continue
+        best["marks"] = best["marks"] + [m for m in c["marks"] if m not in best["marks"]]
+        best["qty"] = {**c["qty"], **best["qty"]}
+        best["header"] = best["header"] + " + " + c["header"]
+    return best
+
+
+def _schedule_title(words: list, hw, y_tol: float) -> str:
+    """The word before SCHEDULE in the title above a "No." header (WINDOW /
+    DOOR), or "" when no title is within 60 pt above it."""
+    hx = (hw[0] + hw[2]) / 2.0
+    best = ""
+    for w in words:
+        if _txt(w) != "SCHEDULE":
+            continue
+        wy = (w[1] + w[3]) / 2.0
+        if not (hw[1] - 60 <= wy <= hw[1]):
+            continue
+        if abs((w[0] + w[2]) / 2.0 - hx) > 400:
+            continue
+        left = [m for m in words if abs((m[1] + m[3]) / 2.0 - wy) <= y_tol
+                and m[2] <= w[0] + 1 and w[0] - m[2] < 40]
+        if left:
+            t = _txt(max(left, key=lambda m: m[2]))
+            if t in _TYPE_PREFIX:
+                best = t
+    return best
 
 
 # Characters an OCR pass confuses at drafting-text size, both directions.
@@ -1239,28 +1305,39 @@ def _fuzzy_mark(t: str) -> str | None:
     return None
 
 
-def _as_mark(t: str, fuzzy: bool) -> str | None:
-    """One word -> a mark code, or None."""
+def _as_mark(t: str, fuzzy: bool, digits_ok: bool = False) -> str | None:
+    """One word -> a mark code, or None. `digits_ok` admits a bare 1-2 digit
+    number - only under a "No." header, where the numbers ARE the marks."""
     if _MARK_RE.match(t):
         return t
     if len(t) == 1 and t.isalpha():
-        return t              # a bare type letter: Mission Bell heads A..Z
+        return t              # a bare type letter: window set 2 heads A..Z
+    if digits_ok and t.isdigit() and len(t) <= 2:
+        return t
     if fuzzy and t[:1].isalpha():
         return _fuzzy_mark(t)
     return None
 
 
 def _harvest(words: list, hw, qcol, row: list, header: str,
-             y_tol: float, fuzzy: bool) -> dict | None:
-    """Rows under one header: mark codes in the mark column, qty beside."""
+             y_tol: float, fuzzy: bool, digits_ok: bool = False,
+             y_stop: float | None = None) -> dict | None:
+    """Rows under one header: mark codes in the mark column, qty beside;
+    nothing at or below `y_stop` (the next table's header) is this table's."""
     mx0, mx1 = hw[0] - 14, hw[2] + 14
-    rx0 = min(w[0] for w in row) - 8
-    rx1 = max(w[2] for w in row) + 8
+    # THE TABLE'S EXTENT IS ITS OWN. `row` is every word on the sheet at
+    # the header's height (the skew-tolerant match has no x limit), so
+    # taking the table's edges from it made the RV garage notes 1,300 pt
+    # away "left of" the window marks and disqualified them (house set
+    # A2.1). The mark column is the first column: nothing of the table is
+    # more than 30 pt left of its header, or 700 pt right of it.
+    rx0 = max(min(w[0] for w in row) - 8, hw[0] - 30)
+    rx1 = min(max(w[2] for w in row) + 8, hw[2] + 700)
     qcx = (qcol[0] + qcol[2]) / 2.0 if qcol is not None else None
     # The table's own two headers give its row slope, so a quantity 700 pt
     # away is looked for where that row ACTUALLY runs rather than inside a
     # band wide enough to swallow its neighbours. Widening symmetrically
-    # instead gave every mark on Bill's schedule the same quantity (148).
+    # instead gave every mark on the estimator's schedule the same quantity (148).
     slope = 0.0
     if qcol is not None:
         hxc, hyc = (hw[0] + hw[2]) / 2.0, (hw[1] + hw[3]) / 2.0
@@ -1270,18 +1347,25 @@ def _harvest(words: list, hw, qcol, row: list, header: str,
     marks, raws, qty, y_max = [], [], {}, hw[3]
     letters_only = True
     for w in words:
-        if w[1] <= hw[3] or not (mx0 <= (w[0] + w[2]) / 2.0 <= mx1):
+        # by CENTRE, not box top: a 12 pt row pitch with 11 pt word boxes
+        # puts the first row's top above the header's bottom (house set:
+        # window "1" was dropped and the table read as two marks)
+        if (w[1] + w[3]) / 2.0 <= hw[3] or not (mx0 <= (w[0] + w[2]) / 2.0 <= mx1):
+            continue
+        if y_stop is not None and w[1] >= y_stop - 2:
             continue
         t = _txt(w)
-        code = _as_mark(t, fuzzy)
+        code = _as_mark(t, fuzzy, digits_ok)
         if code is None:
             continue
         # the mark column is the table's FIRST column: nothing else on this
         # row may sit to its left.  Without this, a "WINDOW TYPE" heading
         # over a hardware column harvests prose ("OR", "OF", "IN", "IS")
         wy = (w[1] + w[3]) / 2.0
+        # under a "No." header a single letter to the left counts too: the
+        # door table's "38" (of 38 1/2") sits beside the mark "A"
         if any(m[2] < w[0] - 1 and abs((m[1] + m[3]) / 2.0 - wy) <= y_tol
-               and rx0 <= m[0] and len(_txt(m)) > 1 and _txt(m).isalnum()
+               and rx0 <= m[0] and (len(_txt(m)) > 1 or digits_ok) and _txt(m).isalnum()
                for m in words):
             continue
         if len(code) > 1:
@@ -1380,9 +1464,9 @@ def detect_marks(pdf_path: str, page: int, vocab: list[str] | None = None,
                   img_size=(work.shape[1], work.shape[0]))
 
     vocab = [v.upper() for v in (vocab or DEFAULT_VOCAB)]
-    # A vocabulary of single letters cannot constrain anything.  Kevin Tsai's
+    # A vocabulary of single letters cannot constrain anything.  The apartment set's
     # schedule lists W1L/W1R/W2L - three characters, so a wrong read almost
-    # never lands on a legal mark.  WORKSHOP-P's Mission Bell schedule lists
+    # never lands on a legal mark.  Window set 2's schedule (another office) lists
     # window types A..Z, and with 21 one-character codes virtually ANY glyph
     # the OCR emits is "in vocabulary": measured on that sheet, the page came
     # back with 88 unread and confident-looking counts for A/B/C/G/Q/S that

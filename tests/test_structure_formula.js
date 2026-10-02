@@ -46,7 +46,7 @@ const L = 400;
 }
 
 // ---- wiring --------------------------------------------------------------------
-check(/fill_depth_ft: NaN, footing_ft: 0,\s*footing_w_ft: 2, layback_hv: 1(, wall_in: 8)?(, datum_ft: NaN)? \};/.test(js), "the panel's standing defaults carry the new fields");
+check(/fill_depth_ft: NaN, footing_ft: 0,\s*footing_w_ft: 2, layback_hv: 1(, wall_in: 8)?(, datum_ft: NaN)?(,[\s\S]{0,700}?)? \};/.test(js), "the panel's standing defaults carry the new fields");
 check(/stNumInput\(d, "fill_depth_ft", "0.5", upd\)/.test(js) && /stNumInput\(d, "footing_w_ft", "0.5", upd\)/.test(js) && /stNumInput\(d, "layback_hv", "0.25", upd\)/.test(js), "the draft asks for fill depth, footing width and layback h:v");
 check(!/stNumInput\([a-z]+, "layback_ft"/.test(js), "no input asks for a constant layback width any more");
 check(/fill_depth_ft: isFinite\(\+d\.fill_depth_ft\)/.test(js) && /layback_hv: d\.layback_hv(, wall_in: d\.wall_in)?(,\s*datum_ft: [^}]*)? \}\] \}\),/.test(js), "the server cross-check sends the new fields");

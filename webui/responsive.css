@@ -1,0 +1,595 @@
+/* ==========================================================================
+   responsive.css - the round-3 frame from a phone to a 4K wall
+   (REDESIGN 2026-09-26, docs/REDESIGN.md)
+   --------------------------------------------------------------------------
+   Load order: tokens.css -> style.css -> shell.css -> team.css -> THIS ->
+   dock.css. It edits none of them; every rule here wins by order or by
+   specificity (the drawer rules out-rank dock.css's #railR one; dock.css's
+   main.dk-left-empty > #sidebar still hides an empty left drawer, on purpose).
+   Scoped like shell.css under html.shell-on (the frame exists), and under
+   html.rsp-on for anything that needs responsive.js's own controls (the
+   drawer toggles, the scrim, the phone menu) - if responsive.js never runs,
+   the rails simply stay where shell.css put them.
+
+     >= 2200     WIDE     reading widths capped, the right rail a bit wider
+     1440+       DESKTOP  the reference - NOTHING below applies there
+     1280-1439   LAPTOP   the module tabs may shrink (and scroll) instead of
+                          pushing the top bar past the window edge
+     1024-1279   SMALL    brand word folds, right rail narrower, tabs scroll
+     768-1023    TABLET   top bar on two rows (bar / sheet + tabs); both
+                          rails become slide-over drawers with a scrim
+     < 768       PHONE    bar = glyph, title, flag, Detect, menu; a tab
+                          strip; icon ribbon; drawers; one-column pages
+
+   Drawer state is two classes on <html> (rsp-open-l / rsp-open-r) set by
+   responsive.js; nothing app.js owns has its `hidden` attribute touched.
+   Every rule carries a comment naming the breakpoint problem it solves.
+   ========================================================================== */
+
+/* ---------------------------------------------------------- EVERY WIDTH */
+/* responsive.js's own controls are off until a breakpoint asks for them */
+html.shell-on .rsp-tog, html.shell-on .rsp-dhead, html.shell-on #rspMenuBtn,
+html.shell-on #rspScrim { display: none; }
+/* the phone menu: hidden attribute is responsive.js's own (its node) */
+html.shell-on #rspMenu[hidden] { display: none !important; }
+
+/* module tabs that do not fit scroll; the fade says there is more that way
+   (responsive.js sets rsp-fade-l / -r from the scroll position) */
+html.shell-on #modTabs.rsp-fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+html.shell-on #modTabs.rsp-fade-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+html.shell-on #modTabs.rsp-fade-l.rsp-fade-r {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+
+/* touch on the sheet: responsive.js turns a finger's drag / pinch / tap
+   into the mouse and wheel events app.js answers - the browser must not
+   pan or zoom the PAGE under the plan instead (any width: a touch laptop
+   is a desk width) */
+html.shell-on.rsp-on canvas#view { touch-action: none; -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; }
+
+/* the tables that scroll inside their card (Summary, Team) carry a
+   screen-reader-only header (.sr-only, position:absolute). With no
+   positioned ancestor its box escaped the card's scroll: on a phone the
+   Summary table (600px, scrolling in its card) pushed the PAGE to 614px -
+   a mobile browser then widens its layout viewport to fit (measured:
+   innerWidth 390 -> 614). The scroll box becomes its containing block;
+   nothing moves on screen */
+html.shell-on .sm-body, html.shell-on .tm-table-wrap { position: relative; }
+
+/* touch screens have no hover: the controls that only appear on hover
+   would be unreachable, so they stay visible there (any width) */
+@media (hover: none) {
+  html.shell-on .pv-card .pv-more { display: flex; }                       /* project card's delete menu */
+  html.shell-on .itemized .sub-add-line .sub-add { opacity: 1; }            /* "+ add sub-item" */
+  html.shell-on .ml-row .ml-goto { color: var(--t-text-dim); border-color: var(--t-border); }  /* legend -> row */
+  html.shell-on .item-split .is-txt { opacity: 1; }
+}
+
+/* TOUCH TARGETS (UI verify 2026-10-02, L1): on a tablet or a phone, or under any coarse pointer, every control on the
+   page is at least 32 x 32 CSS px (measured under 32 at 768 / 390 / 360: the panels' ... and x 24px, the style rows'
+   marks 24px, LF / EA 26x16, the expander 18x20, names 20px tall, a row's trade 20px and its numbers 24px, Save
+   44x24, More 28x18, the project card's ... 30x28, scope chips 26px, the status bar's buttons 24px and links 18px,
+   the on-sheet legend's buttons 24x16, Back to the sheet 24px, a folded panel's title 20px). A fine pointer at
+   1024 and up keeps the desk's density. The phone's own 40px rules (below) still win where they are larger. */
+@media (max-width: 1023.98px), (pointer: coarse) {
+  html.shell-on :is(button, select, [role="button"]:not(canvas), [role="tab"], summary):not([hidden]) { min-height: 32px; }
+  /* the narrow ones by name: a min-width on every button would let a flex row shrink its words under them (the
+     module tabs overlapped at 390) */
+  html.shell-on :is(.dk-b, .mark, .mm-toggle, .fam-toggle, #allBtn, #noneBtn, #mlToggle, .ml-goto, .sv-x, #scopeClose,
+    .sg-fold, .pv-more, .sv-more, .scope-more, .lc-x, .mini.x) { min-width: 32px; justify-content: center; }
+  html.shell-on :is(.ml-goto, .sg-fold, .fam-toggle, .mm-toggle) { display: inline-flex; align-items: center; }
+  /* a style row with 32px controls stays three short lines (64px, not 84px), so a phone drawer still shows six:
+     line 1 = show, keep, the swatch, the name, LF / EA, the expander; line 2 = the class under the marks, the
+     feet / lines under the name; line 3 = the CAD layer */
+  html.shell-on .style-row { grid-template-columns: 32px 32px 46px minmax(0, 1fr) auto 32px; column-gap: 4px; }
+  html.shell-on .style-row > .style-marks { display: contents; }
+  html.shell-on .style-row > .style-marks > .mark-eye { grid-column: 1; grid-row: 1; }
+  html.shell-on .style-row > .style-marks > .mark-take { grid-column: 2; grid-row: 1; }
+  html.shell-on .style-row > .swatch-line { grid-column: 3; grid-row: 1; }
+  html.shell-on .style-row > .style-main { grid-column: 4; grid-row: 1 / span 2; }
+  html.shell-on .style-row > :is(.mm-toggle, .mm-cell) { grid-column: 5; grid-row: 1; }
+  html.shell-on .style-row > .fam-toggle { grid-column: 6; grid-row: 1; }
+  html.shell-on .style-row > .badge:not(.mine) { grid-column: 1 / 4; grid-row: 2; justify-self: start; align-self: center; }
+  html.shell-on .style-row > .badge.mine { grid-column: 5 / 7; }
+  html.shell-on .style-row > .style-layer { grid-column: 1 / -1; grid-row: 3; padding-left: 2px; }
+  html.shell-on .style-row .style-label { min-height: 32px; }
+  /* a takeoff row uses the drawer's width: the name and its trade share a line, the four numbers spread */
+  html.shell-on .itemized .item-row { grid-template-columns: 40px minmax(86px, 1fr) minmax(54px, 64px) 58px; }
+  html.shell-on #cardTakeoff .itemized .trade-head { padding-top: 2px; padding-bottom: 2px; }
+  html.shell-on input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="range"]):not([type="color"]) {
+    min-height: 32px; }
+  html.shell-on :is(input[type="checkbox"], input[type="radio"]) { width: 32px; height: 32px; margin: 0; flex: none; }
+  html.shell-on input[type="color"] { min-height: 32px; }
+  /* a bigger label already carries a radio / checkbox inside it */
+  html.shell-on label :is(input[type="checkbox"], input[type="radio"]) { width: 18px; height: 18px; }
+  html.shell-on label:has(> :is(input[type="checkbox"], input[type="radio"])) { min-height: 32px; display: inline-flex;
+    align-items: center; gap: 6px; }
+  /* links that are buttons in all but name */
+  html.shell-on :is(a.legal-link, header #projectsLink, .status-bar a) { display: inline-flex; align-items: center;
+    min-height: 32px; min-width: 32px; }
+  html.shell-on header .beta-chip { min-height: 32px; display: inline-flex; align-items: center; }
+  /* the pattern swatch is the colour control: its hit box grows, its drawing does not */
+  html.shell-on canvas.swatch-line[role="button"] { box-sizing: content-box; padding: 11px 0; }
+  /* a folded panel's title is the button that opens it */
+  html.shell-on .dk-panel.dk-auto > * > h2 { min-height: 32px; }
+  html.shell-on .dk-ctl { gap: 0; }
+  html.shell-on .dk-b { width: 32px; height: 32px; }
+  html.shell-on .dk-panel > :is(.rc-head, .side-head, .takeoff-head, .dk-head) { padding-right: 72px; }
+  html.shell-on .dk-panel > #stylesHead > h2 { flex-basis: calc(100% - 64px); max-width: calc(100% - 64px); }
+}
+
+/* ============================================================ WIDE >= 2200 */
+@media (min-width: 2200px) {
+  /* a 4K wall: the right rail can breathe a little (the left rail's width is
+     the operator's own drag; responsive.js only raises its first-run default) */
+  html.shell-on { --t-rail-r: 384px; }
+  /* Projects had no reading width at all: 7 columns of cards across 2,500px.
+     Capped and centred like every other full page */
+  html.shell-on .projects-view { grid-template-columns: 240px minmax(0, 1560px); justify-content: center; }
+  /* the other full pages already cap at 1,320px; the head row follows the
+     same line so the title sits over the cards, not over the margin */
+  html.shell-on .plans-view .vw-head, html.shell-on .summary-view .vw-head,
+  html.shell-on .team-view .vw-head { max-width: 1320px; }
+}
+
+/* ===================================================== EVERY WIDTH: GIVE WAY
+   The bar never runs past the window (2026-10-01: at 1440 the tabs were
+   still flex:none, and the account button sat 16px off the edge with the
+   page scrolling sideways). The tabs shrink, scroll and fade at the cut
+   edge as the last resort at every width; who gives way first, in order:
+   the document's name (it ellipsizes; the full name is its tooltip and the
+   Plans page title), then the sheet picker, then the tabs (navigation
+   outranks context); the accuracy chip last of all (shell.css). */
+html.shell-on header #modTabs { flex: 0 1 auto; min-width: 0; }
+/* the order is strict: flex shares the shortfall by shrink x width, so at
+   200 / 40 / 1 the 463px tab strip still gave up 2-3px while the name had
+   room - the strip then scrolled, "3D" ran under Detect lines by 2-3px and
+   the scroll fade (responsive.js rsp-fade-r) greyed it (live round
+   2026-10-01, 1440 / 1366 / 1024). x1000 leaves the tabs < 0.01px until the
+   name and the sheet picker are at their minimum. */
+html.shell-on header #docName { min-width: 56px; flex-shrink: 200000; }
+html.shell-on header #pageSel { flex: 0 40000 auto; min-width: 92px; }
+/* ...and Detect lines never touches the last tab (its auto margin is 0
+   when the bar is full) */
+@media (min-width: 1024px) { html.shell-on header #modTabs { margin-right: var(--t-sp-2); } }
+/* ...and they need that room less often: the account menu (team.js)
+   already lists Team and Settings, so their two icons step out of the bar
+   below 1680px (was 1440: the accuracy chip's longer face needs the room) -
+   one click further, never gone. Only when that menu is there to hold them. */
+@media (max-width: 1679.98px) {
+  html.shell-on header:has(.user-wrap) #teamLink, html.shell-on header:has(.user-wrap) #settingsLink { display: none; }
+}
+
+/* ========================================================= LAPTOP < 1440 */
+@media (max-width: 1439.98px) {
+  html.shell-on header #pageSel { max-width: 150px; }
+  html.shell-on .mod-tab { padding: 0 8px; }
+  html.shell-on .mod-tab[aria-selected="true"]::after { left: 8px; right: 8px; }
+}
+
+/* THE RIBBON FITS ITS WINDOW. The labelled ribbon plus dock.js's Panels
+   button is wider than a laptop window; shell.css drops the words only below
+   a 1,215px ribbon. Two fixed container widths here (1,320 and 1,264) were
+   measured once and missed by the time of the live round: at 1280 the
+   ribbon's box is 1,264 wide, the rule said "below 1,263.98", and the Panels
+   button ran 12px past the edge (ribbon scrollWidth 1300 in 1280). Now
+   shell.js ribbonFit measures and steps (rb-fit-1: the Panels word goes;
+   rb-fit-2: the tools' words; rb-fit-3, a tablet: the drawer toggles' words)
+   until nothing is cut. Buttons, order and titles always stay. :where()
+   keeps these at shell.css's weight, so the phone's 40px targets still win. */
+html.shell-on #ribbon:where(.rb-fit-1) #dkPanelsBtn > span { display: none; }
+html.shell-on #ribbon:where(.rb-fit-2) .toolkit .tk[data-label]::after { content: none; }
+html.shell-on #ribbon:where(.rb-fit-2) .toolkit .tk { width: 32px; padding: 0; justify-content: center; }
+html.shell-on.rsp-on #ribbon:where(.rb-fit-3) .rsp-tog .rsp-tog-t { display: none; }
+
+/* ========================================================= SMALL < 1280 */
+@media (max-width: 1279.98px) {
+  /* one row must hold the bar at 1024: the word "Takeoff" folds away (the
+     divider it carried stays; screen readers still read the word) */
+  html.shell-on header .brand .brand-sub { font-size: 0; margin-left: 12px; margin-right: 12px; padding-right: 0; }
+  html.shell-on header #pageSel { max-width: 132px; }
+  html.shell-on header #docName { max-width: 180px; }
+  html.shell-on .mod-tab { padding: 0 5px; }   /* 7 until 2026-10-01: the eight tabs fit whole at 1,024 */
+  html.shell-on .mod-tab[aria-selected="true"]::after { left: 5px; right: 5px; }
+  /* ...and the eight tabs fit whole at 1,024 (2026-10-01: Summary and 3D
+     sat scrolled out under Detect): the wordmark folds to its glyph like
+     "Takeoff" did (screen readers still read it; the phone bar does the
+     same), the accuracy chip and the actions pack closer */
+  html.shell-on body:not(.view-open):not(.no-doc) header .brand .brand-mark { font-size: 0; }
+  html.shell-on body:not(.view-open):not(.no-doc) header .brand .brand-sub { margin-left: 2px; }
+  html.shell-on header #detectBtn { padding: 0 10px; }
+  html.shell-on header .tools-wrap { margin-left: 6px; }
+  html.shell-on header .beta-chip, html.shell-on header #settingsLink { margin-left: 8px; }
+  /* the status bar's utilities pack tighter so the sheet facts (the scale
+     and how it was read) keep their words on one line */
+  html.shell-on .status-bar .sb-util { gap: 6px; padding-left: 10px; }
+  html.shell-on .status-bar .sb-util button { padding: 1px 7px; }
+  html.shell-on .status-bar .sb-seg { margin-right: 12px; }
+  /* a narrower right rail gives the sheet ~50px back (the takeoff table's
+     four number columns need 276px; 296 keeps them whole) */
+  html.shell-on { --t-rail-r: 296px; }
+  /* full pages: less gutter so a 1,024px window is not a third margin */
+  html.shell-on .plans-view, html.shell-on .summary-view, html.shell-on .v3-view,
+  html.shell-on .projects-view, html.shell-on .settings-view, html.shell-on .team-view { padding-left: 20px; padding-right: 20px; }
+}
+
+/* ======================================================= TABLET < 1024 */
+@media (max-width: 1023.98px) {
+  /* ---- the top bar: two rows. Row 1 = identity + document + actions,
+     row 2 = the sheet picker + the module tabs. --t-topbar-h is the whole
+     header, so the cut / fill stage and the rooms-3D overlay (both placed
+     at var(--t-topbar-h) by shell.css) sit under BOTH rows, and so do the
+     drawers. Views without a sheet have no second row. */
+  html.shell-on body { --t-topbar-h: 93px; }                                 /* 52 + 1 + 40 */
+  html.shell-on body.view-open, html.shell-on body.no-doc { --t-topbar-h: 52px; }
+  html.shell-on header { flex-wrap: wrap; align-content: flex-start; }
+  /* row 1's height anchor (a zero-width flex item 52px tall) */
+  html.shell-on header::before { content: ""; order: 0; flex: none; width: 0; height: 52px; }
+  /* the line break between the rows, drawn as the hairline under row 1 */
+  html.shell-on header::after { content: ""; order: 93; flex: 0 0 calc(100% + 28px); height: 1px;
+    margin: 0 -12px 0 -16px; background: var(--t-border); }
+  html.shell-on body.view-open header::after, html.shell-on body.no-doc header::after { display: none; }
+  /* row 2: sheet picker, then the tabs (all eight fit from 700px up) */
+  html.shell-on header #pageSel { order: 94; height: 40px; max-width: 200px; margin-left: -9px;
+    border-radius: 0; border-color: transparent; }
+  html.shell-on header #modTabs { order: 95; flex: 1 1 0; min-width: 0; height: 40px; margin-left: 6px; }
+  html.shell-on .mod-tab { padding: 0 10px; }
+  html.shell-on .mod-tab[aria-selected="true"]::after { left: 10px; right: 10px; }
+  /* a WRAPPING row does not shrink its items, it breaks them onto a new
+     line: a long plan name would push the actions off row 1. The name's
+     basis is 0 - it takes only the room that is left, and ellipsizes */
+  html.shell-on header #docName { max-width: none; flex: 1 1 0; min-width: 48px; }
+  /* page padding is the header's own: 16 / 12 */
+  html.shell-on header .brand .brand-sub { margin-right: 12px; }
+
+  /* ---- the stage takes the width: the rails leave the grid */
+  html.shell-on.rsp-on main { grid-template-columns: minmax(0, 1fr); }
+  html.shell-on.rsp-on main > #stage { grid-column: 1; }
+
+  /* ---- the two drawers: fixed over the stage, under the header, above
+     the ribbon (z 30) and below the header's own menus (header is z 40).
+     Closed = slid out AND visibility:hidden, so nothing in a closed drawer
+     can take focus or be read out. */
+  html.shell-on.rsp-on { --rsp-drawer-w: min(360px, calc(100vw - 40px)); }
+  html.shell-on.rsp-on aside#sidebar, html.shell-on.rsp-on #railR {
+    position: fixed; top: var(--t-topbar-h); bottom: 0; z-index: 38;
+    width: var(--rsp-drawer-w); max-width: none; min-width: 0;
+    display: flex; flex-direction: column; gap: var(--t-gap);
+    padding: 0 var(--t-gap) var(--t-gap); overflow: hidden;
+    background: var(--t-surface-1); box-shadow: var(--t-el-3);
+    visibility: hidden;
+    transition: transform .22s cubic-bezier(.2, .7, .2, 1), visibility 0s linear .22s; }
+  html.shell-on.rsp-on aside#sidebar { left: 0; transform: translateX(-100%);
+    border-right: 1px solid var(--t-border-strong); }
+  html.shell-on.rsp-on #railR { right: 0; transform: translateX(100%);
+    border-left: 1px solid var(--t-border-strong); }
+  html.shell-on.rsp-on.rsp-open-l aside#sidebar, html.shell-on.rsp-on.rsp-open-r #railR {
+    transform: none; visibility: visible;
+    transition: transform .22s cubic-bezier(.2, .7, .2, 1), visibility 0s; }
+  /* the left rail's own chrome is for a docked column: the drag grip and
+     the fold chevron go, and a fold saved on a desktop cannot leave the
+     drawer empty (aside.side-folded hides .side-body in style.css) */
+  html.shell-on.rsp-on aside#sidebar #sideGrip { display: none; }
+  html.shell-on.rsp-on aside#sidebar .side-body { display: flex; flex: 1 1 0; min-height: 0; }
+  html.shell-on.rsp-on #railR #railScroll { flex: 1 1 0; }
+  html.shell-on.rsp-on #railR #railFoot { margin-top: 0; }
+  /* a drawer's head: its name and a close button */
+  html.shell-on.rsp-on .rsp-dhead { display: flex; flex: none; align-items: center; justify-content: space-between;
+    gap: 8px; height: 44px; margin: 0 calc(-1 * var(--t-gap)); padding: 0 6px 0 16px;
+    border-bottom: 1px solid var(--t-border); }
+  html.shell-on.rsp-on .rsp-dhead h2 { margin: 0; font: var(--t-title-weight) var(--t-title-size)/1.2 var(--t-font-ui);
+    text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); color: var(--t-text); }
+  html.shell-on.rsp-on .rsp-dclose { display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; padding: 0; border: 0; background: transparent; color: var(--t-text-dim);
+    border-radius: var(--t-r-2); }
+  html.shell-on.rsp-on .rsp-dclose:hover:not(:disabled) { background: var(--t-surface-3); color: var(--t-text); border: 0; }
+  html.shell-on.rsp-on .rsp-dclose svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; }
+  /* the scrim: under the header, over the ribbon and the stage */
+  html.shell-on.rsp-on #rspScrim { display: block; position: fixed; left: 0; right: 0; bottom: 0; top: var(--t-topbar-h);
+    z-index: 37; background: rgba(2, 6, 10, .58); opacity: 0; visibility: hidden;
+    transition: opacity .2s ease, visibility 0s linear .2s; }
+  html.shell-on[data-theme="light"].rsp-on #rspScrim { background: rgba(30, 30, 25, .32); }
+  html.shell-on.rsp-on.rsp-open-l #rspScrim, html.shell-on.rsp-on.rsp-open-r #rspScrim {
+    opacity: 1; visibility: visible; transition: opacity .2s ease, visibility 0s; }
+
+  /* ---- the two toggles, pinned to the ribbon's ends while its tools
+     scroll between them. z 8: the toolkit is a flex item carrying
+     style.css's z-index 5, which stacks it even while position:static */
+  /* 6px between the ribbon's items: at 820 the toggles, the icon tools and
+     dock.js's Panels button then fit without scrolling */
+  html.shell-on.rsp-on #ribbon { gap: 6px; }
+  html.shell-on.rsp-on #ribbon .rsp-tog { display: inline-flex; align-items: center; gap: 7px; flex: none;
+    position: sticky; z-index: 8; height: 34px; padding: 0 10px 0 8px;
+    border: 1px solid var(--t-border-strong); border-radius: var(--t-r-2);
+    background: var(--t-surface-2); color: var(--t-text); font-size: var(--t-fs-sm); font-weight: 600;
+    white-space: nowrap; box-shadow: 0 0 0 6px var(--t-surface-1); }
+  html.shell-on.rsp-on #ribbon #rspSheetsBtn { left: 0; order: -1; }
+  html.shell-on.rsp-on #ribbon #rspTakeoffBtn { right: 0; order: 99; margin-left: auto; }
+  /* dock.js's Panels button sits just before it and already takes the
+     auto margin: two auto margins would split the slack between them */
+  html.shell-on.rsp-on #ribbon #dkPanelsBtn + #rspTakeoffBtn { margin-left: 6px; }
+  /* ...and it is pinned there too, so the strip's tools scroll under it instead of carrying it past the window edge
+     (768: 6-18px off, and under the Takeoff toggle; shell.js ribbonFit sets --rb-tog-w, the toggle's width) */
+  html.shell-on.rsp-on #ribbon #dkPanelsBtn { position: sticky; right: calc(var(--rb-tog-w, 0px) + 6px); z-index: 8;
+    box-shadow: 0 0 0 6px var(--t-surface-1); }
+  /* every left panel closed (dock.js hides the empty rail): nothing to open */
+  html.shell-on.rsp-on:has(main.dk-left-empty) #ribbon #rspSheetsBtn { display: none; }
+  html.shell-on.rsp-on #ribbon .rsp-tog svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
+    stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--t-text-dim); }
+  html.shell-on.rsp-on #ribbon .rsp-tog:hover:not(:disabled) { background: var(--t-surface-3); border-color: var(--t-text-faint); }
+  html.shell-on.rsp-on #ribbon .rsp-tog[aria-expanded="true"] { background: var(--t-accent-bg); border-color: var(--t-accent);
+    color: var(--t-accent-hi); }
+  html.shell-on.rsp-on #ribbon .rsp-tog[aria-expanded="true"] svg { color: var(--t-accent-hi); }
+  /* "Sheets & tools" says it all on a wide tablet; "Sheets" where the
+     ribbon's tools need the room (the drawer's own head keeps the words) */
+  @media (max-width: 899.98px) { html.shell-on.rsp-on #ribbon .rsp-tog-x { display: none; } }
+  /* a tool panel is open inside a closed drawer (the left one unless the
+     module card was docked right): its toggle says so */
+  html.shell-on.rsp-on #ribbon .rsp-tog.rsp-has-panel::after { content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--t-accent); margin-left: -2px; }
+
+  /* ---- the Tools menu (shell.js puts its groups in columns): a tablet
+     gets one column with a real width. As an absolutely placed box under
+     a 70px button it shrank to that button's width at <= 860px (measured
+     at 820: one word per line, one letter per line in the names), and
+     three 262px columns flipped under the button would start off the
+     window's left edge between 861 and ~900px */
+  html.shell-on header .tools-menu:has(> .tmn-col) { grid-auto-flow: row; grid-auto-columns: auto;
+    width: min(400px, calc(100vw - 16px)); max-height: calc(100vh - var(--t-topbar-h) - 16px);
+    max-height: calc(100dvh - var(--t-topbar-h) - 16px); overflow-y: auto; }
+  html.shell-on header .tools-menu .tmn-col + .tmn-col { border-left: 0; padding-left: 0;
+    border-top: 1px solid var(--t-border); }
+
+  /* ---- the cut / fill bar: its controls keep one line; the engine's
+     sentence (the totals, or why there are none) and the note take the
+     line under them instead of pushing Add to takeoff off a tablet */
+  html.shell-on .cf-bar { flex-wrap: wrap; height: auto; min-height: var(--t-ribbon-h); row-gap: 4px;
+    padding-top: 6px; padding-bottom: 6px; }
+  html.shell-on .cf-sum, html.shell-on .cf-note { order: 5; flex: 1 1 100%; max-width: none; white-space: normal; }
+  html.shell-on .cf-note:empty { display: none; }
+
+  /* ---- the status bar: the sheet facts (the scale and HOW it was read -
+     the app's key disclosure) get a whole line; the transient message and
+     the utilities share the line under it */
+  html.shell-on .status-bar { height: auto; min-height: 30px; flex-wrap: wrap; row-gap: 0; padding: 3px 16px; }
+  html.shell-on .status-bar .sb-facts { flex: 1 1 100%; min-height: 22px; }
+  html.shell-on .status-bar .status { flex: 1 1 0; }
+  /* ...and the page's lasting warning (app.js #sbCf: OUT OF DATE, NOT IN THE BID, removed earthwork) a line of its
+     own: at style.css's basis of 0 it had no room left on a wrapped bar and was 0px wide - on a phone it vanished */
+  html.shell-on .status-bar .sb-cf { flex: 1 1 100%; }
+  html.shell-on .status-bar .sb-cf:empty { display: none; }
+  html.shell-on .status-bar .sb-util { margin-left: auto; min-height: 28px; }
+
+  /* ---- full pages at tablet width */
+  /* the Summary's side column (330px) left the 7-column table 420px: stack */
+  html.shell-on .sm-grid { grid-template-columns: minmax(0, 1fr); }
+  html.shell-on .sm-table { min-width: 600px; }
+  /* Projects: a narrower filter rail keeps a whole card column beside it */
+  html.shell-on .projects-view { grid-template-columns: 184px minmax(0, 1fr); column-gap: 20px; }
+  html.shell-on .projects-view > .pv-grid { grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
+  /* Settings: a narrower section nav */
+  html.shell-on .settings-view { grid-template-columns: 170px minmax(0, 1fr); column-gap: 20px; }
+  /* 100vh is taller than the visible page on a tablet / phone browser with
+     a toolbar; the dynamic unit is the visible height */
+  html.shell-on body { height: 100vh; height: 100dvh; }
+}
+
+/* ======================================================== PHONE < 768 */
+@media (max-width: 767.98px) {
+  /* ---- the top bar: glyph + the document's name + accuracy flag + Detect + menu,
+     then the strip (sheet picker + tabs). Everything else in the bar is one
+     tap away in the menu (responsive.js: proxies that click the real one). */
+  html.shell-on body { --t-topbar-h: 89px; }                                 /* 48 + 1 + 40 */
+  html.shell-on body.view-open, html.shell-on body.no-doc { --t-topbar-h: 48px; }
+  html.shell-on header { padding: 0 6px 0 12px; }
+  html.shell-on header::before { height: 48px; }
+  html.shell-on header::after { flex-basis: calc(100% + 18px); margin: 0 -6px 0 -12px; }
+  html.shell-on header .brand .brand-mark, html.shell-on header .brand .brand-sub,
+  html.shell-on header .brand #projectsLink, html.shell-on header #teamLink, html.shell-on header #settingsLink,
+  html.shell-on header #toolsBtn, html.shell-on header #userBtn, html.shell-on header #themeBtn { display: none !important; }
+  /* no document: the wordmark comes back in the title's place */
+  html.shell-on body.view-open header .brand .brand-mark, html.shell-on body.no-doc header .brand .brand-mark {
+    display: inline !important; font-size: 17px; }
+  html.shell-on header .brand-glyph { margin-right: 10px; }
+  html.shell-on header #docName { order: 5; flex: 1 1 0; min-width: 40px; max-width: none; font-size: 14px; }
+  html.shell-on header #docName::before { content: none; }
+  html.shell-on header .beta-chip { order: 10; margin-left: 8px; }
+  html.shell-on header #detectBtn { order: 11; margin-left: 8px; height: 40px; padding: 0 12px; max-width: 132px;
+    overflow: hidden; text-overflow: ellipsis; }
+  /* the Tools menu and the account menu keep working from the phone menu:
+     their wrappers leave the flex row, their buttons are proxied */
+  html.shell-on header .tools-wrap, html.shell-on header .user-wrap { position: absolute; top: 0; right: 0;
+    width: 0; height: 0; margin: 0; }
+  html.shell-on #toolsMenu, html.shell-on #toolsMenu.flip { position: fixed; top: 52px; left: 8px; right: 8px;
+    min-width: 0; max-width: none; max-height: calc(100vh - 64px); max-height: calc(100dvh - 64px); overflow-y: auto; }
+  html.shell-on #userMenu { position: fixed; top: 52px; right: 8px; left: auto; width: min(320px, calc(100vw - 16px)); }
+  /* the menu button */
+  html.shell-on.rsp-on header #rspMenuBtn { order: 14; display: inline-flex; align-items: center; justify-content: center;
+    flex: none; width: 40px; height: 40px; margin-left: 4px; padding: 0; border: 0; border-radius: var(--t-r-2);
+    background: transparent; color: var(--t-text); }
+  html.shell-on.rsp-on header #rspMenuBtn:hover:not(:disabled), html.shell-on.rsp-on header #rspMenuBtn[aria-expanded="true"] {
+    background: var(--t-surface-3); border: 0; }
+  html.shell-on.rsp-on header #rspMenuBtn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; }
+  /* row 2 */
+  html.shell-on header #pageSel { max-width: 136px; font-size: var(--t-fs-xs); padding-left: 9px; }
+  html.shell-on .mod-tab { padding: 0 10px; font-size: var(--t-fs-sm); }
+  html.shell-on .mod-tab[aria-selected="true"]::after { left: 10px; right: 10px; }
+
+  /* ---- the phone menu (responsive.js #rspMenu) */
+  html.shell-on #rspMenu:focus { outline: none; }        /* the container takes focus on a tap-open */
+  html.shell-on #rspMenu { position: fixed; top: 52px; right: 8px; z-index: 70; width: min(300px, calc(100vw - 16px));
+    max-height: calc(100vh - 64px); max-height: calc(100dvh - 64px); overflow-y: auto;
+    background: var(--t-surface-3); border: 1px solid var(--t-border-strong); border-radius: var(--t-r-3);
+    box-shadow: var(--t-el-3); padding: 6px; }
+  html.shell-on #rspMenu .rsp-mi { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px;
+    padding: 0 12px; border: 0; border-radius: var(--t-r-2); background: transparent; color: var(--t-text);
+    font-size: var(--t-fs-base); text-align: left; text-decoration: none; }
+  html.shell-on #rspMenu .rsp-mi:hover:not(:disabled), html.shell-on #rspMenu .rsp-mi:focus-visible {
+    background: var(--t-surface-2); border: 0; }
+  html.shell-on #rspMenu .rsp-mi svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor;
+    stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--t-text-dim); }
+  html.shell-on #rspMenu .rsp-mi[aria-current] { color: var(--t-accent-hi); }
+  html.shell-on #rspMenu .rsp-mi[aria-current] svg { color: var(--t-accent-hi); }
+  html.shell-on #rspMenu .rsp-mi.danger, html.shell-on #rspMenu .rsp-mi.danger svg { color: var(--t-danger); }
+  html.shell-on #rspMenu .rsp-mi-sub { margin-left: auto; font-size: var(--t-fs-xs); color: var(--t-text-faint); }
+  html.shell-on #rspMenu .rsp-msep { height: 1px; margin: 6px 4px; background: var(--t-border); }
+  /* the document and sheet in full - the bar can only show their start */
+  html.shell-on #rspMenu .rsp-mdoc { padding: 8px 12px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--t-border);
+    font-size: var(--t-fs-xs); line-height: 1.45; color: var(--t-text); font-weight: 600; overflow-wrap: anywhere; }
+  html.shell-on #rspMenu .rsp-mdoc span { color: var(--t-text-dim); font-weight: 400; }
+  html.shell-on #rspMenu .rsp-mnote { padding: 8px 12px 10px; font-size: var(--t-fs-xs); line-height: 1.45; color: var(--t-warn); }
+  html.shell-on #rspMenu .rsp-mlegal { display: flex; gap: 4px; padding: 0 4px; }
+  html.shell-on #rspMenu .rsp-mlegal .rsp-mi { flex: 1 1 0; justify-content: center; font-size: var(--t-fs-sm); color: var(--t-text-dim); }
+
+  /* ---- the ribbon: an icon strip with 40px targets, the two drawer
+     toggles pinned at its ends */
+  html.shell-on #ribbon { height: 52px; gap: 6px; padding: 0 8px; scrollbar-width: none; }
+  html.shell-on #ribbon::-webkit-scrollbar { display: none; }
+  html.shell-on body #ribbon .toolkit .tk, html.shell-on body #ribbon .toolkit #faithfulBtn,
+  html.shell-on body #ribbon .toolkit #kbdBtn { width: 40px; height: 40px; padding: 0; justify-content: center; }
+  html.shell-on body #ribbon .toolkit .tk svg { width: 19px; height: 19px; }
+  html.shell-on body #ribbon .toolkit, html.shell-on body #ribbon .tk-group { gap: 4px; }
+  html.shell-on.rsp-on #ribbon .rsp-tog { height: 40px; padding: 0 10px; gap: 6px; font-size: var(--t-fs-xs); }
+  html.shell-on body #ribbon #dkPanelsBtn { width: 40px; height: 40px; padding: 0; justify-content: center; }
+
+  /* ---- drawers on a phone: nearly the full width (a strip of scrim stays
+     so a tap beside the drawer closes it) and the full height under the bar */
+  html.shell-on.rsp-on { --rsp-drawer-w: min(400px, calc(100vw - 36px)); }
+  /* touch: rows and buttons inside the drawers reach 40px */
+  html.shell-on.rsp-on aside#sidebar .sh-row { min-height: 40px; }
+  html.shell-on.rsp-on aside#sidebar .mc-acts .rb-btn { height: 40px; }
+  html.shell-on.rsp-on aside#sidebar .mini, html.shell-on.rsp-on #railR .mini { min-height: 40px; min-width: 40px; }
+  html.shell-on.rsp-on #railR .ck-row { min-height: 44px; }
+  /* dock.js's panel options / close (24px on a desk) */
+  html.shell-on.rsp-on :is(aside#sidebar, #railR) .dk-b { width: 40px; height: 40px; }
+  /* dock.js's toast ("... closed. Undo") spans the phone, not past it */
+  html.shell-on .dk-toast { left: 12px; right: 12px; transform: none; justify-content: space-between; }
+
+  /* ---- the stage's overlays on a small sheet: the on-sheet legend keeps
+     its desktop width and a third of the height (its rows scroll; its "-"
+     folds it to one line) */
+  html.shell-on .mini-legend { max-width: min(240px, calc(100% - 24px)); max-height: 34%; overflow: auto; }
+  html.shell-on .kbd-help { width: auto; left: 8px; right: 8px; max-height: calc(100% - 16px); }
+  html.shell-on .line-card { max-width: calc(100% - 24px); }
+
+  /* ---- the status bar: the sheet facts and the transient line, each on
+     its own line; the utilities (Feedback, Terms, Privacy, remove) are in
+     the phone menu */
+  html.shell-on .status-bar { padding: 4px 12px; }
+  html.shell-on .status-bar .sb-util { display: none; }
+  /* the facts wrap to two lines rather than cut the scale's provenance */
+  html.shell-on body:not(.view-open) .status-bar .sb-facts { white-space: normal; min-height: 0; line-height: 1.45;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+  /* Projects / Settings / Team: no sheet facts there (style.css) and the
+     utilities are in the menu - an empty bar steps out until a message comes */
+  html.shell-on body.view-open .status-bar:has(.status:empty) { display: none; }
+  html.shell-on .status-bar .sb-facts .sb-seg { display: inline; white-space: normal; margin-right: 10px; }
+  html.shell-on .status-bar .sb-facts .sb-seg:empty, html.shell-on .status-bar .sb-facts .sb-seg[hidden] { display: none; }
+  html.shell-on .status-bar .status { flex: 1 1 100%; }
+  html.shell-on .status-bar .status:empty { display: none; }
+
+  /* ---- the cut / fill bar on a phone: 40px buttons, tighter gutters */
+  html.shell-on .cf-bar { padding-left: 8px; padding-right: 8px; gap: 8px; }
+  html.shell-on #cfAdd, html.shell-on #cfBack, html.shell-on #cfOpenTab, html.shell-on #cfSheets { min-height: 40px; }
+
+  /* ---- FULL PAGES: one column, 16px gutters, tables scroll in their card */
+  html.shell-on .plans-view, html.shell-on .summary-view, html.shell-on .v3-view,
+  html.shell-on .projects-view, html.shell-on .settings-view, html.shell-on .team-view {
+    padding: 16px 16px 32px; }
+  html.shell-on .vw-title h1, html.shell-on .pv-head h1, html.shell-on .sv-head h1 { font-size: 22px; }
+  html.shell-on[data-palette="nightcrew"] .vw-title h1, html.shell-on[data-palette="nightcrew"] .pv-head h1,
+  html.shell-on[data-palette="nightcrew"] .sv-head h1 { font-size: 19px; }
+  html.shell-on .vw-head { flex-direction: column; align-items: stretch; gap: 12px; margin-bottom: 14px; }
+  html.shell-on .vw-head-r { justify-content: flex-start; }
+  html.shell-on .vw-acts .btn, html.shell-on .sm-acts .btn { height: 40px; }
+  html.shell-on .vw-card-head { padding: 14px 14px 10px; flex-wrap: wrap; }
+  html.shell-on .vw-note { text-align: left; }
+  html.shell-on .seg-group { display: flex; overflow-x: auto; max-width: 100%; }
+  html.shell-on .seg { min-height: 40px; white-space: nowrap; }
+
+  /* Projects: the list tabs and the status filter become chip strips over
+     one column of cards */
+  /* rows are max-content: the view has a definite height and the chip
+     strips are scroll containers (automatic minimum 0), so auto rows let
+     the search box ride up over the tabs */
+  html.shell-on .projects-view { grid-template-columns: minmax(0, 1fr); column-gap: 0; grid-auto-rows: max-content;
+    grid-template-areas: "head" "tabs" "filters" "controls" "reach" "selbar" "grid" "empty"; }
+  html.shell-on .projects-view > .pv-head { flex-wrap: wrap; row-gap: 8px; margin-bottom: 12px; }
+  html.shell-on .projects-view > .pv-head #pvBack { margin-left: 0; }
+  html.shell-on .projects-view > .pv-tabs, html.shell-on .projects-view > .pv-filters {
+    position: static; flex-direction: row; overflow-x: auto; gap: 6px; margin: 0 0 10px; padding: 0;
+    border: 0; scrollbar-width: none; }
+  html.shell-on .projects-view > .pv-tabs::-webkit-scrollbar, html.shell-on .projects-view > .pv-filters::-webkit-scrollbar { display: none; }
+  html.shell-on .projects-view .pv-tab, html.shell-on .projects-view .pv-filter { flex: none; min-height: 40px;
+    padding: 0 14px; border: 1px solid var(--t-border); border-radius: var(--t-r-pill); white-space: nowrap; }
+  html.shell-on .projects-view .pv-tab[aria-selected="true"], html.shell-on .projects-view .pv-tab.pv-tab-on,
+  html.shell-on .projects-view .pv-filter.on { box-shadow: none; border-color: var(--t-accent); color: var(--t-text);
+    background: var(--t-accent-bg); }
+  html.shell-on .projects-view .pv-filters-t { display: none; }
+  html.shell-on .projects-view > .pv-controls { flex-wrap: wrap; }
+  html.shell-on .projects-view > .pv-grid { grid-template-columns: minmax(0, 1fr); }
+  html.shell-on .pv-card { grid-template-columns: 96px minmax(0, 1fr); column-gap: 12px; }
+  html.shell-on .pv-card > .pv-thumb { width: 96px; height: 76px; }
+
+  /* Settings: the section nav becomes a sticky chip strip over one column */
+  html.shell-on .settings-view { grid-template-columns: minmax(0, 1fr); column-gap: 0; }
+  html.shell-on .settings-view > * { grid-column: 1; }
+  /* sticky at the scrollport's top edge: the view's 16px top padding is
+     inside it, hence -16px */
+  html.shell-on .settings-view > .sv-nav { grid-column: 1; grid-row: auto; position: sticky; top: -16px; z-index: 4;
+    flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 6px; margin: 0 -16px 12px; padding: 8px 16px;
+    background: var(--t-surface-1); border-bottom: 1px solid var(--t-border); scrollbar-width: none; }
+  html.shell-on .settings-view > .sv-nav::-webkit-scrollbar { display: none; }
+  html.shell-on .settings-view > .sv-nav a { flex: none; display: inline-flex; align-items: center; min-height: 40px;
+    padding: 0 12px; border: 1px solid var(--t-border); border-radius: var(--t-r-pill); white-space: nowrap; }
+  /* (.sv-section keeps shell.css's model: every child brings its own 16px inset) */
+  html.shell-on .sv-book-scroll, html.shell-on .sv-book { overflow-x: auto; }
+  html.shell-on .sv-book-table { min-width: 520px; }
+  html.shell-on .sv-addrow, html.shell-on .sv-io, html.shell-on .sv-form { flex-wrap: wrap; }
+  html.shell-on .sv-addrow input { min-width: 0; flex: 1 1 140px; }
+
+  /* Plans (project overview): two sheet thumbnails a row */
+  html.shell-on .pl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  html.shell-on .pl-thumb { height: 116px; }
+  html.shell-on .pl-sheets-card .pl-groups { padding: 0 12px 14px; }
+  html.shell-on .pl-sheets-card .pl-triage, html.shell-on .pl-tiles { padding-left: 0; padding-right: 0; }
+  html.shell-on .pl-tile { border-left: 0; border-top: 1px solid var(--t-border); }
+  html.shell-on .pl-tile:first-child { border-top: 0; }
+
+  /* Summary: the table scrolls inside its card (its seven columns need 600px) */
+  html.shell-on .sm-body { -webkit-overflow-scrolling: touch; }
+
+  /* 3D: the two choices stack */
+  html.shell-on .v3-cards { grid-template-columns: minmax(0, 1fr); }
+  html.shell-on .v3-card { padding: 18px; }
+
+  /* Team: one column, its members table scrolls in its card */
+  html.shell-on .tm-grid { grid-template-columns: minmax(0, 1fr); }
+  html.shell-on .tm-table { min-width: 560px; }
+  html.shell-on .tm-toast { left: 12px; right: 12px; bottom: 40px; max-width: none; }
+
+  /* ---- modals fit a phone: the cards already cap at 100vw - 32px; the
+     legend sheet's path row and the bid chooser's buttons wrap */
+  html.shell-on .lg-path-row, html.shell-on .bid-pick-act, html.shell-on .lg-actions { flex-wrap: wrap; }
+  html.shell-on .lg-path-row input { min-width: 0; flex: 1 1 160px; }
+  html.shell-on .gz-m-card, html.shell-on .lg-card { max-height: calc(100dvh - 32px); }
+  html.shell-on .fb-back { padding: 12px; }
+}
+
+/* ========================================================== MOTION */
+/* reduced motion: drawers and the scrim appear and go, they do not slide */
+@media (prefers-reduced-motion: reduce) {
+  html.shell-on.rsp-on aside#sidebar, html.shell-on.rsp-on #railR, html.shell-on.rsp-on #rspScrim,
+  html.shell-on.rsp-on.rsp-open-l aside#sidebar, html.shell-on.rsp-on.rsp-open-r #railR { transition: none !important; }
+}
+
+/* ========================================================== PRINT */
+/* print is the Summary on paper (shell.css): none of this frame prints */
+@media print {
+  html.shell-on #rspScrim, html.shell-on #rspMenu, html.shell-on .rsp-tog, html.shell-on #rspMenuBtn { display: none !important; }
+}

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script src="/client.js?v=2"></script>
+<title>Cut / Fill</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="ui/style.css?v=7">
+</head>
+<body>
+<header id="top">
+  <div class="brand">Cut / Fill</div>
+  <div class="grp projects">
+    <select id="projectSel" title="Project"></select>
+    <button id="btnNewProject" title="Start a new project">New</button>
+    <button id="btnAddPdf" title="Add a PDF to this project">+ PDF</button>
+    <input id="fileInput" type="file" accept="application/pdf" hidden>
+  </div>
+  <div id="sheetTabs" class="grp tabs"></div>
+  <div id="viewTabs" class="grp" title="Sheet view or a 3D view of the cut / fill map (keys 2 and 3)">
+    <div class="tab active" data-view="2d">Sheet</div>
+    <div class="tab" data-view="3d">3D</div>
+  </div>
+  <div class="grp right">
+    <!-- the accuracy flag: shown when this page is its own tab (inside the host the host's chip shows it) -->
+    <span id="cfFlag" class="flag-chip" role="note" tabindex="0" hidden
+          title="Double-check every quantity against the drawings.">Automated detection can be wrong</span>
+    <label class="scaleBox" title="Feet per inch of paper. Volumes move with the square of this number.">
+      Scale 1" = <input id="scaleIn" type="number" step="1" min="1" style="width:80px"> ft
+      <span id="scaleStatus" class="pill warn">unconfirmed</span>
+    </label>
+    <button id="btnCompute" class="primary">Compute cut / fill</button>
+    <button id="btnMap" title="Show or hide the cut / fill map (M)">Hide map</button>
+    <div id="totals" class="totals"></div>
+  </div>
+</header>
+
+<main>
+  <aside id="left">
+    <section class="card" id="secSheets">
+      <h3>Sheets</h3>
+      <div id="sheetList" class="list"></div>
+      <p class="hint">Mark what each sheet carries. A grading sheet that draws both existing and proposed lines is
+        <b>both</b>. Existing-conditions / topo sheets are <b>existing</b>.</p>
+    </section>
+
+    <section class="card" id="secFamilies">
+      <h3>Contour lines on this sheet</h3>
+      <div id="familyList" class="list"></div>
+      <p class="hint" id="familyHint"></p>
+    </section>
+
+    <section class="card" id="secQuestions">
+      <h3>Questions from the read <span id="qCount" class="pill"></span></h3>
+      <div id="questionList" class="list" style="max-height:300px;overflow:auto"></div>
+      <p class="hint">What the engine could not decide on its own, most valuable first. Answer one, the sheet updates
+        in a few seconds and the next one moves up. Nothing here is guessed.</p>
+    </section>
+
+    <section class="card" id="secChanges">
+      <h3>What changed since your last read</h3>
+      <div id="changeList" class="list" style="max-height:260px;overflow:auto"></div>
+      <p class="hint">The real difference between the previous reading of this sheet and this one: your records, the
+        printed heights attached, each line style's surface and heights, the last computed volume. Nothing is carried
+        forward; a re-read reports what it read.</p>
+    </section>
+
+    <section class="card" id="secNotes">
+      <h3>Notes of this read <span id="noteCount" class="pill"></span></h3>
+      <div id="noteList" class="list"></div>
+      <p class="hint">Everything the newest read of this sheet said, each note in full: pens moved to the other
+        surface, pieces set aside, heights it could not place. The next read replaces them.</p>
+    </section>
+
+    <section class="card" id="secLines">
+      <h3>Lines</h3>
+      <div class="row">
+        <button id="btnDrawLine">Draw a contour line</button>
+        <span id="lineInfo" class="hint"></span>
+      </div>
+      <div class="row">
+        <select id="lineFilter" title="Which lines to list">
+          <option value="contours">all contour lines</option>
+          <option value="noz">no height yet</option>
+          <option value="withz">with height</option>
+          <option value="mine">typed / drawn / switched by you</option>
+          <option value="existing">existing</option>
+          <option value="proposed">proposed</option>
+        </select>
+        <input id="lineSearch" type="text" placeholder="height…" style="width:64px" title="Only lines at this height">
+        <span id="lineCount" class="pill"></span>
+      </div>
+      <div id="lineList" class="list tall"></div>
+      <p class="hint">Missing or broken line? Draw it: click the points, Enter to finish, then give it a height.
+        Click any line on the sheet to move its points, extend it, change its height or delete it. Your lines are
+        contours like any other: same colour, counted with their surface, used by the next Compute.</p>
+    </section>
+
+    <section class="card" id="secScale">
+      <h3>Scale</h3>
+      <div id="scaleList" class="list"></div>
+    </section>
+
+    <section class="card" id="secDatum">
+      <h3>Datum</h3>
+      <div id="datumBox"></div>
+      <div class="row">
+        <label>Project <input id="datumProj" type="number" step="0.01" style="width:70px" placeholder="100"></label>
+        <label>= real <input id="datumReal" type="number" step="0.01" style="width:90px" placeholder="8800"></label>
+        <button id="btnDatumSet">Set</button>
+        <button id="btnDatumClear">Clear</button>
+      </div>
+      <div class="row">
+        <label>Short numbers add <input id="abbrevBase" type="number" step="100" style="width:90px" placeholder="7700"></label>
+        <button id="btnAbbrevSet">Set</button>
+        <button id="btnAbbrevClear">Clear</button>
+      </div>
+      <p class="hint">Two kinds of short number. A project datum: the sheet prints 87 or 100.5 with a note such as
+        "100.00 = 8800.00" (type it above). Truncated elevations: the sheet prints 48.07 for 7,748.07; these are
+        resolved from the sheet's own heights and say so, or type the base they add.</p>
+    </section>
+
+    <section class="card" id="secRules">
+      <h3>Rules</h3>
+      <div class="row"><label>Grid cell <input id="cellFt" type="number" step="1" min="1" style="width:56px"> ft</label></div>
+      <div class="row"><label>Untagged spot grades are
+        <select id="untaggedSel"><option value="proposed">proposed</option><option value="existing">existing</option></select></label></div>
+      <div class="row"><label>Wall footing below BW <input id="wallDepth" type="number" step="0.5" min="0" style="width:56px"> ft</label>
+        <span class="hint">0 = use BW as the finished grade at the wall base</span></div>
+      <div class="row"><label>Add to wall height <input id="wallAdd" type="number" step="0.5" min="0" style="width:56px"> ft</label>
+        <span class="hint">the wall face SF is (TW − BW + this) × length</span></div>
+    </section>
+
+    <section class="card" id="secPads">
+      <h3>Building pads</h3>
+      <div id="padList" class="list"></div>
+      <p class="hint">A floor height printed inside a closed outline. Turn one on and the proposed ground is flat at
+        that height over the outline (hover to see it). Turn it on only where the outline is the building: on a lot
+        plan the outline round a floor height is the lot. A layer stack lowers a pad with the rest of the site.</p>
+    </section>
+
+    <section class="card" id="secLimits">
+      <h3>Limit</h3>
+      <div id="limitOffer" class="list"></div>
+      <div class="row">
+        <button id="btnLimitPick" title="Click the limit line on the sheet: its whole family is joined into the ring">Pick the limit line</button>
+        <button id="btnLimit">Draw limit</button>
+        <button id="btnLimitClear">Clear</button>
+      </div>
+      <div id="limitInfo" class="hint"></div>
+      <p class="hint">The limit gives the fence length, the Clear &amp; Grub area and the strip area (Takeoff rows card).
+        Pick the sheet's own limit line, or click corners on the sheet and double-click (or Enter) to close.
+        Without a limit the overlap of the two surfaces is used.</p>
+    </section>
+
+    <section class="card" id="secLayers">
+      <h3>Layer stack under the proposed grade</h3>
+      <div id="layerList" class="list"></div>
+      <div class="row">
+        <button id="btnLayerAdd">Add a layer</button>
+        <span id="layerTotal" class="hint"></span>
+      </div>
+      <p class="hint">Asphalt, base, gravel: the drawing shows finished grade, the dig stops that much lower. The stack's
+        total lowers the proposed surface inside the limit (volumes to subgrade). Empty = finished grade.</p>
+    </section>
+
+    <section class="card" id="secZones">
+      <h3>Grading zones</h3>
+      <div id="zoneList" class="list"></div>
+      <div class="row">
+        <button id="btnZone">Draw a zone</button>
+        <span id="zoneInfo" class="hint"></span>
+      </div>
+      <p class="hint">Split the job the way a bid form does (streets, lots, drainage): each zone is dug to its own
+        depth and files its own rows in the takeoff. With no limit drawn, the zones are the area; with a limit,
+        the rest of it is its own row. "Show only" puts one zone alone on the cut / fill map.</p>
+    </section>
+
+    <section class="card" id="secAlign">
+      <h3>Sheet alignment</h3>
+      <div id="alignBox"></div>
+      <div class="row">
+        <button id="btnAlign">Pick 2 matching points</button>
+        <button id="btnAlignClear">Reset</button>
+        <label>Overlay <select id="ghostSel"><option value="">none</option></select></label>
+        <input id="ghostAlpha" type="range" min="0" max="100" value="40" style="width:70px" title="How strongly the overlaid sheet's image shows">
+        <label title="Draw the overlaid sheet's contour lines too, dashed and faint: green existing, orange proposed, pink no height. Fix them on their own sheet. Hidden while a tool clicks this sheet's own lines: pick, edit, the limit pick, matching points."><input type="checkbox" id="ghostLines" checked> its lines</label>
+      </div>
+      <p class="hint">Evidence from other sheets is mapped into the sheet shown. Same-size sheets from one set usually line up as-is; pick two landmarks on each sheet if they do not. The Overlay shows another sheet under this one, placed the way the volumes use it. Its contour lines are dashed and faint; fix them on their own sheet.</p>
+    </section>
+
+    <section class="card" id="secLabels">
+      <h3>Printed elevations <span id="labelCount" class="pill"></span></h3>
+      <div class="row">
+        <select id="labelFilter">
+          <option value="all">all</option><option value="contour">contour labels</option><option value="spot">spot grades</option>
+          <option value="wall">wall grades (TW/BW)</option><option value="floor">floors</option><option value="number">unattached numbers</option>
+          <option value="problem">problems</option>
+        </select>
+        <label><input type="checkbox" id="showLabels" checked> show on sheet</label>
+      </div>
+      <div id="labelList" class="list tall"></div>
+    </section>
+  </aside>
+
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="v3d" hidden>
+      <div class="v3dbar">
+        <span class="v3drow">
+          <b>Layers</b>
+          <label><input type="checkbox" id="v3dGround" checked> existing ground</label>
+          <label><input type="checkbox" id="v3dContours" checked> contour lines</label>
+          <label><input type="checkbox" id="v3dVolumes" checked> cut / fill volumes</label>
+          <label><input type="checkbox" id="v3dProposed"> proposed grade (mesh)</label>
+          <label><input type="checkbox" id="v3dSources" checked> sources of the hovered cell</label>
+        </span>
+        <span class="v3drow">
+          <label>Ground <select id="v3dTexture"><option value="tint">elevation colours</option><option value="sheet">sheet drawing</option></select></label>
+          <label>Vertical × <input id="v3dVx" type="range" min="1" max="10" step="0.5" value="3" style="width:80px"> <span id="v3dVxVal">3</span></label>
+          <button id="v3dReset">Reset view</button>
+          <span id="v3dLegend" class="v3dlegend"></span>
+        </span>
+        <span class="hint">drag: turn · right-drag or shift-drag: pan · wheel: zoom · hover a cell for its story, click to pin it</span>
+      </div>
+      <div id="v3dTip" hidden></div>
+      <div id="v3dHint" class="hint" hidden></div>
+    </div>
+    <div id="legend">
+      <span><i class="sw ex"></i>existing contour</span>
+      <span><i class="sw pr"></i>proposed contour</span>
+      <span><i class="sw noz"></i>no height yet</span>
+      <span title="lines you drew or edited carry a pencil mark on their height">✎ yours</span>
+      <span><i class="sw cut"></i>cut</span>
+      <span><i class="sw fill"></i>fill</span>
+      <label><input type="checkbox" id="showContours" checked> lines</label>
+      <label><input type="checkbox" id="showGrid" checked> grid</label>
+      <label><input type="checkbox" id="showGaps"> gaps</label>
+    </div>
+    <div id="status" class="status"></div>
+    <div id="popup" class="popup" hidden></div>
+  </div>
+
+  <aside id="right">
+    <section class="card" id="secResult">
+      <h3>Result</h3>
+      <div id="resultBox" class="hint">Not computed yet.</div>
+    </section>
+    <section class="card" id="secTakeoff">
+      <h3>Takeoff rows</h3>
+      <div id="takeoffBox" class="hint"></div>
+      <div class="row" style="margin-top:6px">
+        <label title="Topsoil taken off over the whole limit, inches">Strip topsoil <input id="toStripIn" type="number" step="1" min="0" style="width:52px" placeholder="in"> in</label>
+        <label title="Allowance on the stripped volume: 1.15 = 15 % on top of area × depth; 1 = neat">× <input id="toStripFactor" type="number" step="0.05" min="0.5" style="width:56px"></label>
+      </div>
+      <div class="row">
+        <label title="Topsoil put back over the green area: the limit less the footprints and paving typed beside it">Rough place <input id="toPlaceIn" type="number" step="1" min="0" style="width:52px" placeholder="in"> in</label>
+        <label title="The footprints and paving inside the limit that get no topsoil back, square feet">over limit − <input id="toPlaceLess" type="number" step="100" min="0" style="width:80px" placeholder="0"> SF</label>
+        <label title="Or a share of the strip that goes back (50 = half); leave blank when a depth is typed">or <input id="toPlacePct" type="number" step="5" min="0" max="100" style="width:52px" placeholder="%"> % of strip</label>
+      </div>
+      <div class="row">
+        <label title="Swell on what leaves the site; 1 = neat line">Export × <input id="toExport" type="number" step="0.05" min="0.5" style="width:56px"></label>
+        <label title="Shrink on what comes in; 1 = neat line">Import × <input id="toImport" type="number" step="0.05" min="0.5" style="width:56px"></label>
+        <label>Fence from <select id="toFence"><option value="auto">erosion lines, else the limit</option><option value="erosion">erosion-control lines</option><option value="limit">the limit line</option></select></label>
+      </div>
+      <div class="row">
+        <a id="crewMapLink" href="#" target="_blank" hidden>Print the crew map</a>
+        <label id="crewMapBlockLab" hidden>block <input id="crewMapBlock" type="number" step="10" min="5" value="30" style="width:52px"> ft</label>
+      </div>
+      <p class="hint">Every row says what it was made from. Factors of 1 are neat line: the numbers are the volumes
+        between the drawn surfaces, no swell or shrink.</p>
+    </section>
+    <section class="card" id="secWalls">
+      <h3>Site walls (TW / BW)</h3>
+      <div id="wallsBox" class="hint"></div>
+    </section>
+    <section class="card" id="secStory">
+      <h3>Where the number comes from</h3>
+      <div id="storyBox" class="hint">Hover a grid cell.</div>
+    </section>
+    <section class="card" id="secSources">
+      <h3>Sources</h3>
+      <div id="sourcesBox" class="hint"></div>
+    </section>
+  </aside>
+</main>
+<script src="ui/app.js?v=74"></script>
+<script type="module" src="ui/view3d.js?v=7"></script>
+</body>
+</html>

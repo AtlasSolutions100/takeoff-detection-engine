@@ -51,7 +51,7 @@ def check(ok, msg):
 
 
 def call(method, path, body=None, cookie=None):
-    headers = [(b"host", b"testserver")]
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"2")]
     raw = b""
     if body is not None:
         raw = json.dumps(body).encode()

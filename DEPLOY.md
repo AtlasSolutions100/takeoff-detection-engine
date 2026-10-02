@@ -196,9 +196,35 @@ no user and are now refused once `users.json` is present; anyone still on one
 lands on the login page. No action needed, unless you want everybody signed
 out at once: delete `session.key` beside the job store.
 
-`provision_demo.py` no longer rewrites a client's row - it shares only rows
-that are already shared or belong to a staff account, and prints each
-refusal - so re-running it on the box is safe again.
+`provision_demo.py` never rewrites a row that has an owner - client or
+staff, whatever the row is named - and prints each refusal. Its ownership
+pass touches only owner-less rows (the pre-login shared marker): demo cards
+and the shared prefixes stay shared, and the rest move to staff **only under
+`--rewrite-owners`**, after it prints the diff and gets a y/N (`--yes` when
+there is no terminal, which `docker compose exec -T` never has). A bare run
+is a dry run: accounts and the roster are written, `registry.json` is not.
+
+Demo cards (2026-10-01): only the two shared plan sets ship (Loves Lane civil
+sheets, Belle Farms). An owner-less row is open to every account only when it
+is a demo card or one of `shared_names` in `demo-plans.json` (exact names,
+case aside); any other
+owner-less row (a card removed from an older manifest) is staff-only by the
+server's rule, hidden from clients and never deleted. No server step is
+needed for that: deploying the new image is enough.
+
+Customer list (2026-10-01): `provision_demo.py` no longer carries the
+customers' addresses - the image shipped them. It reads them from
+`/data/jobs/provision-accounts.txt` (one e-mail per line, `#` comments), or
+`--accounts PATH`. That file lives only on the box's volume; never commit
+it. Without it the script creates the two staff accounts only and leaves
+every existing account alone. Day-to-day account work does not need it:
+Settings -> Accounts, or `docker compose exec app python -m
+takeoff_engine.users add <email>`. If you do want to re-run the script for
+everybody (e.g. `--reissue`), first put the list on the box, e.g.
+`docker compose cp provision-accounts.txt app:/data/jobs/`. The box already
+knows every account, so the file can be made there: `docker compose exec -T
+app python -m takeoff_engine.users list | grep -o '^[^ ]*@[^ ]*' >
+provision-accounts.txt` (staff included, which is harmless).
 
 ## Updates
 

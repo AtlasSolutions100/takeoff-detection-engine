@@ -1,0 +1,111 @@
+/* Cut / Fill review UI.
+   Chrome colours are the host app's design tokens when this page is embedded (the host's tokens.css
+   re-declares --bg --panel --line --text --dim --accent --hover --chip --stage --field on :root:root,
+   in its dark and its paper theme); standalone, the fallbacks below give the light paper look.
+   Data colours (existing / proposed / no height / cut / fill) are the engine's own and never follow
+   the theme: cut is red, fill is blue, on the sheet and in 3D alike.
+   Everything that floats over the sheet (popup, status, legend, 3D bar) stays paper-white with dark
+   ink in both themes, because the sheet under it is white. */
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --text: #1d2026; --dim: #6b7280; --line: #e3e6ea; --field: #ffffff;
+  --hover: #f1f3f6; --chip: #e8ebf0; --stage: #dfe3e8; --accent: #2457c5;
+  --accent-ink: var(--t-accent-ink, #ffffff); --select-bg: var(--t-select-bg, #e3ecff);
+  --warn: var(--t-warn, #b26a00); --warn-bg: var(--t-warn-bg, #fff1d6);
+  --good: var(--t-ok, #14633f); --good-bg: var(--t-ok-bg, #dff5e8);
+  --bad: var(--t-stop, #9c1c1c); --bad-bg: var(--t-stop-bg, #fde2e2);
+  --edge: var(--t-border-strong, #c9ced6); --radius: var(--t-r-2, 7px); --radius-card: var(--t-r-3, 8px);
+  --ex: #178a5e; --pr: #d9480f; --noz: #c2185b; --cut: #c62828; --fill: #1565c0;
+  --paper: rgba(255,255,255,.93); --paper-ink: #1d2026; --paper-edge: #c9ced6;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; font: 13px/1.4 var(--t-font-ui, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif); color: var(--text); background: var(--bg); }
+button { font: inherit; padding: 4px 9px; border: 1px solid var(--line); background: var(--field); color: var(--text); border-radius: var(--radius); cursor: pointer; }
+button:hover { border-color: var(--accent); background: var(--hover); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.primary:hover { filter: brightness(.92); }
+button.active { background: var(--select-bg); border-color: var(--accent); }
+input, select { font: inherit; padding: 3px 5px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--field); color: var(--text); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+label { white-space: nowrap; }
+h3 { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--dim); }
+.hint { color: var(--dim); font-size: 12px; margin: 6px 0 0; }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--chip); font-size: 12px; color: var(--text); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.ok { background: var(--good-bg); color: var(--good); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+
+#top { display: flex; align-items: center; gap: 14px; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); height: 52px; }
+#top .brand { font-weight: 700; font-size: 15px; }
+body.embed #top .brand, body.embed .grp.projects { display: none; }
+.grp { display: flex; align-items: center; gap: 6px; }
+.grp.right { margin-left: auto; }
+.tabs { flex: 1; overflow-x: auto; }
+.tab { padding: 4px 9px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--field); cursor: pointer; white-space: nowrap; }
+.tab.active { border-color: var(--accent); background: var(--select-bg); }
+.tab .role { font-size: 12px; color: var(--dim); margin-left: 4px; }
+.scaleBox { display: flex; align-items: center; gap: 5px; }
+.totals { display: flex; gap: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.totals .cut { color: var(--cut); } .totals .fill { color: var(--fill); }
+
+main { display: grid; grid-template-columns: 330px 1fr 320px; height: calc(100% - 52px); }
+aside { overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+#left { border-right: 1px solid var(--line); } #right { border-left: 1px solid var(--line); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-card); padding: 10px; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.list { display: flex; flex-direction: column; gap: 4px; }
+.list.tall { max-height: 320px; overflow: auto; }
+.item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--radius); border: 1px solid transparent; }
+.item:hover { background: var(--hover); }
+.item.sel { border-color: var(--accent); background: var(--select-bg); }
+.item .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .num { font-variant-numeric: tabular-nums; color: var(--dim); }
+.sw { display: inline-block; width: 22px; height: 0; border-top: 3px solid #000; vertical-align: middle; margin-right: 6px; }
+.sw.ex { border-color: var(--ex); } .sw.pr { border-color: var(--pr); } .sw.noz { border-color: var(--noz); border-top-style: dashed; }
+.sw.cut { border-top: 10px solid rgba(198,40,40,.35); } .sw.fill { border-top: 10px solid rgba(21,101,192,.35); }
+
+#stage { position: relative; overflow: hidden; background: var(--stage); }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+#view.tool { cursor: crosshair; }
+#v3d { position: absolute; inset: 0; background: var(--stage); }
+#v3d canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; display: block; }
+/* everything that floats over the sheet keeps paper colours in both themes */
+.v3dbar, #v3dTip, #v3dHint, #legend, .status, .popup { color: var(--paper-ink); }
+.v3dbar button, .v3dbar input, .v3dbar select, #legend button, #legend input, .popup button, .popup input, .popup select { background: #fff; color: var(--paper-ink); border-color: var(--paper-edge); }
+.v3dbar button:hover, .popup button:hover { background: #f1f3f6; }
+.popup button.primary { background: #2457c5; color: #fff; border-color: #2457c5; }
+.popup .pill { background: #e8ebf0; color: #1d2026; }
+.popup .hint, .popup .muted { color: #6b7280; }
+.v3dbar { position: absolute; left: 10px; top: 10px; z-index: 2; background: var(--paper); border: 1px solid var(--paper-edge); border-radius: 8px; padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; max-width: calc(100% - 20px); }
+.v3drow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.v3dlegend { display: inline-flex; gap: 6px; align-items: center; }
+.v3dramp { display: inline-block; width: 90px; height: 10px; border-radius: 3px; border: 1px solid #b9c0c9; }
+.v3dlegend .sw { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 3px; vertical-align: -1px; }
+#v3dTip { position: absolute; z-index: 3; background: rgba(255,255,255,.95); border: 1px solid var(--paper-edge); border-radius: 6px; padding: 3px 7px; font-size: 12px; pointer-events: none; white-space: nowrap; }
+#v3dHint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; background: rgba(255,255,255,.9); padding: 8px 12px; border-radius: 8px; }
+#viewTabs { display: flex; gap: 4px; }
+#legend { position: absolute; left: 10px; bottom: 10px; background: var(--paper); border: 1px solid var(--paper-edge); border-radius: 8px; padding: 6px 10px; display: flex; gap: 12px; align-items: center; font-size: 12px; }
+.status { position: absolute; top: 10px; left: 10px; background: var(--paper); border: 1px solid var(--paper-edge); border-radius: 8px; padding: 5px 10px; font-size: 12px; max-width: 60%; }
+.status:empty { display: none; }
+.popup { position: absolute; background: #fff; border: 1px solid #b8c0cc; border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0,0,0,.15); min-width: 220px; z-index: 5; }
+.popup h4 { margin: 0 0 6px; font-size: 13px; }
+.popup .row { margin: 3px 0; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
+.kv b { font-weight: 600; }
+.story .src { padding: 3px 6px; border-left: 3px solid var(--line); margin: 3px 0; font-size: 12px; }
+.story .src.ex { border-color: var(--ex); } .story .src.pr { border-color: var(--pr); }
+.story .w { color: var(--dim); font-variant-numeric: tabular-nums; }
+.story .badge { display: inline-block; font-size: 12px; padding: 0 5px; border-radius: 4px; background: var(--chip); color: var(--text); margin-left: 4px; cursor: pointer; }
+.warnList { color: var(--warn); font-size: 12px; }
+table.mini { border-collapse: collapse; font-size: 12px; width: 100%; }
+table.mini td, table.mini th { padding: 2px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+table.mini td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.big { font-size: 20px; font-weight: 700; }
+.muted { color: var(--dim); }
+.swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--edge); display: inline-block; }
+
+/* the accuracy flag, shown when the engine's page is its own tab (inside the host the host's chip shows it).
+   Not dismissible: it is the caveat on every number this page computes. */
+.flag-chip { font-size: 12px; white-space: nowrap; padding: 3px 9px; border-radius: 999px; cursor: help;
+  color: #8a5a00; background: rgba(215, 155, 58, .16); border: 1px solid transparent; }
+.flag-chip:hover, .flag-chip:focus-visible { border-color: #b8860b; outline: none; }

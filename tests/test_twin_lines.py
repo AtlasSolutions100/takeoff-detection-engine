@@ -142,24 +142,38 @@ near(g1["groups"][0]["lf_ft"], 148.0, 1.0, "with them it is one run per footing"
 near(g1["groups"][0]["lf_drawn_ft"], 280.0, 1.0, "and the drawn footage rides beside it")
 check(g1["groups"][0]["families"] == g0["groups"][0]["families"], "the per-family breakdown stays as drawn")
 
-# ---- the real sheet, when present ------------------------------------------------------------------
-STORE = pathlib.Path(r"C:\Users\kobys\AppData\Local\Temp\claude\demo-jobs3")
-rf = STORE / "fa8627f870f1" / "p14_result.json"
-sf = STORE / "fa8627f870f1" / "footing_schedule.json"
+# ---- the real sheet ---------------------------------------------------------------------------------
+# The fixture lives in the repo (tests/fixtures/barn-s1-1.3: the dashed footing
+# family of the S1-1.3 detection, slimmed, plus its footing schedule). It used
+# to be read from %TEMP% and the check printed "skip" and PASSED whenever a temp
+# clean-up had taken it - a gate that vanished silently (audit 2026-09-26, D37).
+# A missing fixture is now a FAILURE, and the family is picked by its pen and
+# signature, not by a style id that renumbers between engine versions.
+FIX = ROOT / "tests" / "fixtures" / "barn-s1-1.3"
+rf = FIX / "p14_footing_family.json"
+sf = FIX / "footing_schedule.json"
+check(rf.exists() and sf.exists(),
+      f"Barn S1-1.3 fixture present at {FIX} (a missing fixture fails, it does not skip)")
 if rf.exists() and sf.exists():
-    res = json.loads(rf.read_text())
+    res = json.loads(rf.read_text(encoding="utf-8"))
     fpp = res["scale"]["ft_per_paper_inch"] / 72.0
-    sched = json.loads(sf.read_text())
+    sched = json.loads(sf.read_text(encoding="utf-8"))
     widths = sorted({float(v["width_ft"]) for v in sched["rows"].values() if v.get("width_ft")})
-    foot = [c for c in res["chains"] if c.get("style_id") == 11 and c.get("class") != "annotation"]
+    # the footing family: the dashed black 0.8 pt style with the d6.8 g3.3
+    # signature (66 chains); its d6.7 g47.3 sibling is the sparse read of the
+    # same pen and must not be mixed in
+    fam = [s for s in res["styles"]
+           if s["class"] == "dash1" and s["signature"].startswith("d6.8 ")]
+    check(len(fam) == 1, f"Barn S1-1.3: exactly one d6.8 dashed footing style in the fixture ({len(fam)})")
+    sid = fam[0]["style_id"] if fam else None
+    foot = [c for c in res["chains"] if c.get("style_id") == sid and c.get("class") != "annotation"]
+    check(len(foot) == 66, f"Barn S1-1.3: the footing family holds 66 chains ({len(foot)})")
     r = family_twins(foot, fpp, schedule_widths=widths)
     print(f"   Barn S1-1.3 footing family: drawn {r['drawn_ft']} ft, one run {r['counted_ft']} ft; "
           f"the client's own measurements 704.4 ft")
     check(r["kind"] == "footing", "Barn S1-1.3: the dashed family is read as footing edges")
     check(abs(r["drawn_ft"] - 1055.5) < 5, "Barn S1-1.3: as drawn is 1,055 ft (+50% over the client's 704.4)")
     check(abs(r["counted_ft"] / 704.4 - 1) < 0.12, "Barn S1-1.3: one run is within 12% of the client's 704.4 ft")
-else:
-    print("skip: the Barn structural sheet is not in the local store")
 
 if fails:
     print(f"{fails} failure(s)")

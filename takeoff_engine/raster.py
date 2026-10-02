@@ -85,7 +85,7 @@ class RasterCfg:
     # the page is treated as a colour sheet. Measured at 250dpi on the bench
     # sheets: Belle Farms 0.396 clean / 0.446 degraded (red linework),
     # C8.0 0.073 / 0.087, C4.0 0.043 / 0.042 (both greyscale, 90th-percentile
-    # saturation 0.000). Bill Dunn's two scans read 0.091 and 0.022. 0.15
+    # saturation 0.000). A client's two scans read 0.091 and 0.022. 0.15
     # sits 2.6x below the lowest colour page and 1.7x above the highest
     # greyscale one - the gap is wide, not knife-edge.
     auto_chroma_frac: float = 0.15

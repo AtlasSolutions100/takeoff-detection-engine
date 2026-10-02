@@ -1,13 +1,20 @@
-pymupdf>=1.28
-numpy>=2.0
-scipy>=1.14
-Pillow>=10.0
-opencv-contrib-python-headless>=4.10
-pytesseract>=0.3.13
-fastapi>=0.115
-uvicorn>=0.30
-python-multipart>=0.0.9
-requests>=2.31
+# Pinned 2026-10-02 to the exact versions the test suite and the sheet gate ran on
+# (core-redesign .venv). Unpinned, CI and Docker install whatever is newest on deploy
+# day. Change a pin only with the suite and the gate re-run.
+
+pymupdf==1.28.2
+numpy==2.5.3
+scipy==1.18.1
+Pillow==12.3.0
+opencv-contrib-python-headless==5.0.0.93
+pytesseract==0.3.13
+fastapi==0.141.1
+starlette==1.7.0
+pydantic==2.13.5
+uvicorn==0.54.0
+python-multipart==0.0.32
+requests==2.34.2
+shapely==2.1.2
+
 # Koby-approved 2026-08-31: GEOS geometry engine for topology cleanup,
-# snapping, polygon validity - replaces hand-rolled planar geometry.
-shapely>=2.1
+# snapping, polygon validity - replaces hand-rolled planar geometry. (shapely, above)

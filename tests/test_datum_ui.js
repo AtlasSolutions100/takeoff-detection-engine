@@ -26,7 +26,7 @@ function fnSrc(name) {
 check(!!fnSrc("stDatumBlock") && !!fnSrc("stFetchDatum") && !!fnSrc("stCivil"), "the datum block, its fetch and the conversion exist");
 check(/body\.appendChild\(stDatumBlock\(st\)\);/.test(fnSrc("renderSt")), "renderSt places the datum block after the footing chips");
 check(/fetch\(`\/api\/job\/\$\{state\.job\}\/datum`\)/.test(fnSrc("stFetchDatum")), "it fetches the document-wide datum route");
-check(/wall_in: 8, datum_ft: NaN \};/.test(js), "the panel starts with no datum");
+check(/wall_in: 8, datum_ft: NaN(,[\s\S]{0,700}?)? \};/.test(js), "the panel starts with no datum");
 check((js.match(/datum_ft: st\.datum_ft \};/g) || []).length === 2, "a picked or drawn draft copies the panel's datum");
 check(/stNumInput\(d, "datum_ft", "0\.01", upd\)/.test(js) && /stNumInput\(it, "datum_ft", "0\.01", upd\)/.test(js), "the draft and every committed row carry their own datum input");
 check(/datum_ft: Number\.isFinite\(\+d\.datum_ft\) \? \+d\.datum_ft : null \}\] \}\),/.test(js), "the server cross-check body carries it");
@@ -46,7 +46,7 @@ check(H.stCivil(86, 7732) === "7,718′" && H.stCivil(84.1667, 7732) === "7,716.
 let b = H.stDatumBlock(state.st);
 check(calls.fetched === 1 && /looking for a datum note/.test(b.children[1].textContent), "the first render asks the set for its datum notes");
 const inp = b.children[0].children[0];
-check(inp.tag === "input" && inp.placeholder === "e.g. 7732" && inp.value === "", "the input is empty until the operator types");
+check(inp.tag === "input" && inp.placeholder === "e.g. 5000" && inp.value === "", "the input is empty until the operator types");
 state.st.datum = { job: "j", loading: false, err: null, data: { notes: [
   { page: 2, kind: "datum", label: "100'-0\" equals", value_ft: 7732, text: "[100'=7732']" },
   { page: 2, kind: "level", label: "MAIN LEVEL ENTRY", value_ft: 7733.25, text: "MAIN LEVEL ENTRY:7733.25'" },

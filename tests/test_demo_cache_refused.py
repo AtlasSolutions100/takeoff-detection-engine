@@ -84,7 +84,7 @@ def shared_rows() -> dict:
 
 # ------------------------------------------------------------ ASGI driver
 async def _asgi(method, path, body: bytes, cookie, ctype, query=b""):
-    headers = [(b"host", b"testserver"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"),
                (b"content-type", ctype.encode()),
                (b"content-length", str(len(body)).encode())]
     if cookie is not None:

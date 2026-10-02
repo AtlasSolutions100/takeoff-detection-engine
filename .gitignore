@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 .DS_Store
 nohup.out
+.venv/
+# the customer roster (provision_demo.py --accounts): box-only, never committed
+provision-accounts.txt

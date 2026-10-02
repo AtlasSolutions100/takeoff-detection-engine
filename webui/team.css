@@ -1,0 +1,176 @@
+/* ==========================================================================
+   team.css - the Team page (REDESIGN). Tokens only; scoped under
+   html.shell-on like shell.css, so it applies only once the frame is up.
+   ========================================================================== */
+
+/* the view: a full page like Projects / Settings (main.tv-open) */
+html.shell-on main.tv-open { display: flex; padding: 0; }
+html.shell-on main.tv-open > :not(#teamView) { display: none !important; }
+html.shell-on main.tv-open ~ .status-bar .sb-facts { display: none; }
+html.shell-on .team-view { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-y: auto;
+  padding: 22px 28px 48px; background: var(--t-surface-1); }
+html.shell-on .team-view[hidden] { display: none !important; }
+/* the header's people icon sits beside the settings gear (same order slot;
+   DOM order puts it first) */
+html.shell-on header #teamLink { order: 11; margin-left: var(--t-sp-3); }
+html.shell-on header #teamLink + #settingsLink { margin-left: 6px; }
+
+html.shell-on .tm-crumb { font-size: var(--t-fs-xs); color: var(--t-text-faint); margin-bottom: 2px;
+  text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); }
+html.shell-on .tm-grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 14px;
+  align-items: start; }
+/* head and grid share ONE centred column, so the title sits on the cards'
+   left edge at every width (a centred grid under a left-pinned title is the
+   misalignment the Projects page had) */
+html.shell-on .team-view > .tm-head, html.shell-on .team-view > .tm-grid {
+  max-width: 1180px; margin-inline: auto; }
+html.shell-on .tm-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* members */
+html.shell-on .tm-table-wrap { overflow-x: auto; }
+html.shell-on .tm-table { width: 100%; border-collapse: collapse; font-size: var(--t-fs-sm); }
+html.shell-on .tm-table th { text-align: left; font-weight: 500; font-size: var(--t-fs-xs); color: var(--t-text-faint);
+  padding: 0 14px 9px; border-bottom: 1px solid var(--t-border-strong); white-space: nowrap;
+  text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); }
+html.shell-on .tm-table td { padding: 11px 14px; border-bottom: 1px solid var(--t-border); vertical-align: middle; }
+html.shell-on .tm-table tr:last-child td { border-bottom: 0; }
+html.shell-on .tm-table .num { text-align: right; font-family: var(--t-font-data); font-variant-numeric: var(--t-numeric); }
+html.shell-on .tm-table time { color: var(--t-text-dim); white-space: nowrap; }
+html.shell-on .tm-person { display: flex; align-items: center; gap: 12px; min-width: 0; }
+html.shell-on .tm-name { font-weight: 500; color: var(--t-text); overflow-wrap: anywhere; }
+html.shell-on .tm-av { flex: none; width: 34px; height: 34px; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; font: 600 12px/1 var(--t-font-ui); letter-spacing: .02em;
+  color: var(--t-text); background: var(--t-surface-3); border: 1px solid var(--t-border-strong); }
+html.shell-on .tm-av.pending { border-style: dashed; color: var(--t-text-dim); background: transparent; }
+html.shell-on .tm-av.sm { width: 26px; height: 26px; font-size: 10.5px; }
+html.shell-on .tm-status { display: block; font-size: var(--t-fs-xs); color: var(--t-text-faint); margin-top: 1px; }
+html.shell-on .tm-status.pending { color: var(--t-warn); }
+html.shell-on .tm-you { margin-left: 8px; font-size: 10.5px; font-weight: 600; padding: 1px 6px;
+  border-radius: var(--t-r-pill); color: var(--t-accent-hi); background: var(--t-accent-bg); vertical-align: 1px; }
+html.shell-on .tm-acts { white-space: nowrap; text-align: right; }
+html.shell-on .tm-acts .mini + .mini { margin-left: 6px; }
+html.shell-on .tm-acts .mini.danger { color: var(--t-danger); border-color: var(--t-border-strong); }
+html.shell-on .tm-acts .mini.danger[data-armed="1"] { background: var(--t-danger-deep); color: #fff; border-color: var(--t-danger-deep); }
+/* the role pill / select: an outlined pill, the mockup's shape */
+html.shell-on .tm-pill, html.shell-on .tm-role-sel { display: inline-flex; align-items: center; height: 26px;
+  padding: 0 12px; border-radius: var(--t-r-pill); border: 1px solid var(--t-border-strong);
+  font-size: var(--t-fs-xs); font-weight: 500; color: var(--t-text); background-color: transparent;
+  text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); }
+html.shell-on .tm-role-sel { padding-right: 26px; cursor: pointer; }
+html.shell-on .tm-pill.r-admin, html.shell-on .tm-role-sel.r-admin { border-color: var(--t-accent); color: var(--t-accent-hi); }
+html.shell-on .tm-pill.r-viewer, html.shell-on .tm-role-sel.r-viewer { color: var(--t-text-dim); }
+
+/* roles + workspace */
+html.shell-on .tm-dl { display: grid; grid-template-columns: auto 1fr; gap: 0; margin: 0; padding: 0 18px 12px; }
+html.shell-on .tm-dl dt, html.shell-on .tm-dl dd { padding: 11px 0; border-top: 1px solid var(--t-border); margin: 0; }
+html.shell-on .tm-dl dt:first-of-type, html.shell-on .tm-dl dt:first-of-type + dd { border-top: 0; }
+html.shell-on .tm-dl dd { color: var(--t-text-dim); font-size: var(--t-fs-sm); line-height: 1.5; }
+html.shell-on .tm-kv { display: grid; grid-template-columns: auto 1fr; gap: 0; margin: 0; padding: 0 18px 6px; }
+html.shell-on .tm-kv dt, html.shell-on .tm-kv dd { padding: 9px 0; border-top: 1px solid var(--t-border); margin: 0; font-size: var(--t-fs-sm); }
+/* no column gap: the row rules run unbroken under label and value */
+html.shell-on .tm-dl dt, html.shell-on .tm-kv dt { padding-right: 16px; }
+html.shell-on .tm-kv dt { color: var(--t-text-dim); }
+html.shell-on .tm-kv dt:first-of-type, html.shell-on .tm-kv dt:first-of-type + dd { border-top: 0; }
+html.shell-on .tm-kv dd { text-align: right; color: var(--t-text); }
+html.shell-on .tm-ws-acts { display: flex; gap: 14px; flex-wrap: wrap; padding: 6px 18px 16px; }
+html.shell-on .tm-link { font-size: var(--t-fs-sm); color: var(--t-accent-hi); text-decoration: none; }
+html.shell-on .tm-link:hover { text-decoration: underline; }
+
+/* activity */
+html.shell-on .tm-feed { list-style: none; margin: 0; padding: 0 18px 12px; }
+html.shell-on .tm-feed li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 10px 0; border-top: 1px solid var(--t-border); font-size: var(--t-fs-sm); }
+html.shell-on .tm-feed li:first-child { border-top: 0; }
+html.shell-on .tm-feed-t { color: var(--t-text-dim); min-width: 0; overflow-wrap: anywhere; }
+html.shell-on .tm-feed-t b { color: var(--t-text); font-weight: 500; }
+html.shell-on .tm-what { color: var(--t-text); }
+html.shell-on .tm-feed time { color: var(--t-text-faint); font-size: var(--t-fs-xs); white-space: nowrap; }
+
+/* empty states */
+html.shell-on .tm-empty { padding: 4px 18px 18px; color: var(--t-text-dim); font-size: var(--t-fs-sm); line-height: 1.6; }
+html.shell-on .tm-empty p { margin: 0 0 10px; }
+html.shell-on .tm-empty b { color: var(--t-text); font-weight: 600; }
+html.shell-on .tm-dim { color: var(--t-text-faint); }
+html.shell-on .tm-pad { padding: 10px 18px 16px; margin: 0; font-size: var(--t-fs-sm); }
+html.shell-on .tm-cmd { display: block; margin: 0 0 10px; padding: 10px 12px; border-radius: var(--t-r-2);
+  background: var(--t-surface-1); border: 1px solid var(--t-border); font-family: var(--t-font-data);
+  font-size: var(--t-fs-xs); color: var(--t-text); overflow-x: auto; white-space: nowrap; }
+
+/* dialog, one-time secret, toast */
+html.shell-on .tm-modal { position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 6, 10, .6); padding: 16px; }
+html.shell-on[data-theme="light"] .tm-modal { background: rgba(30, 30, 25, .35); }
+html.shell-on .tm-modal-card { width: min(460px, 100%); background: var(--t-surface-2); border: 1px solid var(--t-border-strong);
+  border-radius: var(--t-r-3); box-shadow: var(--t-el-3); padding: 18px 20px 20px; }
+html.shell-on .tm-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+html.shell-on .tm-modal-head h2 { margin: 0; font-size: var(--t-fs-md); font-weight: 600; }
+html.shell-on .tm-form { display: flex; flex-direction: column; gap: 12px; }
+html.shell-on .tm-form label { display: flex; flex-direction: column; gap: 6px; font-size: var(--t-fs-xs); color: var(--t-text-dim); }
+html.shell-on .tm-form input, html.shell-on .tm-form select { height: 36px; font-size: var(--t-fs-sm); }
+html.shell-on .tm-form p { margin: 0; font-size: var(--t-fs-xs); line-height: 1.55; }
+html.shell-on .tm-form-acts { display: flex; justify-content: flex-end; }
+html.shell-on .tm-msg { min-height: 1.2em; font-size: var(--t-fs-xs); color: var(--t-stop); }
+html.shell-on .tm-secret-row { display: flex; gap: 8px; align-items: stretch; }
+html.shell-on .tm-secret { flex: 1; display: flex; align-items: center; padding: 8px 12px; border-radius: var(--t-r-2);
+  background: var(--t-surface-1); border: 1px solid var(--t-accent); font: 500 var(--t-fs-md) var(--t-font-data);
+  letter-spacing: .04em; color: var(--t-text); user-select: all; }
+html.shell-on .tm-toast { position: fixed; right: 20px; bottom: 44px; z-index: 96; max-width: 420px;
+  padding: 10px 14px; border-radius: var(--t-r-2); background: var(--t-surface-3); border: 1px solid var(--t-border-strong);
+  box-shadow: var(--t-el-2); font-size: var(--t-fs-sm); color: var(--t-text); }
+html.shell-on .tm-toast.bad { border-color: var(--t-stop); }
+
+/* THE ACCOUNT MENU (top right). The ◐ theme button lives in it now. */
+html.shell-on header #themeBtn { display: none !important; }
+html.shell-on header .user-wrap { order: 12; position: relative; margin-left: var(--t-sp-2); display: flex; align-items: center; }
+html.shell-on .hdr-avatar { width: 32px; height: 32px; padding: 0; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; background: var(--t-surface-3); border: 1px solid var(--t-border-strong);
+  color: var(--t-text-dim); }
+html.shell-on .hdr-avatar:hover:not(:disabled), html.shell-on .hdr-avatar[aria-expanded="true"] { color: var(--t-text); border-color: var(--t-accent); }
+html.shell-on .hdr-avatar svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round; }
+html.shell-on .hdr-avatar-t { font: 600 11.5px/1 var(--t-font-ui); letter-spacing: .02em; color: var(--t-text); }
+html.shell-on .user-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 120; min-width: 250px;
+  background: var(--t-surface-3); border: 1px solid var(--t-border-strong); border-radius: var(--t-r-3);
+  box-shadow: var(--t-el-3); padding: 6px; }
+html.shell-on .user-menu[hidden] { display: none !important; }
+html.shell-on .um-who { padding: 8px 10px 10px; }
+html.shell-on .um-name { font-size: var(--t-fs-sm); font-weight: 600; color: var(--t-text); overflow-wrap: anywhere; }
+html.shell-on .um-role { font-size: var(--t-fs-xs); color: var(--t-text-faint); margin-top: 2px; }
+html.shell-on .um-sep { height: 1px; margin: 4px 2px; background: var(--t-border); }
+html.shell-on .um-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  padding: 8px 10px; border: 0; border-radius: var(--t-r-2); background: transparent; color: var(--t-text);
+  font-size: var(--t-fs-sm); text-align: left; }
+html.shell-on .um-item:hover:not(:disabled), html.shell-on .um-item:focus-visible { background: var(--t-surface-2); border: 0; outline: none; }
+html.shell-on .um-item.danger { color: var(--t-danger); }
+html.shell-on .um-hint { font-size: var(--t-fs-xs); color: var(--t-text-faint); }
+
+/* Settings: the link to this page, at the top of its nav and its Accounts group */
+/* Team is its own page, not a section below: an arrow says it leaves */
+html.shell-on .sv-nav .sv-team-link::after { content: "\2192"; margin-left: 6px; color: var(--t-text-faint); }
+html.shell-on .sv-team-note { margin-bottom: 10px; }
+
+/* a narrow window: one column (the responsive layer refines phone widths) */
+@media (max-width: 1100px) {
+  html.shell-on .tm-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* a viewer's seat: said once in the header; the two actions that could only
+   fail for it stand down (the server refuses them regardless) */
+html.shell-on header .hdr-ro { order: 11; align-self: center; margin-left: var(--t-sp-2); padding: 3px 9px;
+  border-radius: var(--t-r-pill); border: 1px solid var(--t-border-strong); background: var(--t-surface-2);
+  color: var(--t-text-dim); font-size: var(--t-fs-xs); font-weight: 600; letter-spacing: .02em; white-space: nowrap; cursor: help; }
+html.shell-on header .hdr-ro[hidden] { display: none; }
+html.shell-on body.role-viewer #uploadBtn { display: none; }
+html.shell-on body.role-viewer .projects-view:has(#pvTabDemo[aria-selected="true"]) #pvGrid .pv-card { opacity: .55; cursor: not-allowed; }
+/* UI verify 2026-10-02 (defect 10): no button a viewer's press can only see refused - the Demo plans tab (a demo
+   opens fresh: a write), Detect / Detect all (the frame's two proxies and app.js's own), Approve - and, on an empty
+   Your projects, team.js's plain note in place of "upload, drop a PDF or open a demo" */
+html.shell-on body.role-viewer :is(#pvTabDemo, #detectBtn, #detectAllBtn, #sheetsDetectAll, #plDetectAll, #approveBtn) { display: none !important; }
+html.shell-on body.role-viewer.viewer-empty #pvEmpty { display: none; }
+html.shell-on .projects-view > .pv-viewer-note { grid-area: empty; max-width: 560px; margin: 48px auto 0; padding: 18px 20px;
+  border: 1px solid var(--t-border); border-radius: var(--t-r-3); background: var(--t-surface-2); color: var(--t-text-dim);
+  font-size: var(--t-fs-sm); line-height: 1.55; }
+html.shell-on .pv-viewer-note[hidden] { display: none; }
+html.shell-on .pv-viewer-note .pv-vn-t { color: var(--t-text); font-weight: 600; margin-bottom: 6px; }
+html.shell-on .pv-viewer-note p { margin: 0 0 6px; }
+html.shell-on .pv-viewer-note p:last-child { margin-bottom: 0; }

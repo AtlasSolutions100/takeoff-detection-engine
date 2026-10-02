@@ -101,10 +101,10 @@ check(build([], new Set()).length === 0, "no styles at all adds no note");
 const compose = extract("approveNotes");
 check(!!compose, "approveNotes() exists");
 if (compose) {
-  const order = ["sgApproveNotes", "famApproveNotes", "ewApproveNotes"]
+  const order = ["sgApproveNotes", "famApproveNotes"]
     .map((f) => compose.indexOf(f));
-  check(order.every((i) => i >= 0), "approveNotes composes all three sources");
-  check(order[0] < order[1] && order[0] < order[2],
+  check(order.every((i) => i >= 0), "approveNotes composes both sources");
+  check(order[0] < order[1],
     "the holdout note is FIRST - server.py keeps only body.notes[:7]");
 }
 check(/APPROVE_NOTES_MAX\s*=\s*7/.test(SRC),

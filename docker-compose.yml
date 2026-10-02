@@ -29,6 +29,18 @@ services:
       TAKEOFF_LLM_MODEL: ${TAKEOFF_LLM_MODEL:-grok-4-fast-reasoning}
       XAI_API_KEY: ${XAI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Cut / fill (CORE 2.0). Reads are threads in this one process: measured 2026-10-02, two
+      # heavy reads at once took ~14 min each against ~3 min alone, so ONE at a time is the
+      # fastest setting; the others say "Waiting in line". Raise only with the numbers.
+      CUTFILL_MAX_READS: ${CUTFILL_MAX_READS:-1}
+      # a read past this many seconds is told to stop (the page says so; Re-read retries)
+      CUTFILL_READ_MAX_SECONDS: ${CUTFILL_READ_MAX_SECONDS:-900}
+      # a read told to stop gets this long to let go of its slot before the slot is freed anyway
+      CUTFILL_READ_STOP_GRACE_SECONDS: ${CUTFILL_READ_STOP_GRACE_SECONDS:-900}
+      # one tesseract run is killed after this many seconds
+      CUTFILL_OCR_TIMEOUT_S: ${CUTFILL_OCR_TIMEOUT_S:-300}
+      # the cut / fill store: on the jobs volume, never in the container layer
+      CUTFILL_OUT: ${CUTFILL_OUT:-/data/jobs/cutfill}
     volumes:
       # The detection cache IS the demo experience. Named volume, never a
       # bind into the image, and never anonymous - an anonymous volume is
@@ -39,7 +51,15 @@ services:
     # A single detection child can peak at multiple GB; without a ceiling a
     # runaway page can take the whole box down with it, Caddy included.
     mem_limit: ${APP_MEM_LIMIT:-24g}
+    # The box has no swap: make the ceiling explicit, and never let the app swap if swap is added.
+    memswap_limit: ${APP_MEM_LIMIT:-24g}
     shm_size: "1g"
+    # Logs are capped so they can never fill the disk (5 x 10 MB).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   caddy:
     image: caddy:2-alpine
@@ -59,6 +79,11 @@ services:
       - ./caddy-sites:/etc/caddy/conf.d:ro
       - caddy-data:/data
       - caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     networks:
       # `default` must be listed explicitly once any network is named, or the
       # app container becomes unreachable from here.

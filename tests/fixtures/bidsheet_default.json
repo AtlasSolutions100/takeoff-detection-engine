@@ -39,11 +39,17 @@
   "unit": "CY",
   "re": "^(Site Cut|Cut \\(earthwork\\))$",
   "match": [
+   "SITE CUT",
    "=CUT"
   ],
   "not": [
-   "BOULDER"
-  ]
+   "BOULDER",
+   "EXPORT",
+   "IMPORT",
+   "HAUL",
+   "NET"
+  ],
+  "note": "gross cut, bank measure - the export (net) is line 26, never added in here"
  },
  {
   "n": 5,
@@ -51,9 +57,17 @@
   "unit": "CY",
   "re": "^(Site Fill|Fill \\(earthwork\\))$",
   "match": [
+   "SITE FILL",
    "=FILL"
   ],
-  "not": []
+  "not": [
+   "EXPORT",
+   "IMPORT",
+   "HAUL",
+   "NET",
+   "BACKFILL"
+  ],
+  "note": "gross fill, bank measure - the import (net) is line 27, never added in here"
  },
  {
   "n": 6,
@@ -109,7 +123,7 @@
   "unit": "CY",
   "match": [],
   "not": [],
-  "note": "struck through on the printed sheet - his notes: \"we don't really use this much\""
+  "note": "rarely used - delete this line if you never bid it"
  },
  {
   "n": 11,
@@ -140,7 +154,7 @@
    "RESPREAD"
   ],
   "not": [],
-  "note": "6\" - 8\" on the printed sheet; 1 ft over the green areas in his notes"
+  "note": "6\" - 8\" deep; 1 ft over the landscaped (green) areas"
  },
  {
   "n": 13,
@@ -266,7 +280,7 @@
    "RADON"
   ],
   "not": [],
-  "note": "handwritten on the sheet: around the interior of the foundation to the mechanical room"
+  "note": "around the inside of the foundation to the mechanical room"
  },
  {
   "n": 21,
@@ -288,7 +302,7 @@
    "FOUNDATION",
    "FOOTER"
   ],
-  "note": "handwritten: downspout, gutter and site drains (storm)"
+  "note": "downspout, gutter and site drains (storm)"
  },
  {
   "n": 22,
@@ -301,7 +315,7 @@
    "RETAINING"
   ],
   "not": [],
-  "note": "handwritten: surface SF + add 1'"
+  "note": "wall face SF, plus 1 ft"
  },
  {
   "n": 23,
@@ -310,7 +324,9 @@
   "re": "^Silt / Construction Fence$",
   "match": [
    "SILT",
-   "FENCE",
+   "CONSTRUCTION FENCE",
+   "SEDIMENT LOG",
+   "WATTLE",
    "LIMIT OF DISTURBANCE",
    "LIMITS OF DISTURBANCE",
    "LIMIT OF WORK",
@@ -318,7 +334,7 @@
    "LOD"
   ],
   "not": [],
-  "note": "from the call: the limits-of-disturbance perimeter (the LOD line itself files here)"
+  "note": "the limits-of-disturbance perimeter (the LOD line itself files here); a plain fence is not silt fence and does not file here"
  },
  {
   "n": 24,
@@ -328,7 +344,7 @@
    "SEPTIC TANK"
   ],
   "not": [],
-  "note": "from the call: the size is read off the callout"
+  "note": "size read off the callout"
  },
  {
   "n": 25,
@@ -338,6 +354,57 @@
    "PROPANE TANK"
   ],
   "not": [],
-  "note": "from the call"
+  "note": "count of propane tanks shown on the plan"
+ },
+ {
+  "n": 26,
+  "name": "Export Cut",
+  "unit": "CY",
+  "re": "^Export (Surplus )?(Cut|Surplus)",
+  "match": [
+   "EXPORT",
+   "HAUL OFF",
+   "HAUL-OFF",
+   "HAUL"
+  ],
+  "not": [
+   "TOPSOIL"
+  ],
+  "note": "net: cut the site fill does not use, bank measure - the haul-off; not part of line 4"
+ },
+ {
+  "n": 27,
+  "name": "Import Structural",
+  "unit": "CY",
+  "re": "^Import (Structural|Fill)",
+  "match": [
+   "IMPORT"
+  ],
+  "not": [
+   "TOPSOIL"
+  ],
+  "note": "net: fill the site cut does not cover, bank measure - the structural fill brought in; not part of line 5"
+ },
+ {
+  "n": 28,
+  "name": "Export Topsoil",
+  "unit": "CY",
+  "re": "^Export Topsoil$",
+  "match": [
+   "EXPORT TOPSOIL"
+  ],
+  "not": [],
+  "note": "stripped topsoil not placed back (the priced estimate's own line)"
+ },
+ {
+  "n": 29,
+  "name": "Import Topsoil",
+  "unit": "CY",
+  "re": "^Import Topsoil$",
+  "match": [
+   "IMPORT TOPSOIL"
+  ],
+  "not": [],
+  "note": "topsoil placed beyond what was stripped"
  }
 ]

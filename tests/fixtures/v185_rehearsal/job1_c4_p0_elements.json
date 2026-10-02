@@ -1,0 +1,434 @@
+{
+ "source": "upload_f62cc07cd24c_C4.0-SITE-GRADING-PLAN-Rev.1.pdf",
+ "pageIndex": 0,
+ "imageDpi": 300,
+ "pageWidthPt": 2592.0,
+ "pageHeightPt": 1728.0,
+ "elements": [],
+ "scale": {
+  "pixelsPerUnit": 15.0,
+  "unit": "ft",
+  "name": "1\u201d = 20\u2019 (auto, ocr)"
+ },
+ "items": [
+  {
+   "label": "P2-STORM-SWALE",
+   "count": 2,
+   "trade": "Earthwork & Grading",
+   "length_ft": 493.2,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P5-GRADE-BREAK",
+   "count": 4,
+   "trade": "Earthwork & Grading",
+   "length_ft": 67.7,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Site Cut",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 646.0,
+   "unit": "CY",
+   "unit_price": 4.5,
+   "extended": 2907.0
+  },
+  {
+   "label": "Site Fill",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 749.0,
+   "unit": "CY",
+   "unit_price": 6.5,
+   "extended": 4868.5
+  },
+  {
+   "label": "Strip Topsoil",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 1999.0,
+   "unit": "CY",
+   "unit_price": 3.25,
+   "extended": 6496.75
+  },
+  {
+   "label": "Export Topsoil",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 1999.0,
+   "unit": "CY",
+   "unit_price": 8.0,
+   "extended": 15992.0
+  },
+  {
+   "label": "Zone 1 fill",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 472.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Zone 1 topsoil strip",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 231.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "O-PIPE",
+   "count": 9,
+   "trade": "Wet Utilities",
+   "length_ft": 3202.2,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P2-STORM-SUBSURFACE",
+   "count": 3,
+   "trade": "Wet Utilities",
+   "length_ft": 1298.1,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P2-WATER-LINE",
+   "count": 3,
+   "trade": "Wet Utilities",
+   "length_ft": 486.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-PRO-WATER MAIN",
+   "count": 3,
+   "trade": "Wet Utilities",
+   "length_ft": 196.4,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-PRO-SS MAIN",
+   "count": 1,
+   "trade": "Wet Utilities",
+   "length_ft": 148.3,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P2-STORM UNDERDRAIN LEFT",
+   "count": 2,
+   "trade": "Wet Utilities",
+   "length_ft": 101.8,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P2-FIREWATER-LINE",
+   "count": 1,
+   "trade": "Wet Utilities",
+   "length_ft": 74.2,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-PRO-SS MAIN [FUTURE]",
+   "count": 1,
+   "trade": "Wet Utilities",
+   "length_ft": 18.7,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-PRO-WATER HYDRANT",
+   "count": 2,
+   "trade": "Wet Utilities",
+   "length_ft": 11.3,
+   "qty": 2.0,
+   "unit": "EA",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E2-ELECTRIC-LINE-OH",
+   "count": 1,
+   "trade": "Dry Utilities",
+   "length_ft": 539.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "p2-gas-service",
+   "count": 1,
+   "trade": "Dry Utilities",
+   "length_ft": 65.9,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-CONCRETE",
+   "count": 13,
+   "trade": "Paving & Concrete",
+   "length_ft": 2687.2,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E1-CONCRETE",
+   "count": 11,
+   "trade": "Paving & Concrete",
+   "length_ft": 991.3,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-FENCE",
+   "count": 5,
+   "trade": "Fencing & Sitework",
+   "length_ft": 887.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P3-EASEMENT",
+   "count": 1,
+   "trade": "Fencing & Sitework",
+   "length_ft": 345.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Silt / Construction Fence",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Fencing & Sitework",
+   "qty": 1319.0,
+   "unit": "LF",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "O-SURFACE-EXISTING COMBINED",
+   "count": 57,
+   "trade": "General",
+   "length_ft": 5660.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "O-SURFACE-FG",
+   "count": 16,
+   "trade": "General",
+   "length_ft": 4411.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-PARKING",
+   "count": 110,
+   "trade": "General",
+   "length_ft": 3421.4,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-WALK",
+   "count": 5,
+   "trade": "General",
+   "length_ft": 3294.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-PVMT",
+   "count": 8,
+   "trade": "General",
+   "length_ft": 2875.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-GUT-FL",
+   "count": 8,
+   "trade": "General",
+   "length_ft": 2456.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "V-X-PROP-BNDY",
+   "count": 3,
+   "trade": "General",
+   "length_ft": 1551.2,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-PVMT-CL",
+   "count": 5,
+   "trade": "General",
+   "length_ft": 1501.4,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-BLDG",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 1390.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-PVMT-CORR",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 1345.3,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E3-LOTS",
+   "count": 3,
+   "trade": "General",
+   "length_ft": 1133.5,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E3-BOUNDARY",
+   "count": 2,
+   "trade": "General",
+   "length_ft": 1124.7,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E1-MISC",
+   "count": 10,
+   "trade": "General",
+   "length_ft": 1001.4,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-LSCAPE-EDGE",
+   "count": 6,
+   "trade": "General",
+   "length_ft": 979.9,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "O-SURFACE-LBL-FG",
+   "count": 6,
+   "trade": "General",
+   "length_ft": 879.7,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-CONSTRUCTION-LIMITS",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 655.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E1-BLDG",
+   "count": 3,
+   "trade": "General",
+   "length_ft": 404.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P3-BOUNDARY",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 356.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E1-PVMT",
+   "count": 3,
+   "trade": "General",
+   "length_ft": 306.1,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "E1-MISC (NO HATCH)",
+   "count": 2,
+   "trade": "General",
+   "length_ft": 171.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-BLDG-DOORS",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 37.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P1-SIGN",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 36.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "P2-APPURTENANCE",
+   "count": 2,
+   "trade": "General",
+   "length_ft": 11.3,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Clear & Grub",
+   "count": 1,
+   "length_ft": null,
+   "trade": "General",
+   "qty": 107931.0,
+   "unit": "SF",
+   "unit_price": 0.15,
+   "extended": 16189.65
+  },
+  {
+   "label": "Import Structural",
+   "count": 1,
+   "length_ft": null,
+   "trade": "General",
+   "qty": 103.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  }
+ ],
+ "overrides": [],
+ "operator_created_style_ids": [],
+ "line_colors": {
+  "by_style": {},
+  "by_chain": {}
+ },
+ "notes": []
+}

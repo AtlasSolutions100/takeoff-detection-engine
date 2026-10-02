@@ -15,6 +15,7 @@ Classes emitted:
   dash-text   dashed line interrupted by inline labels (e.g. "SD")
 """
 
+import os
 import re
 import threading
 from collections import Counter, defaultdict
@@ -184,7 +185,7 @@ def _match_links(units: list, idxs: list, gap_max: float, ang_tol_deg: float) ->
 
     tree = cKDTree(pos)
     # the query radius must reach the LONG marks' own gaps: a pool whose
-    # median is skewed by short ticks (Oncor property line: 45.7pt bars
+    # median is skewed by short ticks (substation property line: 45.7pt bars
     # among 10.3pt slash ticks -> gap_max 41.2 < the 45.7 bar gap) would
     # otherwise clip exactly the links that matter. p90 keeps dot/stipple
     # pools at their tight radius, so the pair count stays tractable.
@@ -443,10 +444,27 @@ _ANNO_LAYER = re.compile(
 
 
 def _merge_collinear_overlaps(units: list) -> list:
+    """Two passes of _collinear_pass with the angle buckets shifted by half
+    a bucket between them.
+
+    The pass buckets marks by direction in 2-degree bins, and a bin is a
+    bucket, not a proximity test (CLAUDE.md section 5): two marks 0.16
+    degrees apart that straddle a bin edge never meet. Res-A L200 page index
+    5 draws one wall face three times at -3.13, -3.07 and -2.97 degrees; the
+    -3.13 mark sat alone in its bin, stayed a separate 41 pt mark under the
+    other two, and the chainer walked out along one copy and back along the
+    other - a 22 pt spike. With the second pass every pair within a degree
+    of each other shares a bin at least once.
+    """
+    units = _collinear_pass(units, 0.0)
+    return _collinear_pass(units, 1.0)
+
+
+def _collinear_pass(units: list, ang_offset: float = 0.0) -> list:
     """Merge same-pen marks that OVERLAP or abut along one line.
 
     CAD plotters emit one dash mark as several stacked collinear pieces,
-    and draw some marks TWICE at coincident positions (Oncor p4 property
+    and draw some marks TWICE at coincident positions (substation p4 property
     line: 45.7pt longs doubled, shorts in 3-4 overlapping fragments).
     The duplicates poison greedy dash matching - a coincident twin is a
     zero-distance "touching" partner that outranks every real 9pt-gap
@@ -461,7 +479,13 @@ def _merge_collinear_overlaps(units: list) -> list:
     for i, u in enumerate(units):
         if u.closed or len(u.pts) < 2:
             continue
-        if u.length > 1.5 * DASH_MAX_LEN or u.length < 0.5:
+        # No upper length cap (was 1.5 x DASH_MAX_LEN, "marks only"): a
+        # bold main is plotted as long straight strokes stacked on one
+        # line too - water main 2's main at 435 / 269 / 165 pt, three
+        # copies each 0.5 pt apart - and a chain built from the copies
+        # end to end reads 2-3x the drawn length (audit 2026-09-26, D20).
+        # The straightness gate below still keeps polylines out.
+        if u.length < 0.5:
             continue
         v = u.pts[-1] - u.pts[0]
         n = float(np.hypot(*v))
@@ -470,7 +494,7 @@ def _merge_collinear_overlaps(units: list) -> list:
         d = v / n
         if d[0] < 0 or (d[0] == 0 and d[1] < 0):
             d = -d
-        ang = round(float(np.degrees(np.arctan2(d[1], d[0]))) / 2.0)
+        ang = round((float(np.degrees(np.arctan2(d[1], d[0]))) + ang_offset) / 2.0)
         buckets[(u.color, u.layer, ang)].append((i, d))
     dropped = set()
     for (col, lay, ang), members in buckets.items():
@@ -499,7 +523,7 @@ def _merge_collinear_overlaps(units: list) -> list:
                     placed = True
                     break
                 # EDGE PAIRS: an outlined thick mark extracts as two
-                # parallel strokes one line-width apart (Oncor property
+                # parallel strokes one line-width apart (substation property
                 # line: 45.7pt bars doubled at 3.3pt lateral). Merge only
                 # on strong span overlap so offset cadence neighbours on
                 # nearby lines never chain together laterally.
@@ -531,7 +555,7 @@ def _merge_collinear_overlaps(units: list) -> list:
             # not on one member's edge: an edge pair is two outline strokes
             # a line-width apart, and anchoring at the kept member's own
             # endpoint drew the bar half a width off and tilted by the
-            # bucket's 2-degree quantization (the Oncor PL overlay sat
+            # bucket's 2-degree quantization (the substation PL overlay sat
             # visibly off its source bars). Use the group's own mean
             # direction and the length-weighted mean lateral instead.
             wts = np.array([units[k].length for k in idxs], float)
@@ -561,6 +585,13 @@ def _merge_collinear_overlaps(units: list) -> list:
                     dropped.add(k)
     if not dropped:
         return units
+    # merged marks stay in the CALLER's list (eval uses it as the recall
+    # denominator): tag them as the twin merge tags its twins, so a
+    # contour drawn as three overlapping copies is not scored as 61 %
+    # recalled once the copies live on in one mark (Res-A L800 p11
+    # C-TOPO-MINR-P, measured 2026-09-26 before this tag)
+    for i in dropped:
+        units[i]._absorbed = True
     return [u for i, u in enumerate(units) if i not in dropped]
 
 
@@ -574,12 +605,12 @@ def _leader_annotation_units(units: list) -> set:
 
     Why unit-level, pre-chain: the post-chain demotion below caps at a
     300pt bbox to protect real linework that firms park on TEXT layers
-    (IMEG's drainage boundary on P6-TEXT-STORM). Leaders defeat that cap
+    (one engineer's drainage boundary on P6-TEXT-STORM). Leaders defeat that cap
     by CHAINING to each other and to glyphs at callout hubs until the
     tangle spans the sheet. Removing the leader units before pooling
     breaks the tangles at their connectors.
 
-    Every constant measured 2026-08-19 on GCHC North / C4.1 / C6.0
+    Every constant measured 2026-08-19 on stair set North / C4.1 / C6.0
     (leader layers) vs C8.0/C8.1 P6-TEXT-STORM (boundary linework on a
     TEXT layer, the keep case):
       - glyph unit: bbox diag <=15, len <=40, folded (len/diag >=1.25)
@@ -590,7 +621,7 @@ def _leader_annotation_units(units: list) -> set:
         Same-layer tree, NOT a cross-layer union: union costs 8/244
         false demotions on the C8.0 boundary (other layers' station
         text near the path); same-layer scores 0/244 there while
-        catching 203/205 (GCHC C-TOPO-TEXT), 405/433 + 5/5 arcs
+        catching 203/205 (stair-set C-TOPO-TEXT), 405/433 + 5/5 arcs
         (C4.1 O-SURFACE-LBL-FG), 27/33 (C6.0 PIPE-LBL).
     """
     by_layer = defaultdict(list)
@@ -601,12 +632,12 @@ def _leader_annotation_units(units: list) -> set:
             by_layer[u.layer].append(i)
         elif not leaf:
             layerless.append(i)
-    # LAYERLESS sheets (flattened CAD: Oncor) draw their callout text as
+    # LAYERLESS sheets (flattened CAD: substation) draw their callout text as
     # vector outlines with no layer names and no text layer, so the same
     # glyph-anchored leader test runs over the layerless pool as a whole.
     # The repeat guard carries the false-positive protection: a fence bar
     # or dash mark near a label has a collinear same-cadence neighbour
-    # continuing beyond it; a leader is terminal. Measured Oncor p4:
+    # continuing beyond it; a leader is terminal. Measured substation p4:
     # 8 clean leaders, 91 look-alikes rejected by continuation, 33 by
     # the both-ends test (dimension strings).
     if len(layerless) >= 50 and not by_layer:
@@ -631,7 +662,7 @@ def _leader_annotation_units(units: list) -> set:
                 # TEXT-only anchor: open folded letterform strokes. Closed
                 # shapes are feature SYMBOLS here (manhole triangles/
                 # circles sit at the pointy end of a leader and made both
-                # ends look like text - measured Oncor p4 unit 6281/6325)
+                # ends look like text - measured substation p4 unit 6281/6325)
                 ok = (diag <= 15.0 and u.length <= 40.0
                       and fold >= 1.25 and not u.closed)
             else:
@@ -647,7 +678,7 @@ def _leader_annotation_units(units: list) -> set:
             # lengths of open strokes. A fence bar / dash mark near a
             # label has PARALLEL SAME-LENGTH siblings at a regular offset
             # (its cadence row); a leader is one of a kind. This guard
-            # replaced a terminal test that drowned in Oncor's contour
+            # replaced a terminal test that drowned in the substation's contour
             # field (everything has something collinear beyond it).
             mids, mdirs, mlens = [], [], []
             for k2 in idxs:
@@ -948,7 +979,7 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
         # chain. The pickup also adds its own approach gap (c.length +=
         # u.length + d), which was never ink at all.
         #
-        # Worked case, Grey Bear sheet 6 (006^06 Fence Removal Plan p0):
+        # Worked case, a fence-removal set's sheet 6 (the removal plan, p0):
         # post-merge unit 312 is 54.02 pt, so SOLID_MIN_LEN 30 < 54.02 <=
         # DASH_MAX_LEN 80 puts it in dash_cand AND in solid_pool. It ships as
         # chain c92 and is then absorbed into chain c88, whose length reads
@@ -1001,7 +1032,7 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
         # chain, on C4.0/C8.0/C3.0/C9.0 p0 - so no correct version can leave
         # the spike row unmoved, and picking a subset that does would be
         # fitting to the gate (AGENT-BRIEF s7). Costs found, corpus-wide:
-        # SWR Barn Landscaping p5 GAINS a spike (c1187, dash2, layer
+        # Res-A landscaping p5 GAINS a spike (c1187, dash2, layer
         # CSA-SW-CB|A-WALL, backtracks at 936.66,1194.18); 7 pens
         # (colour+width+layer) lose their style row entirely, 2,921 pt, worst
         # SE-P-EOG DRVWAY 3 at 1,944.8 pt; 9 of 354 sheets move their
@@ -1016,6 +1047,7 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
 
     chains = _stitch_across_styles(chains)
     chains = _join_chain_ends(chains)
+    chains = _merge_coincident_chains(chains)
 
     if words:
         chains = _bridge_text(chains, words)
@@ -1034,7 +1066,7 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
 
     # structural grid lines (centerline dashes anchored at lettered grid
     # bubbles) are annotation, not takeoff linework. Words: a bubble whose
-    # letter is live page text (Ellis S1.02) has no vector glyph inside.
+    # letter is live page text (foundation set S1.02) has no vector glyph inside.
     _grid_annotation(chains, units, words)
 
     # exploded-glyph labels drawn inline (no text layer to bridge across)
@@ -1058,12 +1090,21 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
             # escapes the size gate below - emitting fill as solid linework
             # with wholly phantom footage.
             c.klass = "annotation"
+        elif _SYMBOL_LAYER.search(lay.split("|")[-1]):
+            # planting symbols (tree canopies, shrub stems) are COUNTED, not
+            # measured: one evergreen elevation symbol on Res-A L800 page
+            # index 24 chained into a 2,996.8 pt "solid" line of 820
+            # vertices (SURVIVORSHIP #21), and 37.9 % of that page's live
+            # span sat on planting layers. eval_layers.layer_role has called
+            # these layers symbols since 2026-08-22; the chainer now agrees.
+            c.klass = "annotation"
+            c.dash_signature = "plant symbol"
         elif any(h in lay for h in ("TEXT", "-LBL")) \
                 or lay.split("|")[-1].endswith("-CORR"):
             # leaf -CORR = corridor surface texture (the xref PREFIX X-CORR
             # carries real centerlines, hence the leaf test - same rule the
             # metric uses in eval_layers.is_textural)
-            # firms put real linework on "TEXT" layers (IMEG's drainage
+            # firms put real linework on "TEXT" layers (one engineer's drainage
             # boundaries live on P6-TEXT-STORM). A long structured chain is
             # linework wherever it lives; only short/scribbly geometry on
             # annotation layers is actually annotation.
@@ -1082,16 +1123,27 @@ def build_chains(units: list[StrokeUnit], words: list | None = None) -> list[Lin
 
     if words:
         _attach_inline_labels(chains, words)
+        _promote_gap_text_chains(chains, words)
     _assign_styles(chains)
     return chains
+
+
+# Planting / tree / shrub layers: symbols, counted not measured. Token-bounded
+# on the LEAF layer name like _ANNO_LAYER; the same tokens eval_layers scores
+# as SYMBOL_TOKENS (PLNT, TREE, SHRB). FURN and SYMB are NOT here: a furniture
+# layer holds real outlines a plan measures around, and "SYMB" layers carry
+# leaders and callouts the annotation rules already handle.
+_SYMBOL_LAYER = re.compile(
+    r"(?:^|[^A-Za-z0-9])(PLNT|TREE|TREES|SHRB|SHRUB|SHRUBS)(?=[^A-Za-z0-9]|$)",
+    re.I)
 
 
 # A layer whose name says it belongs to the sheet template rather than the
 # drawing: the border and the title-block grid.
 # TTBL and TTLB are the same abbreviation with the last two letters swapped -
 # both are in live use and neither is a construction word, so both are in.
-# Corpus reach of the TTBL token, measured 2026-08-22: one layer, Thielen's
-# `_IA-Ttbl`, 214 chains / 138,230.19 pt on 11 of the 71 Thielen sheets that
+# Corpus reach of the TTBL token, measured 2026-08-22: one layer, Res-C's
+# `_IA-Ttbl`, 214 chains / 138,230.19 pt on 11 of the 71 Res-C sheets that
 # build = 0.53% of the undemoted corpus live span. Nothing else in 341 sheets
 # matches TTBL that did not already match TTLB, and it fires zero times on the
 # 145 out-of-sample sheets. 39 of those 214 chains are also taken by
@@ -1129,7 +1181,7 @@ def _demote_sheet_furniture(chains: list) -> None:
 
     Together they are decisive: on the measured corpus every sheet-layer
     chain is at most 0.095 of the way in from an edge, and nothing inside
-    the drawing is touched. Sheets with no such layer (Belle, both Oncor)
+    the drawing is touched. Sheets with no such layer (Belle, both substation)
     are entirely unaffected.
     """
     live = [c for c in chains
@@ -1156,8 +1208,8 @@ def _demote_sheet_furniture(chains: list) -> None:
 # A drawing border is not takeoff linework, and the name+position rule above
 # cannot see the worst case: a border is a rectangle drawn AROUND the page,
 # so its centre is dead centre and the edge test never fires. Measured on
-# Barn Civil p6 the border sits on `G-ANNO-TTLB-THIN`, matches _SHEET_LAYER,
-# and survives on position alone; on 26 of the 73 Thielen sheets and on all
+# Res-A civil p6 the border sits on `G-ANNO-TTLB-THIN`, matches _SHEET_LAYER,
+# and survives on position alone; on 26 of the 73 Res-C sheets and on all
 # three Belle Farms sheets it carries NO layer name at all, so no name-based
 # rule can ever reach it.
 #
@@ -1167,11 +1219,11 @@ def _demote_sheet_furniture(chains: list) -> None:
 # "rectangle around the drawing" without reading a layer name.
 #
 # Tolerances measured over 2,008 exact axis-aligned rectangles found among
-# the live chains of 198 sheets (gate corpus + all six Beaumont client
+# the live chains of 198 sheets (gate corpus + all six residential client
 # files). 54 of them span >=0.95 of the page-geometry extent on both axes;
 # every one is a sheet border (8,650-10,368 pt, 5 or 8 points, closing gap
 # 0.000, length/perimeter 1.0000). The next-largest rectangle in the whole
-# population spans 0.6304 - an image-clip boundary on Guide Civil p0 - so
+# population spans 0.6304 - an image-clip boundary on Res-B civil p0 - so
 # the band 0.63..0.98 is empty and the threshold sits in it, biased to the
 # true-positive end so the rule under-fires rather than over-fires.
 _FRAME_PERIM_TOL = 0.002   # |path length / bbox perimeter - 1|; measured 0.0000
@@ -1184,10 +1236,10 @@ _FRAME_MAX_SHARE = 0.60    # insurance only, nothing in the corpus is near it:
                            # matters and was previously left implicit: `span`
                            # below is the live span AS THIS PASS SEES IT, i.e.
                            # after _demote_sheet_furniture, and against that
-                           # the highest measured share is 0.2577 (Barn Civil
+                           # the highest measured share is 0.2577 (Res-A civil
                            # p13). Against the undemoted live span the same
                            # sheet reads 0.1828 and the corpus maximum moves
-                           # to 0.2173 (Thielen p42); both re-measured
+                           # to 0.2173 (Res-C p42); both re-measured
                            # 2026-08-22 over the 196-sheet corpus.
                            # Without it, a lone rectangle on an otherwise
                            # empty sheet - a limits-of-work box, say - would
@@ -1204,11 +1256,11 @@ def _demote_page_frame(chains: list) -> None:
     2. that rectangle spans essentially the entire extent of everything
        drawn on the sheet, i.e. nothing lies outside it.
 
-    Evidence for (1): Thielen p18's border has bbox (-0.02, 0.03, 3023.99,
+    Evidence for (1): Res-C p18's border has bbox (-0.02, 0.03, 3023.99,
     2159.97) and path length 10,367.88 pt against 2 x (3024.00 + 2159.94) =
     10,367.88 - the page MediaBox perimeter to 0.12 pt. A real line that
     merely crosses the page meanders, so its length runs well over its bbox
-    perimeter (Thielen p18's next-longest live chain: 2,910.56 pt against a
+    perimeter (Res-C p18's next-longest live chain: 2,910.56 pt against a
     2,318.16 pt bbox perimeter, ratio 1.2555), and a line that spans the
     page in one direction only runs well under it (ratio 0.5000).
 
@@ -1220,15 +1272,15 @@ def _demote_page_frame(chains: list) -> None:
     Reach, re-measured 2026-08-22 over the 196 sheets that build, as the
     border's share of the live span this pass sees (after the name+position
     rule - the same denominator `_FRAME_MAX_SHARE` is compared against):
-    26 of 71 Thielen sheets (2.85%-21.73%), 9 of 9 Guide Civil (2.37%-16.65%,
-    including gate sheet p3 at 3.90%), 15 of 15 Barn Civil (2.24%-25.77%),
-    Barn Landscaping p0 (11.79%) and all three Belle Farms sheets
+    26 of 71 Res-C sheets (2.85%-21.73%), 9 of 9 Res-B civil (2.37%-16.65%,
+    including gate sheet p3 at 3.90%), 15 of 15 Res-A civil (2.24%-25.77%),
+    Res-A landscaping p0 (11.79%) and all three Belle Farms sheets
     (9.27%-12.47%, including gate sheet p0). 54 chains, 544,071.63 pt.
     Against the UNDEMOTED live span instead, the two ranges that move are
-    Barn Civil 2.16%-18.28% and Guide Civil 2.31%-13.56% (p3 = 3.74%).
+    Res-A civil 2.16%-18.28% and Res-B civil 2.31%-13.56% (p3 = 3.74%).
 
     One chain on each of the 54, but that does not generalise: out of sample
-    GCHC Stair Plan - 1 Page and GCHC Stair Sections - 1 Page each get TWO,
+    The stair set's plan page and its stair-sections page each get TWO,
     a thin outer trim rectangle and a heavier inner border, 7,812 + 7,740 pt
     on layer `LINES` - 25.30% of the Stair Plan's live span and 13.57% of
     the Stair Sections'. Both firings are correct.
@@ -1282,8 +1334,8 @@ def _demote_page_frame(chains: list) -> None:
 # borders are not drawn that way: they are independent strokes, and the CAD
 # exporter never joins them. This pass takes 228 chains / 443,876.08 pt on 69
 # of the same 196 sheets = 1.77% of the live span the closed-rectangle rule
-# leaves behind - including all 17 Guide Structural, 29 of 37 Barn Structural
-# and all 9 Oncor sheets, none of which the closed-rectangle rule touches at
+# leaves behind - including all 17 Res-B structural, 29 of 37 Res-A structural
+# and all 9 substation sheets, none of which the closed-rectangle rule touches at
 # all. Every one of those 228 is on a blank layer or a title-block layer.
 #
 # The safety argument that carried the closed-rectangle rule does NOT carry
@@ -1304,30 +1356,30 @@ def _demote_page_frame(chains: list) -> None:
 #                      CAD layers every member is on a title-block layer)
 #
 # Both were measured over 341 sheets: the 196-sheet corpus above plus 145
-# out-of-sample sheets (the ten loose `Plans 2` sets, all four Ryno files, the
-# GCHC stair family, the rest of Loves Lane, the window benchmark). Out of
+# out-of-sample sheets (the ten loose `Plans 2` sets, all four contractor files, the
+# stair-plan family, the rest of Loves Lane, the window benchmark). Out of
 # sample it takes a further 103 chains / 194,311.97 pt on 26 sheets. Of all
 # 331 firings, NONE is drawing content and only one group of four is even
-# debatable: Huckleberry Tuff Ranch p1 is a Montana Excavation & Utilities
+# debatable: a ranch set's p1 is an excavation contractor's
 # INVOICE bound into the plan PDF, and the four lines are the outer box of
 # that form. It is furniture by the rule's own definition and the page holds
 # no takeoff linework to lose, but it is not a drawing sheet.
 #
 # The one thing the FIRST version of clause 2 got wrong is recorded in its
 # body: filtering members before grouping let a schedule's near-edge rows
-# survive as a set of their own. It ate 8 of Gardiner p261's 13 schedule
-# rows, 5 of Million Air p130's and 5-7 rows on four pages of an estimate
+# survive as a set of their own. It ate 8 of water main 1 p261's 13 schedule
+# rows, 5 of an aviation set p130's and 5-7 rows on four pages of an estimate
 # PDF - 22,281 pt of table rules across six sheets, none of it caught in the
 # 196-sheet corpus. Grouping first and testing the whole group removes all
 # of it and changes the in-corpus result by 0.00 pt.
 #
 # The single-line case is DELIBERATELY NOT TAKEN, and the counterexamples are
 # the reason. A lone extent-edge line spanning 100% of the extent describes the
-# Barn/Guide Structural paper-trim hairline (50 sheets, 107,990 pt) - and
-# equally describes the top rule of a table on `estimate_19_for_GCHC_Stair_
-# Replacement.pdf` p1-p5, the two lines on `2025 White Sulfer Sewer Project`
+# Res-A/B structural paper-trim hairline (50 sheets, 107,990 pt) - and
+# equally describes the top rule of a table on a stair-replacement estimate
+# PDF p1-p5, the two lines on a 2025 sewer project
 # p212 (which are 100% of that sheet's live span), and the L-shaped pair on
-# Million Air p130. What separates them is paper size: the trim lines span
+# the aviation set p130. What separates them is paper size: the trim lines span
 # >= 0.98 of the PAGE rectangle and the counterexamples 0.29-0.88. build_chains
 # is never given the page rectangle, so that test cannot be written here.
 _LINE_THIN_TOL = 2.0     # pt, bbox short side. One test for two properties:
@@ -1338,22 +1390,22 @@ _LINE_SPAN_FRAC = 0.95   # frame clause: of the page-geometry extent, along the
                          # the largest reject is 0.93184 (`P6-TEXT`, Loves Lane
                          # C10.2 p0) - the band 0.932..0.967 is empty.
 _LINE_EDGE_TOL = 3.0     # pt to the extent edge. Accepts run 0.00-2.35, the
-                         # nearest rejects are 3.75 (Thielen p57 `_IA-Ttbl`,
+                         # nearest rejects are 3.75 (Res-C p57 `_IA-Ttbl`,
                          # itself a title-block line) and 4.73 out of sample.
-_LINE_SIDES = 3          # of the four extent edges. 3 not 4 because Thielen
+_LINE_SIDES = 3          # of the four extent edges. 3 not 4 because Res-C
                          # p59/p70 and the Loves Lane cover sheet draw only
                          # three. 2 is what keeps the non-drawings out: it
                          # would admit the top-and-bottom rules of the tables
-                         # on `estimate_19_for_GCHC_Stair_Replacement.pdf`
-                         # p1-p5, the two lines that are 100% of `2025 White
-                         # Sulfer Sewer Project` p212, and the L-shaped pair
-                         # on Million Air p130. All three are declined here
+                         # on a stair-replacement estimate PDF
+                         # p1-p5, the two lines that are 100% of a 2025 sewer
+                         # project's p212, and the L-shaped pair
+                         # on the aviation set p130. All three are declined here
                          # for want of a third side.
 _LINE_CORNER_TOL = 2.0   # pt of slack when testing that the corners meet
 _RULE_SPAN_FRAC = 0.90   # rule-set clause: accepts run 0.9243-1.0000
 _RULE_EDGE_FRAC = 0.15   # of the extent, perpendicular, taken over the WHOLE
                          # group. Largest accepted 0.0763; smallest rejected
-                         # 0.2364 (Gardiner p261, a 13-row schedule) - the
+                         # 0.2364 (water main 1 p261, a 13-row schedule) - the
                          # band between is empty and 0.15 sits inside it, 2.0x
                          # above the last accept and 1.6x below the first
                          # reject.
@@ -1364,9 +1416,9 @@ _LINE_MAX_SHARE = 0.60   # CUMULATIVE over everything this pass would demote,
                          # unlike _FRAME_MAX_SHARE which is per chain, because
                          # this pass takes a SET and a per-chain cap cannot
                          # see the total. It has not fired in 341 sheets; the
-                         # closest approach is Oncor p8 at 0.4965 - four
-                         # border lines on a nearly empty sheet - then Oncor
-                         # p1 0.4678 and Barn Structural p33 0.4318. Those are
+                         # closest approach is substation p8 at 0.4965 - four
+                         # border lines on a nearly empty sheet - then substation
+                         # p1 0.4678 and Res-A structural p33 0.4318. Those are
                          # correct demotions on sparse sheets, so the cap is
                          # only 1.21x above real behaviour: if a future sheet
                          # trips it, check the sheet before moving the number.
@@ -1382,32 +1434,32 @@ def _demote_frame_lines(chains: list) -> None:
        a straight axis-aligned line that spans >= 0.95 of the extent along its
        own axis and sits within 3 pt of that edge, and the corners meet: every
        vertical's span covers every horizontal's position and vice versa.
-       Measured: Oncor p0-p8 (four sides, 2,449.68 + 1,657.68 pt each, closing
-       the sheet to 0.87 pt), Thielen p59/p68-p72, and out of sample the ten
-       Hurricane Storage sheets on `ACE-24x36-CD|G-LINE-BOLD`, Belle Farms
-       Road Grading on `Title Block - 24x36|TITLE BLOCK - BORDER`, Sheridan on
+       Measured: substation p0-p8 (four sides, 2,449.68 + 1,657.68 pt each, closing
+       the sheet to 0.87 pt), Res-C p59/p68-p72, and out of sample the ten
+       storage-site sheets on `ACE-24x36-CD|G-LINE-BOLD`, Belle Farms
+       Road Grading on `Title Block - 24x36|TITLE BLOCK - BORDER`, water main 2 on
        `TITLE BLOCK_LOGO`, C2.1 Grading on a layer literally called `edge`,
-       three RC Ontario sheets and the Loves Lane cover sheet.
+       three commercial-set sheets and the Loves Lane cover sheet.
 
     2. THE RULE SET. At least three parallel straight axis-aligned lines share
        ONE span interval to within 0.5 pt, each spans >= 0.90 of the extent,
        each sits within 0.15 of the extent from an edge, and the shared
        interval is itself inset <= 0.05 of the extent at both ends. This is
-       the border side plus the title-block dividers: on Guide Structural p12
+       the border side plus the title-block dividers: on Res-B structural p12
        chains 279 (x = 72.00), 26 (x = 2736.00) and 27 (x = 2740.44) all run
        y = 71.88 -> 2087.88, i.e. exactly 1 in margins on a 42 x 30 in sheet,
-       to the hundredth of a point. 46 Barn/Guide Structural sheets, nine
-       Thielen `_IA-Ttbl` sheets, and out of sample three `Approved
-       Construction Set` sheets (four to five verticals, same interval) and
-       Sheridan p3 on `Title Block_Logo`.
+       to the hundredth of a point. 46 Res-A/B structural sheets, nine
+       Res-C `_IA-Ttbl` sheets, and out of sample three residential
+       construction-set sheets (four to five verticals, same interval) and
+       water main 2 p3 on `Title Block_Logo`.
 
        The one thing this clause has to keep is a set of long parallel lines
-       that are NOT furniture. It exists: Barn Landscaping p16 has three
+       that are NOT furniture. It exists: Res-A landscaping p16 has three
        horizontals spanning [486, 2718] on `BG-SWCR-CB-MATERIALS|BG-L-Conc`
        and `BG-ANNO-SYMB` - real concrete linework. They sit 974-1,316 pt from
        the edge (0.4573 of the extent), so `_RULE_EDGE_FRAC` declines them
-       with a 3.0x margin. Gardiner water main p261 (13 rows) and the
-       Million Air lab-figure grids (12-15 rows) are declined the same way.
+       with a 3.0x margin. Water main 1 p261 (13 rows) and the
+       the aviation set's lab-figure grids (12-15 rows) are declined the same way.
 
     Spikes cannot move: the gate counts vertices whose consecutive-segment
     unit dot product is < -0.8, and every chain this pass can touch is a
@@ -1483,9 +1535,9 @@ def _demote_frame_lines(chains: list) -> None:
     # schedule's rows share one span interval too, and if members were
     # filtered before grouping, the two or three rows that happen to fall
     # near the edge would survive as a set on their own. Measured, that is
-    # not hypothetical - it takes 8 of the 13 rows of Gardiner water main
-    # p261's schedule, 5 of Million Air p130's, and 5 to 7 rows on four
-    # pages of `estimate_19_for_GCHC_Stair_Replacement.pdf`.
+    # not hypothetical - it takes 8 of the 13 rows of water main 1
+    # p261's schedule, 5 of the aviation set p130's, and 5 to 7 rows on four
+    # pages of a stair-replacement estimate PDF.
     groups = {}
     for k in cand:
         key = (k["vert"], round(k["lo"] * 2.0) / 2.0, round(k["hi"] * 2.0) / 2.0)
@@ -1521,7 +1573,7 @@ def _grid_annotation(chains: list, units: list, words: list | None = None) -> No
 
     "Lettered" is either vector glyph ink inside the circle (Belle: the
     letters are outlined geometry) OR a short page-text word centred inside
-    it (Ellis Foundation S1.02, 2026-09-16: the 1-15 / A-O labels are live
+    it (a foundation set S1.02, 2026-09-16: the 1-15 / A-O labels are live
     text, so no vector ink sat inside any bubble, glyph_bubbles came back
     empty, the pass returned early and 13,368 pt of dashed grid axes -
     27.9% of the sheet's takeoff length - stayed in the takeoff as walls).
@@ -1602,7 +1654,7 @@ def _grid_annotation(chains: list, units: list, words: list | None = None) -> No
     # endpoints of ALL dash chains, for the terminal (through-line) test.
     # `owners` remembers whose endpoint each one is: the tested chain's OWN
     # far-side endpoint must not count as "something continues beyond" -
-    # with r = 8 pt bubbles (Ellis S1.02) it sits 2 r + 20 = 36 pt from the
+    # with r = 8 pt bubbles (foundation set S1.02) it sits 2 r + 20 = 36 pt from the
     # probe point, inside the 45 pt ball and pointing the right way, so no
     # axis was ever terminal there (Belle's r = 14 put it at 48 pt, outside).
     ends, dirs, owners = [], [], []
@@ -1629,7 +1681,7 @@ def _grid_annotation(chains: list, units: list, words: list | None = None) -> No
     axes = []
     for c in dash_chains:
         u_ = lateral_ok(c)
-        # A JOGGED AXIS: Ellis S1.02 grid 1 steps 8 pt sideways on its way
+        # A JOGGED AXIS: foundation set S1.02 grid 1 steps 8 pt sideways on its way
         # down the sheet (lateral 90th percentile 7.3 pt), so it failed the
         # 3 pt gate and 583 pt of it stayed in the takeoff as a wall. Up to
         # 12 pt is allowed ONLY when BOTH ends terminate at lettered
@@ -1882,10 +1934,16 @@ def _glyph_blobs(units: list, idxs: list) -> tuple:
 
     blobs, glyphs = [], set()
     raw = []
+    # label size caps 26 / 30 pt (were 20 / 22): a three-letter code with a
+    # wide letter - "PWS" on Res-C's water service, 66 folded strokes on
+    # the line's own style - spans 22-28 pt at the sheet's lettering and
+    # was refused as "too big" while the narrower "PES" / "PGS" beside it
+    # passed. The repeat test below (same stroke count and size, three or
+    # more times) is what keeps one-off symbols out, not the size.
     for members in groups.values():
         pts = np.vstack([units[i].pts for i in members])
         lo, hi = pts.min(axis=0), pts.max(axis=0)
-        if float(np.hypot(*(hi - lo))) > 20.0:
+        if float(np.hypot(*(hi - lo))) > 26.0:
             continue  # too big to be an inline label
         mem = list(members)
         if short_tree is not None:
@@ -1895,7 +1953,7 @@ def _glyph_blobs(units: list, idxs: list) -> tuple:
         pts = np.vstack([units[i].pts for i in mem])
         lo, hi = pts.min(axis=0), pts.max(axis=0)
         size = float(np.hypot(*(hi - lo)))
-        if size > 22.0:
+        if size > 30.0:
             continue
         raw.append((mem, (lo + hi) / 2.0, size, len(mem)))
     if len(raw) < 3:
@@ -2053,7 +2111,7 @@ def _merge_twin_strokes(units: list) -> list:
     CAD bolds a line by drawing it twice, offset by a fraction of a point
     up to ~3pt. Deduping the pair is not enough: the survivor keeps its
     hairline width, lands in the hairline weight class, and then groups,
-    chains and legend-matches with genuine hairline junk - Oncor's PROPERTY
+    chains and legend-matches with genuine hairline junk - the substation's PROPERTY
     LINE (w=0.12 drawn twice, looks heavy on paper) came through at 35%
     coverage and matched nothing in the legend this way. The pair IS one
     logical stroke whose printed footprint is stroke width + offset, so
@@ -2067,8 +2125,59 @@ def _merge_twin_strokes(units: list) -> list:
     """
     from scipy.spatial import cKDTree
 
+    # HAIRPIN strokes: a bold line plotted as ONE path that runs out and
+    # comes straight back on itself about a line-width over (water main 2's
+    # set, page index 3: a 452 pt stroke down 225 pt and back up 1 pt
+    # aside). Neither the twin pairing below (one stroke, nothing to pair)
+    # nor the collinear-overlap merge (it wants straight marks) can see it,
+    # and the chain then reads 2x the drawn length. Split it at the turn
+    # into its two arms; the pairing then collapses them like any twin.
+    # Guards: both arms >= SOLID_MIN_LEN, antiparallel, and the second arm
+    # within 1.5 pt of the first - a zigzag shading stroke turns back too,
+    # but its arms are far apart, and a real V has short arms or an angle.
+    for i in range(len(units)):
+        u = units[i]
+        p = u.pts
+        if len(p) < 3 or u.length < 2 * SOLID_MIN_LEN or u.closed:
+            continue
+        seg = np.diff(p, axis=0)
+        sl = np.hypot(seg[:, 0], seg[:, 1])
+        if (sl < 1e-9).any():
+            continue
+        dirs = seg / sl[:, None]
+        # the turn is judged between consecutive LONG segments: the plotted
+        # U has a 1 pt connector across its bottom (two 90-degree corners,
+        # no single reversal vertex), and that connector is dropped with the
+        # split
+        long_idx = [k for k in range(len(sl)) if sl[k] >= 3.0]
+        for li, lj in zip(long_idx, long_idx[1:]):
+            if float(dirs[li] @ dirs[lj]) > -0.95:
+                continue
+            a1, a2 = p[: li + 2], p[lj:]
+            l1 = float(sl[: li + 1].sum())
+            l2 = float(sl[lj:].sum())
+            if l1 < SOLID_MIN_LEN or l2 < SOLID_MIN_LEN:
+                continue
+            d1 = a1[-1] - a1[0]
+            n1 = float(np.hypot(*d1))
+            if n1 < 1e-6:
+                continue
+            d1 = d1 / n1
+            lat = np.abs((a2 - a1[0]) @ np.array([-d1[1], d1[0]]))
+            if float(lat.max()) > 1.5:
+                continue
+            twin = StrokeUnit(pts=np.array(a2, dtype=np.float64), color=u.color,
+                              width=u.width, dashes=u.dashes, closed=False,
+                              layer=u.layer, on_fill=u.on_fill)
+            u.pts = np.array(a1, dtype=np.float64)
+            u.length = l1
+            if hasattr(u, "_dir"):
+                del u._dir
+            units.append(twin)
+            break
+
     # pair on colour+layer only: CAD draws the same mark twice at DIFFERENT
-    # widths too (Oncor p4 legend: a 0.12 hairline under a 2.40 stroke), and
+    # widths too (substation p4 legend: a 0.12 hairline under a 2.40 stroke), and
     # keying on width would leave those pairs forever unmerged
     by_key = defaultdict(list)
     for i, u in enumerate(units):
@@ -2107,7 +2216,13 @@ def _merge_twin_strokes(units: list) -> list:
             # would collapse it.
             near5 = tree.query_ball_point(mids, 5.0, return_length=True)
             near0 = tree.query_ball_point(mids, 0.8, return_length=True)
-            calm = np.nonzero((near5 - near0) <= 6)[0]
+            # a LONG stroke is never a crowd member: the crowd test exists
+            # for stipple and hatch fields of tiny marks, and a 435 pt main
+            # drawn three times 0.5 pt apart (water main 2's main, 2026-09-26)
+            # was excluded from pairing only because 908 dots of its own
+            # dotted overlay sat within 5 pt of its midpoint. Long strokes
+            # are few, so pairing them costs nothing.
+            calm = np.nonzero(((near5 - near0) <= 6) | (L >= SOLID_MIN_LEN))[0]
             if len(calm) < 2:
                 break
             sub = cKDTree(mids[calm])
@@ -2158,7 +2273,7 @@ def _merge_twin_strokes(units: list) -> list:
                 if need.any():
                     # sideways-parallel neighbour count per mark, one
                     # vectorised pass (a per-pair radius search here cost
-                    # 95s on Oncor's 58k-unit sheets): a mark with >=2
+                    # 95s on the substation's 58k-unit sheets): a mark with >=2
                     # parallel neighbours offset 1.2-12pt sits in a ladder
                     # (contour field); a true twin member has exactly its
                     # partner. Trade-off vs per-pair bands: a double-drawn
@@ -2167,7 +2282,7 @@ def _merge_twin_strokes(units: list) -> list:
                     # thin (cosmetic) instead of risking eaten contours.
                     # enumerate over CALM marks only: crowded stipple
                     # dots would blow query_pairs into tens of millions
-                    # on Oncor-scale sheets, and only line-like (calm)
+                    # on substation-scale sheets, and only line-like (calm)
                     # marks constitute ladder evidence
                     fp = sub.query_pairs(12.0, output_type="ndarray")
                     cnt = np.zeros(len(L), dtype=np.int32)
@@ -2250,7 +2365,7 @@ def _merge_twin_strokes(units: list) -> list:
 
     # Pattern-filled markers: a "dot" or square marker is often plotted as
     # a dense cluster of micro-strokes (32 hatch strokes inside a 2.5pt
-    # box on Oncor p4). Those clusters chain into in-place tangles that
+    # box on substation p4). Those clusters chain into in-place tangles that
     # the junk pruner rightly kills - taking the dot, and with it the
     # dash-dot pattern it belongs to. Collapse each cluster to ONE
     # synthetic mark spanning its envelope.
@@ -2269,9 +2384,9 @@ def _merge_twin_strokes(units: list) -> list:
         # crowd guard, same reasoning as the twin-pass calm filter above: a
         # collapsible marker/dash cluster fits a 60x4.5 envelope, so no
         # member can have more than a couple hundred distinct 3pt
-        # neighbours (corpus ceiling 172, one C8 hatch dash; the Oncor p4
+        # neighbours (corpus ceiling 172, one C8 hatch dash; the substation p4
         # dot is 32 strokes). A stipple/hatch FIELD gives every mark
-        # THOUSANDS (CO3 Rifle p1: 126,677 marks averaging ~7,600 ->
+        # THOUSANDS (a grading set p1: 126,677 marks averaging ~7,600 ->
         # ~484M pairs, and query_pairs' set build holds the GIL while it
         # eats tens of GB - the page hangs unkillably). The field's giant
         # component would only die on the span gate below anyway, so count
@@ -2324,7 +2439,7 @@ def _merge_twin_strokes(units: list) -> list:
             lo, hi = pts.min(axis=0), pts.max(axis=0)
             span = hi - lo
             # a filled MARKER is dot-sized; a filled DASH is a thin
-            # elongated box (10x3 on the Oncor property line). Both are
+            # elongated box (10x3 on the substation property line). Both are
             # one printed mark. Anything thicker/larger is hatch texture
             # and stays for the normal defenses.
             if float(min(span)) > 4.5 or float(max(span)) > 60.0:
@@ -2369,7 +2484,7 @@ def _merge_twin_strokes(units: list) -> list:
             # long marks, coincident duplicates or single strokes for the
             # shorts and dots - and pairing only ever certifies part of a
             # line. A partial bump SPLITS the line into two width groups
-            # (Oncor p4's property line bumped inside the FEMA band and
+            # (substation p4's property line bumped inside the FEMA band and
             # stayed thin outside it - one line, two styles, neither
             # chained fully). So the printed weight propagates to CLOSURE:
             # bumped marks seed, any same-base-style mark within gap reach
@@ -2430,7 +2545,7 @@ def _dedup_twins(units: list, idxs: list) -> list:
     """CAD simulates bold lines by drawing each stroke TWICE, offset by a
     fraction of a point. The twin's endpoints sit ~0.5pt from the
     original's, so the matcher links twins to each other instead of
-    chaining along the line - Oncor's dash-dot-dot property ring dies this
+    chaining along the line - the substation's dash-dot-dot property ring dies this
     way. Keep one of each near-identical pair."""
     if len(idxs) < 2:
         return idxs
@@ -2483,6 +2598,18 @@ def _stitch_across_styles(chains: list) -> list:
             continue
         if _weight_class(a.width) != _weight_class(b.width):
             continue
+        # A screened half of one line is the same PEN at another shade; a
+        # different pen is a different feature. A fence-removal sheet 6: the blue
+        # wire fence (131.1 pt) and the cyan panel fence (108.0 pt) meet end
+        # to end and were stitched into one 239.1 pt chain, though the
+        # engineer prices them on two rows (300 / 370 LF). Same test for the
+        # CAD layer: a line does not change layer mid-run, and Res-A L800
+        # page index 21 had a 9,121 pt chain welded out of a paver hatch, a
+        # concrete edge and a contour (three layers, retracing itself).
+        if not _pen_kin(a.color, b.color):
+            continue
+        if a.layer and b.layer and a.layer != b.layer:
+            continue
         ok_links.append((i, iend, j, jend))
     if not ok_links:
         return chains
@@ -2494,7 +2621,7 @@ def _stitch_across_styles(chains: list) -> list:
         pts, member_lens, gaps, segs = _chain_geometry(cands, seq)
         # no real line doubles back on itself mid-run: reject assemblies
         # whose path reverses repeatedly (texture fields / leader sunbursts
-        # threading into fake cadences - the GCHC lawn spike storms)
+        # threading into fake cadences - the stair set's lawn spike storms)
         _segs = np.diff(pts, axis=0)
         _sl = np.hypot(_segs[:, 0], _segs[:, 1])
         _ks = _sl > 3.0
@@ -2605,7 +2732,7 @@ def _join_chain_ends(chains: list) -> list:
             gdir = gap / gn if gn > 1e-6 else va
             if both_solid:
                 # Contours and other solids break two ways, with opposite
-                # geometry (measured on Oncor p4):
+                # geometry (measured on substation p4):
                 #  * an inline label interrupts the line: 20-34pt of blank
                 #    paper but the line continues STRAIGHT through it
                 #  * a sharp kink sheds a tiny piece: gap under ~9pt at a
@@ -2696,7 +2823,7 @@ def _join_chain_ends(chains: list) -> list:
         pts, member_lens, gaps, segs = _chain_geometry(cands, seq)
         # no real line doubles back on itself mid-run: reject assemblies
         # whose path reverses repeatedly (texture fields / leader sunbursts
-        # threading into fake cadences - the GCHC lawn spike storms)
+        # threading into fake cadences - the stair set's lawn spike storms)
         _segs = np.diff(pts, axis=0)
         _sl = np.hypot(_segs[:, 0], _segs[:, 1])
         _ks = _sl > 3.0
@@ -2717,6 +2844,318 @@ def _join_chain_ends(chains: list) -> list:
         for k, _ in seq:
             if cands[k] is not base:
                 consumed.add(id(cands[k]))
+    return [c for c in chains if id(c) not in consumed]
+
+
+def _merge_coincident_chains(chains: list) -> list:
+    """One printed line, one chain: fold chains that lie ON each other.
+
+    Three shapes the pipeline produced two (or more) chains for, each
+    measured 2026-09-26 (audit D20 / SURVIVORSHIP #24, #25):
+
+    * COPIES - the same run drawn again by the same pen: a legend ring on
+      Res-C page 70 as two dash1 chains of identical bounding box (410.7 +
+      410.9 pt for 286 pt of ink); the double-drawn mains that survive the
+      stroke-level twin merge because their copies were split differently.
+      Both dashed or both solid, samples within 1.2 pt of each other.
+    * TWO PENS, ONE GEOMETRY - a lot line drawn by two xrefs, a solid
+      polyline on one layer over a dashed one on another (Res-C page 70:
+      4,209.6 + 4,203.8 pt, rank 1 and 2 on the sheet, 0.08 pt apart). Same
+      colour, near-total containment both ways; the dashed chain keeps the
+      printed pattern, so it is the one kept.
+    * INTERLEAVED - one line whose marks were dealt to two chains: Loves
+      Lane C8.0's storm pipe is drawn as 14 pt pieces alternating with the
+      12 pt sides of its flow arrowheads, and the matcher chained the pieces
+      (d14.4 g11.5) and the sides (d11.9 g14.4) separately, 2,747.9 ft for a
+      1,380 ft pipe. Recognised by three independent signatures that two
+      NEIGHBOURING lines (LIDAR contours 2-4 pt apart) never share at once:
+      the chains ride within 4 pt of each other, their marks abut end to
+      end (a piece's end is the next side's start), and each one's marks
+      sit in the other's gaps.
+
+    The survivor of a group is the straightest chain (least turning per
+    pt), then the longest, then the lowest id - the on-line pieces, not the
+    sawtooth of arrowhead sides. An absorbed chain's ink joins the survivor
+    only when it is interleaved (different strokes of one line); a copy's
+    ink is the same ink twice. Where an absorbed chain runs on past the
+    survivor's end, that tail is appended so no drawn length is lost.
+    Accept order is pinned (pairs and members sorted by chain id).
+    """
+    from scipy.spatial import cKDTree
+
+    # closed chains stay in: a lot boundary drawn twice is a closed ring
+    # twice (Res-C page 70). Only the tail extension below is skipped for
+    # a closed survivor, whose "ends" are the same point.
+    cands = [c for c in chains
+             if c.klass != "annotation" and len(c.pts) >= 2
+             and c.length >= 20.0]
+    if len(cands) < 2:
+        return chains
+    cands.sort(key=lambda c: c.chain_id)
+    groups = defaultdict(list)
+    pen_of: dict = {}
+    for k, c in enumerate(cands):
+        col = tuple(round(v, 2) for v in c.color) if c.color else None
+        pen_of[k] = (col, _weight_class(c.width))
+        groups[pen_of[k]].append(k)
+    # the same NAMED layer drawn by two xrefs in two pens (Res-C page 70:
+    # `Arc|LOT` as a grey hairline solid under `Survey|LOT` as a heavy black
+    # dash2, 0.08 pt apart) is one lot line. Only an identical layer LEAF
+    # under different prefixes qualifies - a different name is a different
+    # feature even when the geometry coincides (an existing pipe replaced
+    # in place is two bid items).
+    leaf_groups = defaultdict(list)
+    for k, c in enumerate(cands):
+        if c.layer and "|" in c.layer:
+            leaf_groups[c.layer.split("|")[-1].strip().upper()].append(k)
+    cross = [m for m in leaf_groups.values()
+             if len(m) >= 2 and len({cands[k].layer for k in m}) >= 2]
+
+    samp: dict = {}
+
+    def samples(k):
+        s = samp.get(k)
+        if s is None:
+            s, _ = _sample_polyline(np.asarray(cands[k].pts, dtype=float), 2.0, 200000)
+            samp[k] = s
+        return s
+
+    def mark_geometry(c):
+        """(endpoints of ink marks, midpoints of ink marks) or None."""
+        sc = c.seg_counts
+        if not sc or sum(sc) != len(c.pts) or len(sc) < 3:
+            return None
+        cum = np.cumsum([0] + list(sc))
+        ends, mids = [], []
+        for k in range(len(sc)):
+            a, b = cum[k], cum[k + 1]
+            if b - a < 1:
+                continue
+            ends.append(c.pts[a])
+            ends.append(c.pts[b - 1])
+            mids.append(c.pts[a:b].mean(axis=0))
+        return np.asarray(ends, float), np.asarray(mids, float)
+
+    def gap_mask_tree(c):
+        """samples along c at 1 pt, each tagged True when it lies on a GAP."""
+        sc = c.seg_counts
+        cum = np.cumsum([0] + list(sc))
+        pts, tags = [], []
+        for k in range(len(sc)):
+            a, b = cum[k], cum[k + 1]
+            seg = c.pts[a:b]
+            if len(seg) >= 2:
+                s, _ = _sample_polyline(np.asarray(seg, float), 1.0, 50000)
+                pts.append(s)
+                tags.append(np.zeros(len(s), dtype=bool))
+            if k + 1 < len(sc):
+                g0, g1 = c.pts[b - 1], c.pts[cum[k + 1]] if cum[k + 1] < len(c.pts) else c.pts[b - 1]
+                gl = float(np.hypot(*(g1 - g0)))
+                n = max(2, int(gl))
+                gs = np.linspace(0, 1, n)[1:-1]
+                if len(gs):
+                    pts.append(g0 + gs[:, None] * (g1 - g0))
+                    tags.append(np.ones(len(gs), dtype=bool))
+        if not pts:
+            return None
+        P = np.vstack(pts)
+        return cKDTree(P), np.concatenate(tags)
+
+    def turning(c):
+        p = np.asarray(c.pts, float)
+        if len(p) < 3:
+            return 0.0
+        d = np.diff(p, axis=0)
+        n = np.hypot(d[:, 0], d[:, 1])
+        ok = n > 0.5
+        d = d[ok] / n[ok, None]
+        if len(d) < 2:
+            return 0.0
+        ang = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", d[:-1], d[1:]), -1, 1)))
+        return float(ang.sum() / max(c.length, 1.0))
+
+    # accepted pairs, both directions: k -> [(partner, tier)]. NOT a
+    # union-find: a fold is pairwise. The profile grid on a client's storm
+    # sheet is drawn as stacked boxes that SHARE an edge, and the shared
+    # edge is drawn once more as its own rule; the rule lies on both boxes,
+    # but the boxes do not lie on each other - a transitive union folded
+    # the second box into the first and lost its far edge (2,232 pt of
+    # printed grid, Res-A C4.0 page index 9, C-ROAD-PROF-VIEW coverage 99.4
+    # -> 87.6 %). A chain is consumed by the one chain it lies on and never
+    # through a third.
+    partners: dict = defaultdict(list)
+    for members, cross_pen in ([(m, False) for m in groups.values()]
+                               + [(m, True) for m in cross]):
+        if len(members) < 2:
+            continue
+        pts, owner = [], []
+        for k in members:
+            s = samples(k)
+            if len(s):
+                pts.append(s)
+                owner.append(np.full(len(s), k))
+        if len(pts) < 2:
+            continue
+        P = np.vstack(pts)
+        O = np.concatenate(owner)
+        tree = cKDTree(P)
+        # coverage of chain k by chain j within 1.2 and 4.0 pt: nearest 16
+        # samples of each sample of k, owners other than k
+        cov12 = defaultdict(float)
+        cov4 = defaultdict(float)
+        for k in members:
+            s = samples(k)
+            if not len(s):
+                continue
+            d, ix = tree.query(s, k=16, distance_upper_bound=4.0)
+            valid = np.isfinite(d)
+            own = np.where(valid, O[np.minimum(ix, len(O) - 1)], -1)
+            other = valid & (own != k)
+            for r, dmax in ((cov12, 1.2), (cov4, 4.0)):
+                hit = other & (d <= dmax)
+                # per (k, j): number of k's samples with at least one j sample
+                js = np.unique(own[hit])
+                for j in js:
+                    n_hit = int(((own == j) & hit).any(axis=1).sum())
+                    r[(k, int(j))] = n_hit / len(s)
+        pairs = sorted({(min(k, j), max(k, j)) for (k, j) in cov4})
+        for k, j in pairs:
+            a, b = cands[k], cands[j]
+            # A = longer, B = shorter
+            if a.length >= b.length:
+                A, B, ka, kb = a, b, k, j
+            else:
+                A, B, ka, kb = b, a, j, k
+            share = B.length / max(A.length, 1e-6)
+            c12_b = cov12.get((kb, ka), 0.0)
+            c12_a = cov12.get((ka, kb), 0.0)
+            c4_b = cov4.get((kb, ka), 0.0)
+            c4_a = cov4.get((ka, kb), 0.0)
+            a_dash = A.klass.startswith("dash")
+            b_dash = B.klass.startswith("dash")
+            same_layer = (A.layer == B.layer)
+            accepted = None
+            if cross_pen:
+                # the two-xref case only: the same layer LEAF under two
+                # prefixes, near-total containment both ways
+                if not same_layer and c12_b >= 0.95 and c12_a >= 0.95 * share - 0.03:
+                    accepted = "xref"
+            elif same_layer and a_dash == b_dash \
+                    and c12_b >= 0.9 and c12_a >= 0.9 * share - 0.05:
+                # copies: one pen, one layer. Two LAYERS of one pen on one
+                # geometry are two features the estimator prices apart (an
+                # edge of gravel on a driveway edge, a corridor line on a
+                # pavement edge) and stay two chains - folding them cost
+                # P1-CONCRETE a quarter of its own coverage on Loves Lane
+                accepted = "copy"
+            if accepted is None and not cross_pen and a_dash and b_dash and same_layer \
+                    and c4_b >= 0.85 and c4_a >= 0.85 * share - 0.05:
+                ga, gb = mark_geometry(A), mark_geometry(B)
+                if ga is not None and gb is not None:
+                    ea, ma = ga
+                    eb, mb = gb
+                    et = cKDTree(ea)
+                    de, _ = et.query(eb, distance_upper_bound=2.0)
+                    abut = float(np.isfinite(de).mean())
+                    gm = gap_mask_tree(A)
+                    if abut >= 0.6 and gm is not None:
+                        gt, tags = gm
+                        dm, im = gt.query(mb, distance_upper_bound=4.0)
+                        okm = np.isfinite(dm)
+                        if okm.any():
+                            in_gap = float(tags[im[okm]].mean())
+                            if in_gap >= 0.7:
+                                accepted = "interleaved"
+            if accepted is None:
+                continue
+            partners[ka].append((kb, accepted))
+            partners[kb].append((ka, accepted))
+
+    if not partners:
+        return chains
+
+    # The survivor of a pair is the chain that covers the most line, so the
+    # fold loses nothing the tails below cannot restore; a dashed chain that
+    # is nearly as long (>= 90 %) outranks a solid copy, because it carries
+    # the printed pattern (the two-xref lot line: solid 4,209.6 over dash2
+    # 4,203.8 keeps the dash2). Chains are visited in that priority order
+    # and each consumes every accepted partner still standing; a consumed
+    # chain consumes nothing, which is what keeps a fold pairwise.
+    def _pri(k):
+        c = cands[k]
+        return c.length * (1.0 if c.klass.startswith("dash") else 0.9)
+
+    order = sorted(partners, key=lambda k: (-_pri(k), cands[k].chain_id))
+    consumed_into: dict = {}
+    for k in order:
+        if k in consumed_into:
+            continue
+        for j, tier in sorted(partners[k], key=lambda t: (-_pri(t[0]), cands[t[0]].chain_id)):
+            if j == k or j in consumed_into:
+                continue
+            consumed_into[j] = (k, tier)
+    folds: dict = defaultdict(list)
+    for j, (k, tier) in consumed_into.items():
+        folds[k].append((j, tier))
+    consumed: set = set()
+    _dbg = bool(os.environ.get("CHAIN_DEBUG_COINCIDENT"))
+    for base_k in sorted(folds, key=lambda k: cands[k].chain_id):
+        base = cands[base_k]
+        members = sorted(folds[base_k], key=lambda t: cands[t[0]].chain_id)
+        if _dbg:
+            import sys as _sys
+            print(f"coincident: base c{base.chain_id} {base.klass} len {base.length:.1f} layer {base.layer!r}",
+                  file=_sys.stderr)
+            for k, tier in members:
+                c = cands[k]
+                print(f"coincident:   <- c{c.chain_id} {c.klass} len {c.length:.1f} layer {c.layer!r} tier {tier}",
+                      file=_sys.stderr)
+        bs = samples(base_k)
+        btree = cKDTree(bs) if len(bs) else None
+        for k, tier in members:
+            m = cands[k]
+            if tier == "interleaved":
+                base.ink = (base.ink or 0.0) + (m.ink or 0.0)
+                base.n_dashes += m.n_dashes
+            base.label_texts.extend(m.label_texts)
+            base.inline_labels.extend(m.inline_labels)
+            # m's own gap_pt / pickup_pt stay with m: its length is not
+            # added to the survivor, so neither is what that length held
+            # a tail that runs on past the survivor's end is drawn length
+            # the survivor does not have: append it
+            if btree is not None and not _chain_closed(base):
+                ms = samples(k)
+                if len(ms):
+                    tol = 4.0 if tier == "interleaved" else 1.2
+                    d, _ = btree.query(ms, distance_upper_bound=tol)
+                    far = ~np.isfinite(d)
+                    for end in (0, 1):
+                        seq = far if end == 0 else far[::-1]
+                        n_far = int(np.argmin(seq)) if not seq.all() else len(seq)
+                        if n_far * 2.0 < 8.0:
+                            continue
+                        tail_pts = ms[:n_far] if end == 0 else ms[len(ms) - n_far:]
+                        inner = tail_pts[-1] if end == 0 else tail_pts[0]
+                        d0 = float(np.hypot(*(inner - base.pts[0])))
+                        d1 = float(np.hypot(*(inner - base.pts[-1])))
+                        if min(d0, d1) > 8.0:
+                            continue
+                        tail_len = float(np.hypot(*np.diff(tail_pts, axis=0).T).sum())
+                        # tail_pts run outer->inner for end 0, inner->outer
+                        # for end 1; the joined polyline must pass the inner
+                        # point right beside the survivor's endpoint
+                        if d0 <= d1:
+                            base.pts = np.vstack([tail_pts if end == 0 else tail_pts[::-1], base.pts])
+                        else:
+                            base.pts = np.vstack([base.pts, tail_pts if end == 1 else tail_pts[::-1]])
+                        base.length += tail_len
+                        base.gap_pt += min(d0, d1)
+                        if base.ink:
+                            base.ink += tail_len * min(1.0, (m.ink or m.length) / max(m.length, 1e-6))
+                        base.seg_counts = None
+            consumed.add(id(m))
+    if not consumed:
+        return chains
     return [c for c in chains if id(c) not in consumed]
 
 
@@ -2837,7 +3276,7 @@ def _compound_merge(group_lcs, solid_pool, stray_dots, units, color, width,
                 continue
             # no real line doubles back on itself mid-run: reject assemblies
             # whose path reverses repeatedly (texture fields / leader sunbursts
-            # threading into fake cadences - the GCHC lawn spike storms)
+            # threading into fake cadences - the stair set's lawn spike storms)
             _segs = np.diff(pts, axis=0)
             _sl = np.hypot(_segs[:, 0], _segs[:, 1])
             _ks = _sl > 3.0
@@ -2864,7 +3303,7 @@ def _compound_merge(group_lcs, solid_pool, stray_dots, units, color, width,
             # length includes its gaps, and summing member lengths as ink
             # made a d10 g30 pattern claim 96% ink - which poisoned the
             # phantom-span audit's expectation (the long-standing 'ink
-            # accounting' flags on Oncor p2/p4)
+            # accounting' flags on substation p2/p4)
             true_ink = 0.0
             for k, _ in seq:
                 kind, payload = meta[k]
@@ -2961,7 +3400,7 @@ def _pickup_end_marks(group_chains: list, units: list, dash_cand: list,
                     if d > reach:
                         continue
                     # never pick a mark the chain would DOUBLE BACK onto:
-                    # at a callout-leader hub (GCHC lawns) free marks
+                    # at a callout-leader hub (stair-set lawns) free marks
                     # radiate BEHIND the chain end - often TOUCHING it at
                     # the hub - and picking one stitches a spike onto a
                     # clean run. Judge by where the mark's FAR end takes
@@ -3177,18 +3616,42 @@ def _sample_polyline(pts: np.ndarray, step: float, max_n: int):
 
 
 def _classify_native(dash_str: str) -> tuple:
-    """Classify a PDF dash array like '[ 6 3 1 3 ] 0'."""
+    """Classify a PDF dash array like '[ 6 3 1 3 ] 0'.
+
+    The array alternates dash, gap, dash, gap (an odd-length array repeats
+    itself, so `[3] 0` is 3 on / 3 off). Two readings the old code got wrong,
+    measured 2026-09-26 on the held-out native-dash corpus (followup-8):
+      * a dash-dot array `[12.9 0.9 0 0.9]` is a long dash plus a DOT (the
+        zero-length dash prints as a dot under a round cap) - two mark
+        classes, so dash2 per this module's docstring; it was dash1 because
+        the dot's zero length was dropped before counting.
+      * a zero-GAP array `[11.9 0 0 0]` prints solid; it was dash1.
+    Dashes cluster into classes the way _cluster_1d does for measured
+    cadences: a dot is its own class, dashes within 15 % are one class.
+    """
     try:
         inner = dash_str[dash_str.index("[") + 1 : dash_str.index("]")]
         arr = [float(x) for x in inner.split()]
     except (ValueError, IndexError):
         arr = []
+    sig = "native " + " ".join(f"{x:g}" for x in arr)
     if not arr:
         return "solid", "solid"
+    if len(arr) % 2:
+        arr = arr + arr
+    gaps = arr[1::2]
+    if all(g <= 0.01 for g in gaps):
+        return "solid", sig
     dashes = arr[0::2]
-    n = len(set(round(d, 1) for d in dashes if d > 0))
-    klass = {0: "dash1", 1: "dash1", 2: "dash2"}.get(n, "dash3")
-    sig = "native " + " ".join(f"{x:g}" for x in arr)
+    reps: list = []
+    for d in dashes:
+        dot = d < 0.5
+        if not any((dot and r < 0.5)
+                   or (not dot and r >= 0.5 and abs(d - r) <= 0.15 * max(d, r))
+                   for r in reps):
+            reps.append(d)
+    n = len(reps)
+    klass = "dash1" if n <= 1 else "dash2" if n == 2 else "dash3"
     return klass, sig
 
 
@@ -3212,7 +3675,7 @@ def _chain_closed(c) -> bool:
 # records one when it welds two dashed chains across a label, which needs both
 # sides to exist as separate chains and to agree on colour, width and layer. A
 # label sitting mid-chain, or on a solid line, records nothing. Measured on
-# Oncor engine page index 3 = printed sheet C-04: the page prints 43 inline
+# Substation engine page index 3 = printed sheet C-04: the page prints 43 inline
 # utility codes (OHE x18, EX-FO x9, EX-W x9, EX-SS x6, EX-CABLE x1), ALL 43
 # lie within 15 pt of a detected chain vertex - 19 of them within 6 pt - and
 # _bridge_text captured real words on just 4 chains.
@@ -3224,7 +3687,7 @@ def _chain_closed(c) -> bool:
 _INLINE_CODE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$")
 
 # Utility size-tokens: 8"SS, E8"W, 12"SD, 6"FM. The letter-first rule above
-# rejects them twice over (leading digit, inch tick), yet on the Kayden
+# rejects them twice over (leading digit, inch tick), yet on the 48-page civil
 # family they are the ONLY thing that separates the proposed sewer main
 # from every other heavy solid - the legend itself prints the token inside
 # the sample line, and the layer table is one flattened xref. Optional
@@ -3271,6 +3734,81 @@ def _attach_inline_labels(chains: list, words: list, radius: float = 15.0) -> No
         if not np.isfinite(d):
             continue
         owner[int(i)].inline_labels.append(t)
+
+
+def _promote_gap_text_chains(chains: list, words: list) -> None:
+    """A dashed line whose GAPS carry a repeating text-layer code is a
+    dash-text line, even when the chainer already ran straight through the
+    gaps.
+
+    _bridge_text only sees a code when the line is BROKEN at it (two chains
+    to weld across the word). On sheets where the code sits in an ordinary
+    gap - the gap between dashes is the same 25-35 pt whether or not a word
+    is printed in it - the matcher links straight through, the chain is
+    never broken, and the class stays dash1. Measured 2026-09-26 on the
+    held-out set (followup-8 skeptic): 0 % of the text-span utility lines on
+    a Res-B civil sheet and a park sewer sheet were classed dash-text
+    against 98 % on the tuning set, whose codes are exploded glyphs.
+
+    The rule is _bridge_text's, applied to the gaps: the word must sit ON
+    the line inside a gap (within 4 pt laterally, between the two dashes),
+    the same short code must recur at least three times, and no more than
+    400 pt apart. Codes only (the inline-label shape): a footing line that
+    merely passes a column of "FTG" callouts beside it never qualifies,
+    because those words are not in its gaps.
+    """
+    from scipy.spatial import cKDTree
+
+    cand = []
+    for w in words:
+        t = str(w[4]).strip().upper()
+        if not (1 <= len(t) <= 8) or not (_INLINE_CODE.match(t)
+                                          or _INLINE_SIZE.match(t)):
+            continue
+        if t != str(w[4]).strip():
+            continue
+        cand.append((t, (float(w[0]) + float(w[2])) / 2.0,
+                     (float(w[1]) + float(w[3])) / 2.0,
+                     max(float(w[3]) - float(w[1]), 4.0)))
+    if len(cand) < 3:
+        return
+    wc = np.array([[x, y] for _, x, y, _ in cand])
+    tree = cKDTree(wc)
+    for c in chains:
+        if not c.klass.startswith("dash") or c.klass == "dash-text" \
+                or c.length < 60.0 or not c.seg_counts:
+            continue
+        sc = c.seg_counts
+        if sum(sc) != len(c.pts) or len(sc) < 4:
+            continue
+        cum = np.cumsum(sc)
+        toks: Counter = Counter()
+        for k in range(len(sc) - 1):
+            a = c.pts[cum[k] - 1]
+            b = c.pts[cum[k]]
+            g = b - a
+            L = float(np.hypot(*g))
+            if L < 4.0:
+                continue
+            best = None
+            for wi in tree.query_ball_point((a + b) / 2.0, L / 2.0 + 6.0):
+                v = wc[wi] - a
+                t = float(v @ g) / (L * L)
+                if t < -0.05 or t > 1.05:
+                    continue
+                off = abs(float(g[0] * v[1] - g[1] * v[0])) / L
+                if off > 4.0:
+                    continue
+                if best is None or off < best[0]:
+                    best = (off, cand[wi][0])
+            if best is not None:
+                toks[best[1]] += 1
+        if not toks:
+            continue
+        top, n_top = toks.most_common(1)[0]
+        if n_top >= 3 and len(top) <= 4 and c.length / n_top <= 400.0:
+            c.klass = "dash-text"
+            c.label_texts = list(c.label_texts) + [top] * n_top
 
 
 def _bridge_text(chains: list, words: list) -> list:
@@ -3456,7 +3994,7 @@ def _assign_styles(chains: list) -> None:
     Cadence is CLUSTERED within a family rather than quantised onto fixed
     bins. Fixed bins put a boundary somewhere, and one physical line whose
     measured dash wanders across it lands in two different checkboxes: the
-    Oncor property boundary split at 42.3pt vs 44.0pt, so ticking "the
+    substation property boundary split at 42.3pt vs 44.0pt, so ticking "the
     property line" silently dropped a third of the ring, including a whole
     corner. Same colour, weight, layer and class plus a dash pattern within
     ~35% is one line as far as the estimator is concerned.
@@ -3509,6 +4047,35 @@ def _assign_styles(chains: list) -> None:
                 next_id += 1
             cs[0].style_id = misc_ids[mkey]
             cs[0].dash_signature = "misc"
+
+
+def _pen_kin(a, b) -> bool:
+    """Are two stroke colours the SAME PEN at possibly different shades?
+
+    True for near-identical colours, for any two achromatic colours (black
+    and its screened greys), and for two chromatic colours of one hue (blue
+    and a faded blue). False across hues (blue vs cyan) and between a
+    chromatic pen and an achromatic one. Used where a pass may join chains
+    of different styles: a shade change is one line plotted at two
+    opacities, a pen change is two features.
+    """
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    if max(abs(x - y) for x, y in zip(a, b)) <= 0.2:
+        return True
+    sa = max(a) - min(a)
+    sb = max(b) - min(b)
+    if sa <= 0.12 and sb <= 0.12:
+        return True  # black / grey family
+    if sa <= 0.12 or sb <= 0.12:
+        return False
+    import colorsys
+    ha = colorsys.rgb_to_hsv(*[max(0.0, min(1.0, v)) for v in a[:3]])[0]
+    hb = colorsys.rgb_to_hsv(*[max(0.0, min(1.0, v)) for v in b[:3]])[0]
+    dh = abs(ha - hb)
+    return min(dh, 1.0 - dh) <= 0.06
 
 
 def _weight_class(w: float) -> int:

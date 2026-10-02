@@ -188,14 +188,18 @@ _sig = inspect.signature(server.report_pdf)
 ok("request" in _sig.parameters,
    "report_pdf takes the Request it needs to resolve WHOSE company to stamp")
 _src = inspect.getsource(server.report_pdf)
-ok("_letterhead" in _src and _src.count("_letterhead(tp)") == 6,
+# 7 since the CET port (2026-09-25): the flooring rooms page carries the letterhead too
+ok("_letterhead" in _src and _src.count("_letterhead(tp)") == 7,
    "report_pdf: every text page it creates gets the letterhead call "
    "(4, plus the bid-sheet page and its overflow since 2026-09-16)",
    _src.count("_letterhead(tp)"))
 ok("if not _bco:" in _src,
    "report_pdf: a blank company draws nothing at all")
-ok("BETA_LONG" in _src,
-   "report_pdf: the beta band is still stamped - branding did not displace it")
+ok("BETA_LONG" in _src and _src.rindex("BETA_LONG") > _src.rindex("_letterhead(tp)"),
+   "report_pdf: the accuracy band is still stamped, after the letterhead - branding did not displace it")
+ok(server.BETA_LONG.startswith("Automated detection can be wrong. Double-check every quantity "
+                               "against the drawings.") and "BETA" not in server.BETA_LONG,
+   "report_pdf: the band says the owner's flag line, not BETA", server.BETA_LONG)
 
 # ---------------------------------------------------------------- report
 fails = [c for c in CHECKS if not c[0]]

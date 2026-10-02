@@ -1,65 +1,96 @@
 /* Terms and Privacy. Deliberately its own stylesheet rather than style.css:
    both pages must render for somebody who is NOT signed in, so every asset
-   they need is on the public allowlist, and that list should stay short. */
-:root {
-  --bg: #131511; --panel: #1b1e1a; --line: #2b2f2a; --text: #e8ebe6;
-  --dim: #98a29a; --accent: #3fa873; --chip: #262a32;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-}
+   they need is on the public allowlist, and that list should stay short.
+   Colours and type come from tokens.css (also public), so the pages follow
+   the palette a signed-in user picked; every var() carries the steel value
+   as its fallback in case tokens.css does not load. */
 * { box-sizing: border-box; }
+html { background: var(--t-surface-1, #0a1219); color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
 body {
-  margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0;
+  background: var(--t-surface-1, #0a1219); color: var(--t-text, #e6eaee);
+  font: 16px/1.65 var(--t-font-ui, system-ui, -apple-system, "Segoe UI", sans-serif);
+  -webkit-font-smoothing: antialiased;
 }
 .beta {
   position: sticky; top: 0; z-index: 5;
-  padding: 5px 12px; font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  color: #3b2600; background: #f5d67e; border-bottom: 1px solid #c9a227;
+  padding: 8px 16px; font-size: 12.5px; font-weight: 500; line-height: 1.45;
+  color: var(--t-warn, #e5a33d); background: var(--t-surface-1, #0a1219);
+  border-bottom: 1px solid var(--t-border, #1d2a36);
   text-align: center;
 }
 main {
-  /* ~70 characters of running text; a contract nobody can read is not a
+  /* ~75 characters of running text; a contract nobody can read is not a
      contract that protects anybody */
-  max-width: 47rem; margin: 0 auto; padding: 28px 20px 64px;
+  max-width: 42rem; margin: 0 auto; padding: 32px 20px 72px;
 }
 .back {
-  display: inline-block; font-size: 12.5px; color: var(--dim);
-  text-decoration: none; margin-bottom: 20px;
+  display: inline-block; padding: 6px 0; margin-bottom: 24px;
+  font-size: 14px; color: var(--t-text-dim, #9aa8b6); text-decoration: none;
 }
-.back:hover { color: var(--text); }
-h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.01em; }
+.back:hover { color: var(--t-text, #e6eaee); }
+h1 {
+  font-size: 32px; line-height: 1.15; font-weight: 600; letter-spacing: -.012em;
+  margin: 0 0 8px;
+}
 h2 {
-  font-size: 15px; margin: 30px 0 8px; padding-top: 14px;
-  border-top: 1px solid var(--line);
+  font-size: 18px; line-height: 1.35; font-weight: 600;
+  margin: 40px 0 10px; padding-top: 20px;
+  border-top: 1px solid var(--t-border, #1d2a36);
 }
-.meta { color: var(--dim); font-size: 12.5px; margin: 0 0 22px; }
-p { margin: 0 0 12px; }
-ul { margin: 0 0 12px; padding-left: 20px; }
-li { margin-bottom: 5px; }
-a { color: var(--accent); }
-strong { color: #fff; }
+.meta { color: var(--t-text-dim, #9aa8b6); font-size: 14px; margin: 0 0 24px; }
+p { margin: 0 0 14px; }
+ul { margin: 0 0 14px; padding-left: 22px; }
+li { margin-bottom: 6px; }
+li::marker { color: var(--t-text-faint, #7d8b99); }
+a {
+  color: var(--t-text, #e6eaee);
+  text-decoration: underline; text-decoration-thickness: 1px;
+  text-underline-offset: 3px; text-decoration-color: var(--t-accent-hi, #5ccb92);
+  overflow-wrap: anywhere;
+}
+a:hover { color: var(--t-accent-hi, #5ccb92); }
+a:focus-visible {
+  outline: 2px solid var(--t-accent-hi, #5ccb92); outline-offset: 2px; border-radius: 2px;
+}
+strong { color: var(--t-text, #e6eaee); font-weight: 600; }
+/* the "read this if nothing else" box: a plain panel, no side stripe */
 .callout {
-  background: var(--chip); border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px; padding: 14px 16px; margin: 20px 0 8px;
-  font-size: 14.5px;
+  margin: 24px 0 8px; padding: 18px 20px;
+  background: var(--t-surface-2, #0f1922);
+  border: 1px solid var(--t-border-strong, #2b3c4b);
+  border-radius: var(--t-r-3, 7px);
+  font-size: 15.5px;
 }
 /* The bits a human still has to fill in. Loud on purpose - shipping a policy
    with [STATE] left in it is worse than having no policy. */
 .fill {
-  background: #5a3a00; color: #ffd98a; padding: 0 5px; border-radius: 3px;
-  font-family: var(--mono); font-size: .88em;
+  padding: 0 5px; border-radius: var(--t-r-1, 3px);
+  background: var(--t-warn-bg, rgba(229,163,61,.14)); color: var(--t-warn, #e5a33d);
+  font-family: var(--t-font-data, ui-monospace, Consolas, monospace); font-size: .88em;
 }
-table { border-collapse: collapse; width: 100%; margin: 6px 0 14px; font-size: 14px; }
-th, td { text-align: left; vertical-align: top; padding: 7px 10px; border: 1px solid var(--line); }
-th { background: var(--chip); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
-.foot { margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--dim); }
+table {
+  border-collapse: collapse; width: 100%; margin: 8px 0 16px;
+  font-size: 15px; line-height: 1.55;
+}
+th, td {
+  text-align: left; vertical-align: top; padding: 9px 12px;
+  border: 1px solid var(--t-border, #1d2a36);
+}
+th {
+  background: var(--t-surface-2, #0f1922);
+  font-size: 13px; font-weight: 600; color: var(--t-text-dim, #9aa8b6);
+  text-transform: var(--t-title-case, none); letter-spacing: var(--t-title-track, 0);
+}
+.foot {
+  margin-top: 40px; padding-top: 16px;
+  border-top: 1px solid var(--t-border, #1d2a36);
+  font-size: 14px; color: var(--t-text-dim, #9aa8b6);
+}
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f2f3ef; --panel: #fff; --line: #e0e3dc; --text: #28292c;
-    --dim: #6f7873; --accent: #1f5c3e; --chip: #eef0ea;
-  }
-  strong { color: #000; }
-  .fill { background: #ffe9b0; color: #6b4a00; }
+@media (max-width: 520px) {
+  main { padding: 24px 16px 56px; }
+  h1 { font-size: 27px; }
+  th, td { padding: 8px 9px; }
 }

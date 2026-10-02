@@ -24,7 +24,7 @@ WHOSE NAME. Two scopes, because this box is not single-tenant:
                     laptop / single-password case), and as the seed for an
                     account that has never saved one.
 
-Stamping one install-wide name would put Bill's company on Jeff's takeoff
+Stamping one install-wide name would put one client's company on another's takeoff
 the first time two clients share a server, which is exactly the leak
 users.py exists to prevent.
 

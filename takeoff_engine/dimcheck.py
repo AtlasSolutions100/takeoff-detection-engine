@@ -269,7 +269,7 @@ def _pick_reading(readings: list, best_med: float, tol: float) -> dict:
     so a word can be a member through a reading that is outside `tol` of
     the MEDIAN (seed 10, tol 10 percent, members 9 / 9 / 11: median 9,
     window 8.1-9.9, the word whose only reading is 11 has nothing inside
-    it). Barn Structural S1-1.3 hit exactly that and /scale/dimensions
+    it). A structural S1-1.3 hit exactly that and /scale/dimensions
     answered 500 (2026-09-16). Never empty, so never a crash: the nearest
     reading is still this word's best claim.
     """
@@ -309,7 +309,7 @@ def dimension_check(words: list, chains: list, ft_per_paper_inch: float | None) 
             skipped_bar += 1
             continue
         # A DIMENSION STANDS ALONE. "70' x 9' PULLTHROUGH STALL" and "5'
-        # SIDEWALK" (Barn C3.0) carry feet in a sentence, over no line of
+        # SIDEWALK" (Res-A C3.0) carry feet in a sentence, over no line of
         # their own - the first pairing pass took the 70' over a nearby
         # 134 pt run and reported 37 ft/in against a 20 ft/in sheet. A
         # word with another word beside it on its own row is a label.

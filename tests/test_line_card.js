@@ -100,8 +100,10 @@ check(/\.line-card \.lc-x \{ pointer-events: auto/.test(cssSrc),
 // =========================================================================
 // 2. IT IS ON THE LINE - the geometry, run
 // =========================================================================
+const helperSrc = (name) => { const a = src.indexOf("function " + name + "("); let d = 0; for (let j = src.indexOf("{", a); j < src.length; j++) { if (src[j] === "{") d++; else if (src[j] === "}" && --d === 0) return src.slice(a, j + 1); } return ""; };
 const G = new Function("state", "IMG_DPI", "$", "chainById",
-  block + " return { lineCardAnchor, lineCardPlace, lineCardHide };");
+  // the anchor goes through the view's quarter turn (rotate a sideways page): the three helpers
+  ["viewRot", "imgToRot", "rotToImg"].map(helperSrc).join("\n") + "\n" + block + " return { lineCardAnchor, lineCardPlace, lineCardHide };");
 
 function harness(view, stageW, stageH, cardW, cardH) {
   const el = { hidden: false, offsetWidth: cardW, offsetHeight: cardH,
@@ -219,12 +221,8 @@ check(/hidden by the eye/.test(block),
   "...and says when the family is hidden but still counted (FAM-VIS)");
 check(/wzActive\(\) && wf < 1/.test(block),
   "with a work area drawn, it says how much of the line actually counts");
-// the elevation goes through the SHARED helpers, so the two surfaces cannot
-// word provenance differently - and so the branch reworking the bar's chip
-// carries this one with it instead of leaving it behind
-for (const fn of ["elevProvenance(", "elevChipTag(", "elevProvenanceDetail("])
-  check(block.includes(fn), `the elevation is rendered through ${fn}`);
-check(!/state\.elev\.byChain\s*=/.test(block), "...and never writes the elevation store");
+// (the elevation chip left with the earthwork reader on 2026-09-25: the
+// cut / fill engine shows every line's height on its own page)
 
 // =========================================================================
 // 5. THE SELECTION BAR IS UNTOUCHED
@@ -244,8 +242,7 @@ check(!/state\.elev\.byChain\s*=/.test(block), "...and never writes the elevatio
   // happened to be. What this section still has to prove is what it always
   // meant - the line card did not disturb the bar, and did not take the
   // elevation with it.
-  check(/renderSelElev\(ch, ev, prov\)/.test(body),
-    "and still hands the elevation to its own readout, with the reading");
+  // (the elevation readout itself left with the earthwork reader, 2026-09-25)
   check(!/elc\.className = "sel-el"/.test(body),
     "while no longer building the chip on the bar itself (that moved)");
 }

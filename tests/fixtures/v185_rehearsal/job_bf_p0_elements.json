@@ -1,0 +1,176 @@
+{
+ "source": "upload_875d2aac86c5_Belle Farms Upper Parcel ROAD GRADING 1 of 2.pdf",
+ "pageIndex": 0,
+ "imageDpi": 300,
+ "pageWidthPt": 2592.0,
+ "pageHeightPt": 1728.0,
+ "elements": [],
+ "scale": {
+  "pixelsPerUnit": 5.0,
+  "unit": "ft",
+  "name": "1\" = 60' (auto, text)"
+ },
+ "items": [
+  {
+   "label": "C-TOPO-833-01 LIDAR EG BTIM",
+   "count": 324,
+   "trade": "Earthwork & Grading",
+   "length_ft": 173295.1,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-TOPO-FEAT",
+   "count": 11,
+   "trade": "Earthwork & Grading",
+   "length_ft": 5575.7,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "V-TOPO-EOG",
+   "count": 2,
+   "trade": "Earthwork & Grading",
+   "length_ft": 506.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Site Cut",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 4992.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Site Fill",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 22291.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Strip Topsoil",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 2257.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Export Topsoil",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 2257.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "Import Structural",
+   "count": 1,
+   "length_ft": null,
+   "trade": "Earthwork & Grading",
+   "qty": 17299.0,
+   "unit": "CY",
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-ROAD-CNTR-N",
+   "count": 2,
+   "trade": "Paving & Concrete",
+   "length_ft": 3497.1,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "V-EASE-ROAD",
+   "count": 2,
+   "trade": "Paving & Concrete",
+   "length_ft": 493.3,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "V-ROAD-CNTR",
+   "count": 1,
+   "trade": "Paving & Concrete",
+   "length_ft": 252.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "solid solid",
+   "count": 39,
+   "trade": "General",
+   "length_ft": 45272.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "0",
+   "count": 49,
+   "trade": "General",
+   "length_ft": 11339.2,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "dash1 d36.0 g18.0",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 1558.0,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "V-BND-PLINE",
+   "count": 2,
+   "trade": "General",
+   "length_ft": 772.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "dash1 d14.4 g7.9",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 693.6,
+   "unit_price": null,
+   "extended": null
+  },
+  {
+   "label": "C-CL",
+   "count": 1,
+   "trade": "General",
+   "length_ft": 68.4,
+   "unit_price": null,
+   "extended": null
+  }
+ ],
+ "overrides": [],
+ "operator_created_style_ids": [],
+ "line_colors": {
+  "by_style": {},
+  "by_chain": {}
+ },
+ "notes": [
+  "5 line families (10.7k LF) are NOT counted in these quantities. The drafter's own CAD layer names identify them as drawing furniture - text, dimensions, leaders, title block - and the reviewer left them out.",
+  "EARTHWORK (Site Cut / Site Fill / Import Structural / strip and place rows) is a contour interpolation, not a measured volume.",
+  "Surface between the contours: smooth surface, clamped to the contours \u2014 auto (measured label sparsity). clamped smooth: labels are sparse - the median gap between the two nearest contour elevations is 5.0 ft, at or over the 2.0 ft threshold, so a linear TIN would terrace the ground between them. Measured label sparsity 5 ft.",
+  "Of 20 contour elevations accepted here, all are printed on the sheet. Of the 20 printed, 20 are the nearest number BESIDE the line, not a label in its break.",
+  "CONTOUR COVERAGE. The engine found 334 contour lines. 20 carry an elevation (11% of that contour footage); 314 carry none at all and hold no height in any surface. Of all 654 lines of plan linework here (342,115 pt) the elevated share is 8% - the floor, since 320 lines sit outside the contour count. 20 of the 334 are assigned to a surface and behind this volume. The other 314 are not in it.",
+  "Interpolated from 16 existing and 4 proposed contours over 121,860 SF. That region is NOT the graded area: it is where the two convex hulls of the assigned contours overlap. Set a limit of work to bound it.",
+  "No typical cross-section, no subgrade depth, no shrink/swell factor. On the one job scored against a real bid, cut and fill were each off by up to about 40%, in opposite directions."
+ ]
+}

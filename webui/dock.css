@@ -1,0 +1,232 @@
+/* ==========================================================================
+   dock.css - the two rails as a dock (REDESIGN 2026-09-26; dock.js).
+   Scoped under html.shell-on like shell.css. The dock containers are
+   #sideScroll (left) and #railScroll (right); the selectors name them by id
+   on purpose - shell.css sizes #railScroll's children by id, and an id
+   selector only yields to another id selector.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- DOCKS */
+/* the rail itself scrolls only when its panels' minimums outgrow it (two
+   filling panels on a short screen) - nothing is ever cut off unreachable */
+html.shell-on :is(#sideScroll, #railScroll).dk-dock {
+  display: flex; flex-direction: column; gap: var(--t-gap); min-height: 0;
+  overflow-x: hidden; overflow-y: auto; padding: 0 2px 0 0; position: relative;
+  scrollbar-width: thin; scrollbar-color: var(--t-border-strong) transparent; }
+
+/* a PANEL takes its own height up to a share of the rail, and scrolls
+   inside itself; the fill panel takes what is left */
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel {
+  flex: 0 1 auto; min-height: 40px; max-height: 42%; order: 0;
+  display: flex; flex-direction: column; position: relative; overflow: hidden; }
+/* squeezed, an open panel still shows its head and a line or two (dock.js
+   sets each panel's real floor inline: all of a short content, 132px of a
+   long one) */
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel:not(:has(> .closed)) { min-height: 72px; }
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel > * { flex: none; }
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel > .dk-body {
+  flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; overflow-x: hidden; }
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel.dk-nobody { overflow-y: auto; }
+/* the filling panel starts from 40% of its rail and takes any slack; when
+   the rail is short it gives way too, but never below 150px, and never
+   before the others are down to their floors (dock.js) - so nothing is
+   pushed out of sight */
+html.shell-on :is(#sideScroll, #railScroll):not(.dk-scroll) > .dk-panel.dk-fill {
+  flex: 1 1 40%; min-height: 150px; max-height: none; }
+/* with a tool panel open beside it, the fill takes what is left, no floor */
+html.shell-on :is(#sideScroll, #railScroll).dk-tool-open:not(.dk-scroll) > .dk-panel.dk-fill { flex: 1 1 0; }
+/* short and load-bearing - the scale, the module's own tools - never squeezed */
+html.shell-on :is(#sideScroll, #railScroll) > :is(#cardSheet, #modCard) { flex-shrink: 0; max-height: none; }
+html.shell-on :is(#sideScroll, #railScroll):not(.dk-scroll) > .dk-panel[data-dk-size] {
+  flex: 0 0 var(--dk-size); max-height: none; }
+html.shell-on :is(#sideScroll, #railScroll).dk-scroll > .dk-panel { flex: 0 0 auto; max-height: none; }
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel.dk-closed { display: none !important; }
+/* the tool panels open beside the module card, wherever it lives */
+html.shell-on :is(#sideScroll, #railScroll) > #toolDock {
+  flex: 0 1 auto; min-height: 0; max-height: 68%; overflow-y: auto; order: 0; }
+html.shell-on :is(#sideScroll, #railScroll).dk-scroll > #toolDock { flex: 0 0 auto; max-height: none; }
+html.shell-on #toolDock:not(:has(> .ew-panel:not([hidden]))) { display: none; }
+/* the Sheets card's old cap (a share of the column) is the dock's now */
+html.shell-on :is(#sideScroll, #railScroll) > #sheetsCard { max-height: 42%; }
+/* a card whose only showing children are the dock's own furniture is
+   empty: style.css's `.card:not(:has(> *:not([hidden])))` rule, taught to
+   look past them */
+html.shell-on :is(#sideScroll, #railScroll) > .card:not(:has(> *:not([hidden]):not(.dk-aux))) { display: none; }
+/* the Sheet card: a real head now (it was a ::before), shown with the card */
+html.shell-on #cardSheet::before { content: none; display: none; }
+html.shell-on #cardSheet:not(:has(> #sheetHead:not([hidden]))) { display: none; }
+html.shell-on #cardSheet > .dk-head h2 { margin: 0; }
+
+/* FOLDED TO FIT (dock.js fit, UI verify 2026-10-02 defect 6): a rail that cannot hold every panel and the filling
+   panel's first rows folds panels to their head - never squeezed to a sliver. The head says it is folded (the
+   chevron points right) and opens with one click; the head's extras (the Bid view's note and switch, the Sheets
+   card's Detect all) wait inside. The Sheet card's head keeps the scale (data-dk-sum). */
+html.shell-on :is(#sideScroll, #railScroll) > .dk-panel.dk-auto { flex: 0 0 auto !important; min-height: 0 !important; max-height: none; }
+html.shell-on .dk-panel.dk-auto > :not(.rc-head, .side-head, .takeoff-head, .dk-head) { display: none !important; }
+html.shell-on .dk-panel.dk-auto > :is(.rc-head, .side-head, .takeoff-head, .dk-head) { border-bottom: 0; flex-wrap: nowrap;
+  min-height: 30px; padding-top: 5px; padding-bottom: 5px; }
+html.shell-on .dk-panel.dk-auto .dk-ctl { top: 50%; transform: translateY(-50%); }
+html.shell-on .dk-panel.dk-auto > :is(.rc-head, .side-head, .takeoff-head, .dk-head) > :not(h2, .dk-ctl, .dk-grip) { display: none !important; }
+html.shell-on .dk-panel.dk-auto > * > h2 { cursor: pointer; display: inline-flex; align-items: center; }
+html.shell-on .dk-panel.dk-auto > :is(.side-head, .takeoff-head) > h2::before { transform: rotate(-45deg); }
+html.shell-on .dk-panel.dk-auto > :is(.rc-head, .dk-head) > h2::before { content: ""; flex: none; width: 6px; height: 6px;
+  margin: 0 9px 2px 1px; border-right: 1.5px solid var(--t-text-faint); border-bottom: 1.5px solid var(--t-text-faint);
+  transform: rotate(-45deg); }
+html.shell-on .dk-panel.dk-auto > * > h2[data-dk-sum]::after { content: attr(data-dk-sum); margin-left: 10px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; font: 400 var(--t-fs-xs)/1.3 var(--t-font-data); letter-spacing: 0;
+  text-transform: none; color: var(--t-text-dim); }
+html.shell-on .dk-panel.dk-auto > * > h2:hover { color: var(--t-accent-hi); }
+
+/* LINE STYLES' FILTERS: folded behind one head button on a short rail (dock.js compact); the button shows only
+   where the rail needs it */
+/* the Line styles head: its title beside the panel controls, its buttons on a whole line of their own under it (the
+   60px kept for the controls on every line wrapped "walls once" onto two) */
+html.shell-on .dk-panel > #stylesHead { padding-right: 12px; padding-top: 7px; padding-bottom: 6px; }
+html.shell-on .dk-panel > #stylesHead > h2 { flex: 1 0 calc(100% - 52px); max-width: calc(100% - 52px); }
+html.shell-on .dk-panel > #stylesHead .side-actions .mini { white-space: nowrap; }
+/* ...and that line wraps: scope, all, none, the fork's undo / engine's picks (92c8e40) and Filters are ~370px in a
+   310px panel - "engine's picks" and Filters ran past its edge, cut and out of a click's reach */
+html.shell-on .dk-panel > #stylesHead > .side-actions { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+html.shell-on #dkFiltersBtn { display: none; }
+html.shell-on #cardStyles.dk-filt-avail #dkFiltersBtn { display: inline-flex; align-items: center; }
+html.shell-on #cardStyles.dk-filters-open #dkFiltersBtn { background: var(--t-accent-bg); border-color: var(--t-accent);
+  color: var(--t-accent-hi); }
+html.shell-on #cardStyles.dk-compact > :is(#colorChips, #scopeBar) { display: none !important; }
+html.shell-on #cardStyles.dk-compact .marks-key { display: none; }
+/* ...and on that short rail the rows and the folded heads sit a little closer (1280 x 720: six rows, not five) */
+html.shell-on #cardStyles.dk-compact .style-row { padding-top: 2px; padding-bottom: 2px; }
+html.shell-on .dk-dock:has(> .dk-panel.dk-auto) { gap: 6px; }
+
+/* an empty left rail steps out of the way - the sheet takes the width */
+html.shell-on main.dk-left-empty > #sidebar { display: none; }
+
+/* --------------------------------------------------------------- HEADS */
+/* the head keeps its own contents and may wrap them; its top-right corner
+   is reserved for the panel's options and close */
+html.shell-on .dk-panel > :is(.rc-head, .side-head, .takeoff-head, .dk-head) {
+  position: relative; flex-wrap: wrap; row-gap: 6px; padding-right: 60px; min-height: 42px; }
+html.shell-on .dk-panel > :is(.rc-head, .side-head, .takeoff-head, .dk-head) .side-actions .mini {
+  height: 24px; padding: 0 7px; }
+html.shell-on .dk-panel > :is(.rc-head, .side-head, .takeoff-head, .dk-head) > h2 {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: auto; }
+html.shell-on .dk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 11px 12px 9px 14px; border-bottom: 1px solid var(--t-border); }
+html.shell-on .dk-head h2 { font-family: var(--t-font-ui); font-size: var(--t-title-size); font-weight: var(--t-title-weight);
+  text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); color: var(--t-text); line-height: 1.3; }
+/* the head is the handle: grab anywhere that is not a control */
+html.shell-on body:not(.dk-locked) .dk-panel > .dk-handle { cursor: grab; }
+html.shell-on body:not(.dk-locked) .dk-panel > .dk-handle :is(button, a, input, select, label, textarea) { cursor: pointer; }
+/* the grip: drawn in the head's left padding, shown on hover */
+html.shell-on .dk-grip { position: absolute; left: 3px; top: 50%; width: 8px; height: 14px; margin-top: -7px;
+  opacity: 0; transition: opacity .12s ease; pointer-events: none;
+  background-image: radial-gradient(circle, var(--t-text-faint) 1.1px, transparent 1.3px);
+  background-size: 4px 4px; background-position: 0 0; }
+html.shell-on body:not(.dk-locked) .dk-panel:hover > .dk-handle > .dk-grip,
+html.shell-on .dk-panel:focus-within > .dk-handle > .dk-grip { opacity: 1; }
+
+/* the head's own controls: options and close */
+html.shell-on .dk-ctl { position: absolute; top: 9px; right: 8px; display: inline-flex; align-items: center; gap: 2px; }
+html.shell-on .dk-b { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+  padding: 0; border: 1px solid transparent; border-radius: var(--t-r-1); background: transparent;
+  color: var(--t-text-faint); cursor: pointer; flex: none; }
+html.shell-on .dk-b svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+html.shell-on .dk-b:hover:not(:disabled) { background: var(--t-surface-3); border-color: var(--t-border-strong); color: var(--t-text); }
+html.shell-on .dk-b:focus-visible { outline: 2px solid var(--t-accent-hi); outline-offset: 1px; }
+html.shell-on .dk-b[aria-expanded="true"] { background: var(--t-surface-3); color: var(--t-text); }
+
+/* the bottom edge sets a panel's height (not on a filling panel) */
+html.shell-on .dk-rs { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize;
+  z-index: 2; touch-action: none; }
+html.shell-on .dk-rs::after { content: ""; position: absolute; left: 50%; bottom: 2px; width: 34px; height: 3px;
+  margin-left: -17px; border-radius: 2px; background: var(--t-border-strong); opacity: 0; transition: opacity .12s ease; }
+html.shell-on .dk-panel:hover > .dk-rs::after, html.shell-on .dk-rs.on::after { opacity: 1; }
+html.shell-on :is(#sideScroll, #railScroll):not(.dk-scroll) > .dk-panel.dk-fill > .dk-rs,
+html.shell-on body.dk-locked .dk-rs { display: none; }
+
+/* the right rail's width grip, on its inner edge */
+html.shell-on #railR { position: relative; }
+html.shell-on .dk-rgrip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; z-index: 5;
+  touch-action: none; }
+html.shell-on .dk-rgrip::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: transparent; transition: background .12s ease; }
+html.shell-on .dk-rgrip:hover::before, html.shell-on .dk-rgrip.on::before { background: var(--t-accent); }
+html.shell-on .dk-rgrip:focus-visible::before { background: var(--t-accent-hi); }
+html.shell-on .dk-rgrip:focus-visible { outline: none; }
+
+/* ---------------------------------------------------------- DRAGGING */
+html.shell-on body.dk-dragging, html.shell-on body.dk-dragging * { cursor: grabbing !important; user-select: none; }
+html.shell-on body.dk-resizing, html.shell-on body.dk-resizing * { user-select: none; }
+html.shell-on .dk-panel.dk-lifted { opacity: .38; }
+html.shell-on .dk-ghost { position: fixed; z-index: 400; pointer-events: none; padding: 7px 12px;
+  border-radius: var(--t-r-2); background: var(--t-surface-3); border: 1px solid var(--t-accent);
+  color: var(--t-text); font-size: var(--t-fs-sm); font-weight: 600; box-shadow: var(--t-el-3);
+  transform: translate(12px, 10px); white-space: nowrap; }
+html.shell-on .dk-line { position: fixed; z-index: 399; height: 3px; border-radius: 2px; pointer-events: none;
+  background: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
+html.shell-on .dk-line[hidden] { display: none; }
+/* while a panel is in the air, an empty rail is still a place to drop it */
+html.shell-on body.dk-dragging main.dk-left-empty > #sidebar { display: flex; }
+html.shell-on body.dk-dragging .dk-dock.dk-empty { min-height: 180px; border: 2px dashed var(--t-border-strong);
+  border-radius: var(--t-r-3); }
+html.shell-on body.dk-dragging .dk-dock.dk-empty::after { content: "Drop a panel here"; margin: auto;
+  color: var(--t-text-faint); font-size: var(--t-fs-sm); }
+html.shell-on body.dk-dragging .dk-dock.dk-target { background: color-mix(in srgb, var(--t-accent) 5%, transparent);
+  border-radius: var(--t-r-3); }
+
+/* the legend over the sheet moves by its head (dock.js) */
+html.shell-on body:not(.dk-locked) .mini-legend .ml-head.dk-float-handle { cursor: grab; }
+html.shell-on body:not(.dk-locked) .mini-legend .ml-head.dk-float-handle button { cursor: pointer; }
+
+/* ------------------------------------------------------------- MENUS */
+html.shell-on .dk-menu { position: fixed; z-index: 410; min-width: 220px; max-width: 300px; padding: 6px;
+  background: var(--t-surface-2); border: 1px solid var(--t-border-strong); border-radius: var(--t-r-3);
+  box-shadow: var(--t-el-3); font-size: var(--t-fs-sm); }
+html.shell-on .dk-menu[hidden] { display: none; }
+html.shell-on .dk-mt { padding: 7px 10px 5px; font-size: var(--t-fs-xs); color: var(--t-text-faint);
+  text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); }
+html.shell-on .dk-mi { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0;
+  border-radius: var(--t-r-2); background: transparent; color: var(--t-text); font: inherit; text-align: left; cursor: pointer; }
+html.shell-on .dk-mi:hover:not(:disabled), html.shell-on .dk-mi:focus-visible { background: var(--t-surface-3); outline: none; }
+html.shell-on .dk-mi:disabled { color: var(--t-text-faint); cursor: default; }
+html.shell-on .dk-mi .dk-ck { width: 16px; height: 16px; flex: none; border: 1.5px solid var(--t-border-strong);
+  border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
+html.shell-on .dk-mi[aria-checked="true"] .dk-ck { background: var(--t-accent); border-color: var(--t-accent); }
+html.shell-on .dk-mi[aria-checked="true"] .dk-ck::after { content: ""; width: 8px; height: 4px; margin-top: -2px;
+  border-left: 2px solid var(--t-accent-ink); border-bottom: 2px solid var(--t-accent-ink); transform: rotate(-45deg); }
+html.shell-on .dk-mi .dk-side { margin-left: auto; font-family: var(--t-font-data); font-size: var(--t-fs-xs);
+  color: var(--t-text-faint); }
+html.shell-on .dk-mi .dk-where { margin-left: auto; font-size: var(--t-fs-xs); color: var(--t-text-faint); }
+html.shell-on .dk-msep { height: 1px; margin: 5px 4px; background: var(--t-border); }
+html.shell-on .dk-mnote { padding: 6px 10px 4px; font-size: var(--t-fs-xs); line-height: 1.5; color: var(--t-text-dim); }
+
+/* the ribbon's Panels button (the far end); words go first when narrow */
+html.shell-on #ribbon #dkPanelsBtn { margin-left: auto; }
+@container (max-width: 1215px) { html.shell-on #ribbon #dkPanelsBtn > span { display: none; } }
+html.shell-on #dkPanelsBtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round; }
+
+/* ------------------------------------------------------------- TOAST */
+html.shell-on .dk-toast { position: fixed; left: 50%; bottom: 44px; z-index: 420; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px; padding: 9px 10px 9px 14px; border-radius: var(--t-r-3);
+  background: var(--t-surface-3); border: 1px solid var(--t-border-strong); color: var(--t-text);
+  font-size: var(--t-fs-sm); box-shadow: var(--t-el-3); }
+html.shell-on .dk-toast[hidden] { display: none; }
+html.shell-on .dk-toast button { height: 28px; padding: 0 10px; border-radius: var(--t-r-2);
+  border: 1px solid var(--t-border-strong); background: var(--t-surface-2); color: var(--t-text); font-weight: 500; }
+html.shell-on .dk-toast button:hover { border-color: var(--t-accent); }
+
+/* ------------------------------------------------ SETTINGS: WORKSPACE */
+html.shell-on .sv-ws-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 16px 12px; }
+html.shell-on .sv-ws-row label { font-size: var(--t-fs-sm); color: var(--t-text); }
+html.shell-on .sv-ws-row select { min-width: 200px; }
+
+/* touch and small screens: panels keep their places, dragging is a desk thing */
+@media (hover: none), (max-width: 1023.98px) {
+  html.shell-on .dk-grip, html.shell-on .dk-rs, html.shell-on .dk-rgrip { display: none; }
+  html.shell-on .mini-legend .ml-head.dk-float-handle { cursor: auto; }
+  html.shell-on body:not(.dk-locked) .dk-panel > .dk-handle { cursor: auto; }
+}
+@media print {
+  html.shell-on .dk-ctl, html.shell-on .dk-rs, html.shell-on .dk-rgrip, html.shell-on .dk-grip { display: none !important; }
+}

@@ -1,0 +1,88 @@
+/* ==========================================================================
+   cutfill-skin.css - the round-3 look for the EMBEDDED cut / fill engine
+   (REDESIGN 2026-09-26). Injected by the host (shell.js) into the
+   same-origin iframe; webui/cutfill/* are the cut/fill session's files and
+   are not edited here, so their next copy drops in unchanged.
+
+   The embed already links the host's tokens.css, so the palette arrives
+   through the legacy names (--bg --panel --line --accent ...). This sheet
+   adds the frame language: the engine's chrome on the same ground as the
+   host's rails, hairline cards, sentence-case titles in the palette's own
+   voice, the accent only on the active tab and the primary action, mono
+   numbers. Data colours (existing / proposed / no-height, cut red / fill
+   blue) and everything that floats over the sheet (paper-white) are the
+   engine's and are left exactly as they are.
+   ========================================================================== */
+
+body.embed { background: var(--t-surface-1); color: var(--t-text); font-family: var(--t-font-ui); }
+
+/* the engine's header: one row like the host's ribbon */
+body.embed #top { height: var(--t-ribbon-h, 46px); background: var(--t-surface-1);
+  border-bottom: 1px solid var(--t-border); gap: 10px; padding: 0 10px; }
+body.embed main { height: calc(100% - var(--t-ribbon-h, 46px));
+  grid-template-columns: 320px minmax(0, 1fr) 320px; gap: 8px; padding: 8px;
+  background: var(--t-surface-1); }
+body.embed aside { padding: 0; gap: 8px; background: transparent; }
+body.embed #left, body.embed #right { border: 0; }
+body.embed #stage { border: 1px solid var(--t-border); border-radius: var(--t-r-3, 7px);
+  background: var(--t-stage); }
+
+/* controls */
+body.embed button { border-color: var(--t-border-strong); background: var(--t-surface-2);
+  border-radius: var(--t-r-2, 5px); }
+body.embed button:hover:not(:disabled) { border-color: var(--t-text-faint); background: var(--t-surface-3); }
+body.embed button.primary { background: var(--t-accent); border-color: var(--t-accent);
+  color: var(--t-accent-ink); font-weight: 600; }
+body.embed button.primary:hover:not(:disabled) { filter: brightness(1.07); background: var(--t-accent); }
+body.embed button.active { background: var(--t-accent-bg); border-color: var(--t-accent); color: var(--t-accent-hi); }
+body.embed input, body.embed select { background: var(--t-field); border-color: var(--t-border-strong);
+  border-radius: var(--t-r-2, 5px); color: var(--t-text); }
+body.embed input:focus-visible, body.embed select:focus-visible { outline: none; border-color: var(--t-accent);
+  box-shadow: 0 0 0 2px var(--t-accent-bg); }
+body.embed :focus-visible { outline-color: var(--t-accent); }
+
+/* tabs: sheets and 2D / 3D */
+body.embed .tab { background: transparent; border-color: var(--t-border-strong);
+  border-radius: var(--t-r-2, 5px); color: var(--t-text-dim); }
+body.embed .tab:hover { color: var(--t-text); background: var(--t-surface-3); }
+body.embed .tab.active { background: var(--t-accent-bg); border-color: var(--t-accent); color: var(--t-accent-hi); }
+body.embed .tab .role { color: var(--t-text-faint); }
+
+/* cards and their titles, in the palette's voice */
+body.embed .card { background: var(--t-surface-2); border: 1px solid var(--t-border);
+  border-radius: var(--t-r-3, 7px); padding: 12px 14px; }
+body.embed h3 { font-size: var(--t-title-size, 15px); font-weight: var(--t-title-weight, 600);
+  text-transform: var(--t-title-case, none); letter-spacing: var(--t-title-track, 0);
+  color: var(--t-text); margin: 0 0 10px; }
+body.embed .hint, body.embed .muted { color: var(--t-text-dim); }
+body.embed .item { border-radius: var(--t-r-2, 5px); }
+body.embed .item:hover { background: var(--t-surface-3); }
+body.embed .item.sel { border-color: var(--t-accent); background: var(--t-accent-bg); }
+body.embed .pill { border-radius: var(--t-r-1, 3px); }
+
+/* numbers are data */
+body.embed .totals, body.embed .kv, body.embed .item .num, body.embed table.mini td.n,
+body.embed .big, body.embed .story .w { font-family: var(--t-font-data); font-variant-numeric: tabular-nums; }
+body.embed .totals { font-weight: 500; }
+body.embed .totals .cut { color: var(--t-cut, #e5533d); }
+body.embed .totals .fill { color: var(--t-fill, #3b82f6); }
+body.embed table.mini td, body.embed table.mini th { border-bottom-color: var(--t-border); }
+body.embed table.mini th { color: var(--t-text-faint); font-weight: 500; }
+
+/* ...but NOT the controls that float over the sheet / the 3D view: the
+   engine keeps those paper-white with dark ink in both themes, and the
+   rules above out-rank its own - put them back */
+body.embed .v3dbar button, body.embed .v3dbar input, body.embed .v3dbar select,
+body.embed #legend button, body.embed #legend input,
+body.embed .popup button, body.embed .popup input, body.embed .popup select {
+  background: #fff; color: var(--paper-ink); border-color: var(--paper-edge); box-shadow: none; }
+body.embed .v3dbar button:hover:not(:disabled), body.embed .popup button:hover:not(:disabled),
+body.embed #legend button:hover:not(:disabled) { background: #f1f3f6; border-color: var(--paper-edge); }
+body.embed .popup button.primary { background: #2457c5; color: #fff; border-color: #2457c5; }
+
+/* links on the dark ground (the engine's default link blue is 2.9:1 there) */
+body.embed a { color: var(--t-accent-hi); }
+body.embed .popup a { color: #2457c5; }
+
+/* scrollbars like the host's */
+body.embed aside { scrollbar-width: thin; scrollbar-color: var(--t-border-strong) transparent; }

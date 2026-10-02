@@ -130,12 +130,24 @@ PINNED = sorted([
     ("GET", J + "/page/{page}/elements"),
     ("GET", J + "/report.pdf"),
     ("POST", J + "/page/{page}/analyze"),
-    ("GET", J + "/page/{page}/earthwork/progress"),
-    ("GET", J + "/page/{page}/earthwork/suggest"),
-    ("POST", J + "/page/{page}/earthwork"),
-    ("POST", J + "/page/{page}/earthwork/map"),
-    ("GET", J + "/page/{page}/earthwork/map"),
-    ("POST", J + "/page/{page}/earthwork/zone"),
+    # the cut / fill engine's bridge (2026-09-25): opens the job's project,
+    # records an add / remove decision. The engine's own routes live under
+    # /cutfill and are covered by the same ownership rule via their
+    # "job_<id>" project ids (server._CUTFILL_PATH).
+    ("POST", J + "/cutfill"),
+    ("POST", J + "/page/{page}/cutfill/rows"),
+    # 2026-09-26: another plan set's sheets into this job's cut / fill project (a structural
+    # set's walls need the civil set's ground), and the ground under points on a sheet
+    ("POST", J + "/cutfill/link"),
+    ("POST", J + "/page/{page}/cutfill/grade"),
+    # 2026-09-28: "Sheets for cut / fill" lists the set's pages (sheet number, detected, role)
+    ("GET", J + "/cutfill/sheets"),
+    # the engine's word on the job's cut / fill without its page (critic 8, WRONG-1): whether its rows stand
+    ("GET", J + "/cutfill/state"),
+    # from CET (2026-09-25 port): which pages are approved, and the flooring
+    # engine's click-in-room fill
+    ("GET", J + "/approved"),
+    ("POST", J + "/page/{page}/rooms/pick"),
     ("GET", J + "/page/{page}/twins"),
     ("GET", J + "/page/{page}/callouts"),
     ("GET", J + "/page/{page}/footings"),
@@ -143,10 +155,19 @@ PINNED = sorted([
     ("GET", J + "/bidsheet.csv"),
     ("GET", J + "/page/{page}/watchlist"),
     ("POST", J + "/page/{page}/pipesizes"),
+    # fix/trenching (2026-09-26): the profile read, the pipe runs and what
+    # the set prints about trench geometry - all JOBS.get(job_id) or _404()
+    ("GET", J + "/page/{page}/profile"),
+    ("POST", J + "/page/{page}/runs"),
+    ("GET", J + "/trench-details"),
+    # the scale in force at a point (an inset prints its own caption): the flooring pick reads it
+    ("GET", J + "/page/{page}/scale/at"),
     ("GET", J + "/datum"),
     ("GET", J + "/page/{page}/symbols/suggest"),
     ("GET", J + "/marks-rollup"),
     ("POST", J + "/page/{page}/structure"),
+    # readable by whoever may open the job (tests/test_team_roles.py) - the redesign's audit log
+    ("GET", J + "/activity"),
 ])
 
 # Valid bodies, so a pre-fix failure shows the real exposure (200) and not a
@@ -156,15 +177,18 @@ BODIES = {
                                  "notes": ["BOB-WAS-HERE"]},
     J + "/page/{page}/calcstate": {"v": 1, "marker": "BOB-OVERWROTE",
                                    "client": "Bob Rival LLC"},
-    J + "/page/{page}/earthwork/zone": {"polygon": [[0, 0], [50, 0],
-                                                    [50, 50], [0, 50]]},
+    J + "/cutfill": {"page": 0},
+    J + "/page/{page}/rooms/pick": {"x": 100.0, "y": 100.0},
+    J + "/page/{page}/cutfill/rows": {"added": True, "rows": []},
+    J + "/cutfill/link": {"job": "0000000000ab"},
+    J + "/page/{page}/cutfill/grade": {"pts": [[100.0, 100.0]], "surface": "existing"},
     J + "/page/{page}/structure": {"structures": []},
 }
 
 
 # ------------------------------------------------------------ ASGI driver
 async def _asgi(method, path, body: bytes, cookie):
-    headers = [(b"host", b"testserver"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"),
                (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode())]
     if cookie is not None:
@@ -233,7 +257,7 @@ def test_0_every_job_route_is_enumerated():
             f"{m} {p}" for m, p in sorted(set(live) - set(PINNED)))
         + "\n  -" + "\n  -".join(
             f"{m} {p}" for m, p in sorted(set(PINNED) - set(live))))
-    assert len(live) == 37, len(live)   # +scale/dimensions, +earthwork/progress, +footings, +datum, +footings/split, +bidsheet.csv, +watchlist, +pipesizes, +twins
+    assert len(live) == 44, len(live)   # +activity (redesign), +scale/at, +scale/dimensions, +earthwork/progress, +footings, +datum, +footings/split, +bidsheet.csv, +watchlist, +pipesizes, +twins, +profile, +runs, +trench-details, +cutfill/link, +cutfill/grade, +cutfill/sheets, +cutfill/state
 
 
 def test_1_gate_fails_closed_on_a_missing_row():
@@ -321,15 +345,13 @@ def test_3_write_routes_refuse_directly_too():
     server.JOBS.clear()
     d = make_dir(ORPHAN)
     before = snapshot(d)
-    poly = server.GradingZoneBody(polygon=[[0, 0], [50, 0], [50, 50], [0, 50]])
     calls = [
         ("approve", server.approve, ORPHAN, 0,
          server.ApproveBody(labels={}, notes=["BOB"])),
         ("calcstate", server._calcstate_put, ORPHAN, 0, b'{"marker":"BOB"}'),
-        ("earthwork", server.earthwork_calc, ORPHAN, 0, server.EarthworkBody()),
-        ("earthwork/map", server.earthwork_map, ORPHAN, 0,
-         server.EarthworkBody()),
-        ("earthwork/zone", server.earthwork_zone, ORPHAN, 0, poly),
+        ("cutfill", server.cutfill_open, ORPHAN, server.CutfillOpenBody()),
+        ("cutfill/rows", server.cutfill_rows, ORPHAN, 0,
+         server.CutfillRowsBody()),
         ("structure", server.structure_calc, ORPHAN, 0,
          server.StructureBody()),
     ]

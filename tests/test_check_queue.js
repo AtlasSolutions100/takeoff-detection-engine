@@ -145,10 +145,10 @@ near(T.ckStyleFloor(100000), 1000, 0, "floor grows to 1% on a dense sheet");
 // ---- datum + spots ---------------------------------------------------------
 {
   const r = T.ckBuild(inp({ datum: { state: "checked", conflict: true,
-    declared: 7605.25, bandBase: 7700, bandN: 4 } }));
+    notes: [[100, 7605.25], [100, 7700]], used: [100, 7605.25] } }));
   const e = byId(r.entries, "datum");
   check(!!e && e.sev === "warn" && e.act.t === "ew",
-        "datum conflict queues as warn and points at Earthwork");
+        "datum conflict queues as warn and points at Cut / fill");
   near(e.w, 100000 * T.CK_W_PAGE, 0, "datum weight = whole page");
   check(e.text.indexOf("7605.25") >= 0 && e.text.indexOf("7700") >= 0,
         "datum entry states both of the sheet's own numbers");
@@ -213,6 +213,24 @@ near(T.ckStyleFloor(100000), 1000, 0, "floor grows to 1% on a dense sheet");
   const p = T.ckBuild(inp({ marks: null }));
   check(p.pending.some(x => x.indexOf("press Count") >= 0),
         "Count never pressed pends the schedule check");
+  // a schedule read on ANOTHER sheet counts the whole set: one sheet holding fewer is no
+  // contradiction (check 4B, 2026-09-27: floor 1's 21 against the building's 148 read CHECK
+  // on every floor); more than the schedule is one on any sheet
+  const w = T.ckBuild(inp({ marks: [
+    { code: "W1L", n: 21, sched: 148, setWide: true },
+    { code: "W9", n: 30, sched: 28, setWide: true },
+    { code: "W3", n: 21, sched: 28, setWide: false }] }));
+  check(ids(w.entries).sort().join(",") === "sym:W3,sym:W9",
+        "fewer than a set-wide schedule does not queue; more does, and a schedule on the sheet itself still does");
+}
+{
+  // the Counts row says the same thing in words
+  const at = src.indexOf("function symSetWide()");
+  check(at > 0 && /info\.schedule_page !== state\.page/.test(src.slice(at, at + 300)),
+        "symSetWide: a schedule read on another sheet of the set");
+  const row = src.indexOf("for the whole set");
+  check(row > 0 && /symSetWide\(\) && g\.n < g\.schedule_qty/.test(src.slice(row - 500, row)),
+        "the Counts row: fewer than a set-wide schedule reads as a fact about the sheet, not CHECK");
 }
 
 // ---- per-style thresholds --------------------------------------------------
@@ -260,7 +278,7 @@ check(!!byId(T.ckBuild(inp({ totalPt: 50000, styles: [sty({ pt: 800 })] })).entr
   const s = inp().scale; s.multi = { n: 2, lo: 10, hi: 30, settled: false };
   const r = T.ckBuild(inp({
     scale: s,
-    datum: { state: "checked", conflict: true, declared: 100, bandBase: 200, bandN: 2 },
+    datum: { state: "checked", conflict: true, notes: [[100, 100], [100, 200]], used: [100, 100] },
     drops: { state: "checked", ew: 1, tr: 0, sigChanged: false },
     marks: [{ code: "W1", n: 10, sched: 8 }],
   }));

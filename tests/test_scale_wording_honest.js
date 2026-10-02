@@ -98,7 +98,7 @@ check(/scaleBarSentence\(\)/.test(rs) && /scaleBarSentence\(\)/.test(ab),
 
 // ---- the bar sentence is read off the data ------------------------------
 const T = new Function("state",
-  fn("scaleBarSentence") + fn("scaleSuggestions") + fn("scaleShort") + fn("sheetFactsText")
+  fn("scaleBarSentence") + fn("nWord") + fn("scaleSuggestions") + fn("scaleShort") + fn("sheetFactsText")
   + "return { scaleBarSentence, scaleSuggestions, sheetFactsText };");
 const st = (sug, scale) => ({
   result: { scale: scale || null, scale_suggestions: sug,

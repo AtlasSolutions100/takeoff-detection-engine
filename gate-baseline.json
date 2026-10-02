@@ -1,9 +1,9 @@
 {
   "corpus": "fast",
-  "engine_sig": "fb12fbef51030516",
+  "engine_sig": "5e5fd3dbc5d1a927",
   "sheets": {
     "C4.0-SITE-GRADING-PLAN-Rev p0": {
-      "chains": 1429,
+      "chains": 1402,
       "phantom": 0,
       "spikes": 1,
       "precision": {
@@ -13,7 +13,7 @@
         "solid": 1.0
       },
       "truth": {
-        "O-SURFACE-EXISTING COMBINED": 0.9432,
+        "O-SURFACE-EXISTING COMBINED": 0.9403,
         "E3-LOTS": 1.0,
         "P1-FENCE": 0.9456,
         "P2-WATER-LINE": 0.9517,
@@ -23,11 +23,11 @@
       },
       "n_lost": 0,
       "n_misfiled": 2,
-      "welded_frac": 0.012602872989407146,
-      "pickup_frac": 0.019402413679609144
+      "welded_frac": 0.010496973146130488,
+      "pickup_frac": 0.015231572099093692
     },
     "C8.0-STORM-LAYOUT-Rev.1.pd p0": {
-      "chains": 573,
+      "chains": 567,
       "phantom": 0,
       "spikes": 1,
       "precision": {
@@ -42,12 +42,12 @@
         "P2-STORM-SWALE": 1.0
       },
       "n_lost": 0,
-      "n_misfiled": 4,
-      "welded_frac": 0.015694417178402233,
-      "pickup_frac": 0.023688138562122978
+      "n_misfiled": 2,
+      "welded_frac": 0.013259414901704727,
+      "pickup_frac": 0.020893151801429054
     },
     "C3.0-Site-Plan-Rev.1.pdf p0": {
-      "chains": 749,
+      "chains": 741,
       "phantom": 0,
       "spikes": 1,
       "precision": {
@@ -66,11 +66,11 @@
       },
       "n_lost": 0,
       "n_misfiled": 2,
-      "welded_frac": 0.014357268723829092,
-      "pickup_frac": 0.022667209404212817
+      "welded_frac": 0.010955570572578252,
+      "pickup_frac": 0.01837296762829934
     },
     "C9.0-ROAD-LAYOUT-Rev.1.pdf p0": {
-      "chains": 713,
+      "chains": 698,
       "phantom": 0,
       "spikes": 1,
       "precision": {
@@ -87,12 +87,12 @@
         "P2-FIREWATER-LINE": 1.0
       },
       "n_lost": 0,
-      "n_misfiled": 4,
-      "welded_frac": 0.016778482802597184,
-      "pickup_frac": 0.027417920912716075
+      "n_misfiled": 2,
+      "welded_frac": 0.014996332117455918,
+      "pickup_frac": 0.024038665569821382
     },
     "Belle Farms Structural Pla p0": {
-      "chains": 350,
+      "chains": 341,
       "phantom": 0,
       "spikes": 0,
       "precision": {
@@ -104,27 +104,28 @@
       "truth": {},
       "n_lost": 0,
       "n_misfiled": 0,
-      "welded_frac": 0.014662040104034626,
-      "pickup_frac": 0.019574445395572942
+      "welded_frac": 0.0146913852831698,
+      "pickup_frac": 0.01932434449862268
     },
     "Oncor Cloudcrest Substatio p2": {
-      "chains": 314,
+      "chains": 312,
       "phantom": 0,
       "spikes": 1,
       "precision": {
         "dash1": 1.0,
         "dash2": 1.0,
         "dash3": 1.0,
+        "dash-text": 1.0,
         "solid": 1.0
       },
       "truth": {},
       "n_lost": 0,
       "n_misfiled": 0,
-      "welded_frac": 0.01880184133131096,
-      "pickup_frac": 0.025814109087848404
+      "welded_frac": 0.02010353051304863,
+      "pickup_frac": 0.027989246202056076
     },
     "Oncor Cloudcrest Substatio p3": {
-      "chains": 589,
+      "chains": 558,
       "phantom": 0,
       "spikes": 0,
       "precision": {
@@ -137,27 +138,28 @@
       "truth": {},
       "n_lost": 0,
       "n_misfiled": 0,
-      "welded_frac": 0.026124974998480127,
-      "pickup_frac": 0.02427597298132518
+      "welded_frac": 0.0286637214217656,
+      "pickup_frac": 0.02595533786951683
     },
     "SWR_Guide_Residence_-_Civi p3": {
-      "chains": 886,
+      "chains": 878,
       "phantom": 19,
       "spikes": 0,
       "precision": {
         "dash1": 1.0,
         "dash2": 1.0,
         "dash3": 1.0,
+        "dash-text": 1.0,
         "solid": 1.0
       },
       "truth": {},
       "n_lost": 1,
-      "n_misfiled": 4,
-      "welded_frac": 0.014796852983556517,
-      "pickup_frac": 0.00840343456084364
+      "n_misfiled": 3,
+      "welded_frac": 0.015654564899111774,
+      "pickup_frac": 0.009061419184611669
     },
     "SWR_Barn_Residence_-_Lands p5": {
-      "chains": 2096,
+      "chains": 2251,
       "phantom": 0,
       "spikes": 2,
       "precision": {
@@ -169,12 +171,12 @@
       },
       "truth": {},
       "n_lost": 0,
-      "n_misfiled": 16,
-      "welded_frac": 0.02612457740055958,
-      "pickup_frac": 0.01081028775313368
+      "n_misfiled": 9,
+      "welded_frac": 0.016742394760222098,
+      "pickup_frac": 0.010635210957721077
     },
     "SWR_Barn_Residence_-_Lands p6": {
-      "chains": 927,
+      "chains": 923,
       "phantom": 0,
       "spikes": 0,
       "precision": {
@@ -186,24 +188,24 @@
       "truth": {},
       "n_lost": 0,
       "n_misfiled": 0,
-      "welded_frac": 0.016169271417189095,
-      "pickup_frac": 0.012151023523038665
+      "welded_frac": 0.01409820192271724,
+      "pickup_frac": 0.01223623536501164
     }
   },
   "aggregate": {
-    "mean_truth_class_acc": 0.9800333333333333,
+    "mean_truth_class_acc": 0.979895238095238,
     "phantom_total": 19,
     "spikes_total": 7,
     "n_lost": 1,
-    "n_misfiled": 32,
-    "welded_frac": 0.018654816189614835,
-    "pickup_frac": 0.01727324293547056
+    "n_misfiled": 20,
+    "welded_frac": 0.01559484581600039,
+    "pickup_frac": 0.01604325317501924
   },
   "soft": {
-    "linework_coverage_any": 0.9920611169312201,
-    "linework_coverage_own": 0.9214336602560379,
-    "linework_raw_recall": 0.928563156929592,
-    "symbol_coverage": 0.7103898301888147,
-    "annotation_coverage": 0.5701611409392372
+    "linework_coverage_any": 0.9906966182453685,
+    "linework_coverage_own": 0.9691636515006017,
+    "linework_raw_recall": 0.940483138131129,
+    "symbol_coverage": 0.7631441622438538,
+    "annotation_coverage": 0.5413339304508306
   }
 }

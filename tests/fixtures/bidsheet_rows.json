@@ -1,0 +1,128 @@
+{
+  "_": "Approved-page rows (the shape p<N>_elements.json items have) and the bid-sheet line totals they must produce on takeoff_engine.bidsheet.DEFAULT_LINES. Read by tests/test_bidsheet.py (bidsheet.build, the CSV) and tests/test_bid_money.js (bsGroupRows, the screen) so the two can never disagree line for line. lines: line number -> summed quantity in the line's unit; other: line -> {unit: qty} listed but not summed; unmatched: labels under 'Not on the bid sheet'. Audit 2026-09-26 D02 / D03 / D04 / D17 / plan 7.4.",
+  "cases": [
+    {
+      "name": "cut-heavy sheet from the cut/fill engine: the net never lands on Site Cut",
+      "items": [
+        {"label": "Site Cut", "count": 1, "length_ft": null, "qty": 1000.0, "unit": "CY"},
+        {"label": "Site Fill", "count": 1, "length_ft": null, "qty": 400.0, "unit": "CY"},
+        {"label": "Export Cut", "count": 1, "length_ft": null, "qty": 600.0, "unit": "CY", "kind": "net"}
+      ],
+      "lines": {"4": 1000.0, "5": 400.0, "26": 600.0},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "cut-only site: line 4 is the cut, not twice the cut",
+      "items": [
+        {"label": "Site Cut", "count": 1, "length_ft": null, "qty": 1234.0, "unit": "CY"},
+        {"label": "Export Cut", "count": 1, "length_ft": null, "qty": 1234.0, "unit": "CY", "kind": "net"}
+      ],
+      "lines": {"4": 1234.0, "26": 1234.0},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "fill-heavy sheet: Import Structural has a named line",
+      "items": [
+        {"label": "Site Cut", "count": 1, "length_ft": null, "qty": 400.0, "unit": "CY"},
+        {"label": "Site Fill", "count": 1, "length_ft": null, "qty": 1000.0, "unit": "CY"},
+        {"label": "Import Structural", "count": 1, "length_ft": null, "qty": 600.0, "unit": "CY", "kind": "net"}
+      ],
+      "lines": {"4": 400.0, "5": 1000.0, "27": 600.0},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "the live calculator's names file the same way",
+      "items": [
+        {"label": "Cut (earthwork)", "count": 1, "length_ft": null, "qty": 900.0, "unit": "CY"},
+        {"label": "Fill (earthwork)", "count": 1, "length_ft": null, "qty": 100.0, "unit": "CY"},
+        {"label": "Export Surplus Cut", "count": 1, "length_ft": null, "qty": 800.0, "unit": "CY"},
+        {"label": "Import Fill", "count": 1, "length_ft": null, "qty": 5.0, "unit": "CY"}
+      ],
+      "lines": {"4": 900.0, "5": 100.0, "26": 800.0, "27": 5.0},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "a sewer family with its trench run: the run replaces the family, the dig CY is listed not summed",
+      "items": [
+        {"label": "SE-P-UT-SS", "count": 1, "length_ft": 264.8, "by_style": {"172": 264.8}},
+        {"label": "SE-P-UT-SS (run)", "count": 1, "length_ft": null, "qty": 264.8, "unit": "LF", "kind": "trench_run", "run_of": "SE-P-UT-SS", "run_sid": 172, "utility": "sewer"},
+        {"label": "Trench excavation (SE-P-UT-SS)", "count": 1, "length_ft": null, "qty": 549.2, "unit": "CY", "kind": "trench_dig", "run_of": "SE-P-UT-SS", "run_sid": 172, "utility": "sewer"}
+      ],
+      "lines": {"15": 264.8},
+      "other": {"15": {"CY": 549.2}},
+      "unmatched": []
+    },
+    {
+      "name": "one storm family of four same-name styles, two of them run: the runs count, the other two styles still count",
+      "items": [
+        {"label": "PROPOSED STORM SEWER (legend)", "count": 4, "length_ft": 1522.7, "by_style": {"169": 885.2, "168": 534.5, "170": 66.4, "171": 36.6}},
+        {"label": "PROPOSED STORM SEWER (legend) (run)", "count": 1, "length_ft": null, "qty": 885.2, "unit": "LF", "kind": "trench_run", "run_of": "PROPOSED STORM SEWER (legend)", "run_sid": 169, "utility": "storm"},
+        {"label": "PROPOSED STORM SEWER (legend) (run)", "count": 1, "length_ft": null, "qty": 534.5, "unit": "LF", "kind": "trench_run", "run_of": "PROPOSED STORM SEWER (legend)", "run_sid": 168, "utility": "storm"}
+      ],
+      "lines": {"21": 1522.7},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "two same-name styles, only one run: the run and the other style's footage, each once",
+      "items": [
+        {"label": "PROPOSED STORM SEWER (legend)", "count": 2, "length_ft": 1419.7, "by_style": {"169": 885.2, "168": 534.5}},
+        {"label": "PROPOSED STORM SEWER (legend) (run)", "count": 1, "length_ft": null, "qty": 885.2, "unit": "LF", "kind": "trench_run", "run_of": "PROPOSED STORM SEWER (legend)", "run_sid": 169, "utility": "storm"}
+      ],
+      "lines": {"21": 1419.7},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "a run row saved before the provenance fields existed still replaces its family",
+      "items": [
+        {"label": "SE-P-UT-SS", "count": 1, "length_ft": 264.8},
+        {"label": "SE-P-UT-SS (run)", "count": 1, "length_ft": null, "qty": 264.8, "unit": "LF"}
+      ],
+      "lines": {"15": 264.8},
+      "other": {},
+      "unmatched": []
+    },
+    {
+      "name": "a pattern-named family run as water lands on the Water line, family and run alike",
+      "items": [
+        {"label": "dash1 d72.0 g21.6", "count": 3, "length_ft": 1526.3, "by_style": {"7": 1526.3}},
+        {"label": "dash1 d72.0 g21.6 (run)", "count": 1, "length_ft": null, "qty": 1526.3, "unit": "LF", "kind": "trench_run", "run_of": "dash1 d72.0 g21.6", "run_sid": 7, "utility": "water"},
+        {"label": "Bedding gravel (dash1 d72.0 g21.6)", "count": 1, "length_ft": null, "qty": 12.0, "unit": "CY", "kind": "trench_bed", "run_of": "dash1 d72.0 g21.6", "run_sid": 7, "utility": "water"}
+      ],
+      "lines": {"16": 1526.3},
+      "other": {"16": {"CY": 12.0}},
+      "unmatched": []
+    },
+    {
+      "name": "an old job's per-layer balance rows: only surplus cut lands on Export Cut; asphalt stays visible off the priced lines",
+      "items": [
+        {"label": "Site Cut", "count": 1, "length_ft": null, "qty": 1000.0, "unit": "CY"},
+        {"label": "Site Fill", "count": 1, "length_ft": null, "qty": 400.0, "unit": "CY"},
+        {"label": "Export Surplus Cut", "count": 1, "length_ft": null, "qty": 600.0, "unit": "CY"},
+        {"label": "Remove Asphalt", "count": 1, "length_ft": null, "qty": 70.0, "unit": "CY"},
+        {"label": "Export Asphalt", "count": 1, "length_ft": null, "qty": 50.0, "unit": "CY"},
+        {"label": "Rough Place Asphalt", "count": 1, "length_ft": null, "qty": 20.0, "unit": "CY"},
+        {"label": "Rough Place Topsoil", "count": 1, "length_ft": null, "qty": 30.0, "unit": "CY"},
+        {"label": "Export Topsoil", "count": 1, "length_ft": null, "qty": 12.0, "unit": "CY"}
+      ],
+      "lines": {"4": 1000.0, "5": 400.0, "12": 30.0, "26": 600.0, "28": 12.0},
+      "other": {},
+      "unmatched": ["Remove Asphalt", "Export Asphalt", "Rough Place Asphalt"]
+    },
+    {
+      "name": "a pattern-named family with no utility picked stays visible under not-on-the-sheet",
+      "items": [
+        {"label": "dash1 d72.0 g21.6", "count": 3, "length_ft": 1526.3, "by_style": {"7": 1526.3}},
+        {"label": "dash1 d72.0 g21.6 (run)", "count": 1, "length_ft": null, "qty": 1526.3, "unit": "LF", "kind": "trench_run", "run_of": "dash1 d72.0 g21.6", "run_sid": 7, "utility": ""}
+      ],
+      "lines": {},
+      "other": {},
+      "unmatched": ["dash1 d72.0 g21.6", "dash1 d72.0 g21.6 (run)"]
+    }
+  ]
+}

@@ -81,7 +81,7 @@ def rows_for(pdf: Path) -> dict:
 
 # ------------------------------------------------------------ ASGI driver
 async def _asgi(method, path, body: bytes, cookie):
-    headers = [(b"host", b"testserver"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"),
                (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode())]
     if cookie is not None:
@@ -215,7 +215,9 @@ def test_4_shared_row_stays_shared():
     happened to click first."""
     ck = setup_accounts()
     server.JOBS.clear()
-    pdf = make_pdf("shared.pdf")
+    # named into a shared set: since 2026-10-01 an owner-less row outside the
+    # demo cards / shared sets is staff-only (tests/test_shared_rows_manifest.py)
+    pdf = make_pdf("C3.0-Site-Plan-Rev.1.pdf")             # a shared-set sheet, by its exact name
     seed_row("5e5e5e5e5e5e", pdf, None)
     st, r = call("GET", "/api/job/5e5e5e5e5e5e/open", None, ck[ALICE])
     assert st == 200, (st, r)

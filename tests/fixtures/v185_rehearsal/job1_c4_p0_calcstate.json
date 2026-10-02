@@ -1,0 +1,245 @@
+{
+ "v": 1,
+ "engine_sig": "fb12fbef51030516",
+ "ew": {
+  "rows": [
+   {
+    "chain_id": 1841,
+    "z": 4534,
+    "surface": "existing",
+    "width": 0.1,
+    "dist": 0.5,
+    "manual": false,
+    "split_by": "width",
+    "how": "gap-ocr"
+   },
+   {
+    "chain_id": 1782,
+    "z": 4535,
+    "surface": "proposed",
+    "width": 1.1,
+    "dist": 1.2,
+    "manual": false,
+    "split_by": "width",
+    "how": "radius"
+   },
+   {
+    "chain_id": 1788,
+    "z": 4536,
+    "surface": "existing",
+    "width": 0.8,
+    "dist": 2.1,
+    "manual": false,
+    "split_by": "width",
+    "how": "inline"
+   },
+   {
+    "chain_id": 1786,
+    "z": 4536,
+    "surface": "existing",
+    "width": 0.8,
+    "dist": 1.5,
+    "manual": false,
+    "split_by": "width",
+    "how": "radius"
+   },
+   {
+    "chain_id": 1930,
+    "z": 4536,
+    "surface": "existing",
+    "width": 0.1,
+    "dist": 0.5,
+    "manual": false,
+    "split_by": "width",
+    "how": "gap-ocr"
+   },
+   {
+    "chain_id": 1856,
+    "z": 4536,
+    "surface": "existing",
+    "width": 0.1,
+    "dist": 999,
+    "manual": false,
+    "split_by": "width",
+    "how": "inherited"
+   },
+   {
+    "chain_id": 1789,
+    "z": 4537,
+    "surface": "existing",
+    "width": 0.8,
+    "dist": 0.9,
+    "manual": false,
+    "split_by": "width",
+    "how": "radius"
+   },
+   {
+    "chain_id": 1796,
+    "z": 4538,
+    "surface": "existing",
+    "width": 0.8,
+    "dist": 1.3,
+    "manual": false,
+    "split_by": "width",
+    "how": "inline"
+   },
+   {
+    "chain_id": 1790,
+    "z": 4538,
+    "surface": "existing",
+    "width": 0.8,
+    "dist": 0.9,
+    "manual": false,
+    "split_by": "width",
+    "how": "radius"
+   },
+   {
+    "chain_id": 1791,
+    "z": 4539,
+    "surface": "existing",
+    "width": 0.8,
+    "dist": 0.7,
+    "manual": false,
+    "split_by": "width",
+    "how": "radius"
+   },
+   {
+    "chain_id": 1921,
+    "z": 4539,
+    "surface": "existing",
+    "width": 0.1,
+    "dist": 0.5,
+    "manual": false,
+    "split_by": "width",
+    "how": "gap-ocr"
+   },
+   {
+    "chain_id": 1927,
+    "z": 4539,
+    "surface": "existing",
+    "width": 0.1,
+    "dist": 0.5,
+    "manual": false,
+    "split_by": "width",
+    "how": "gap-ocr"
+   },
+   {
+    "chain_id": 1784,
+    "z": 4540,
+    "surface": "proposed",
+    "width": 1.1,
+    "dist": 0.6,
+    "manual": false,
+    "split_by": "width",
+    "how": "inline"
+   },
+   {
+    "chain_id": 1860,
+    "z": 4535,
+    "surface": "existing",
+    "width": 0.1,
+    "dist": null,
+    "manual": false,
+    "surface_by": "operator",
+    "split_by": "interval-infill",
+    "how": "interval-infill",
+    "inferred": true,
+    "inferred_why": "counted between labelled 4534 (line 1841) and labelled 4536 (line 1788) at the sheet's 0.5 ft contour interval - not a printed label, confirm against the sheet"
+   }
+  ],
+  "layers": {
+   "existing": [
+    {
+     "name": "Topsoil",
+     "thickness_in": 6,
+     "reuse_pct": null,
+     "respread_pct": null,
+     "destination": "on site"
+    }
+   ],
+   "proposed": []
+  },
+  "removed": [],
+  "spotOn": {
+   "FG": true,
+   "ME": true,
+   "EG": true,
+   "PE": true
+  },
+  "spotSide": "proposed",
+  "spotTagSide": {},
+  "spotDatum": null,
+  "areaSf": null,
+  "placeDepthIn": null,
+  "placeLessSf": null,
+  "added": true
+ },
+ "ew_bound": {
+  "pts": [
+   [
+    568.1,
+    198.5
+   ],
+   [
+    1844.4,
+    288.2
+   ],
+   [
+    1839.4,
+    1345.1
+   ],
+   [
+    543.2,
+    1315.2
+   ]
+  ]
+ },
+ "st": {
+  "items": [],
+  "seq": 1,
+  "depth_ft": 8,
+  "fill_depth_ft": null,
+  "footing_ft": 0,
+  "footing_w_ft": 2,
+  "layback_hv": 1,
+  "wall_in": 8,
+  "datum_ft": null
+ },
+ "gzones": [
+  {
+   "id": "z0xmvk6u",
+   "name": "Zone 1",
+   "polygon": [
+    [
+     1291,
+     348
+    ],
+    [
+     1759.6,
+     348
+    ],
+    [
+     1759.6,
+     612.2
+    ],
+    [
+     1291,
+     612.2
+    ]
+   ],
+   "design": {
+    "mode": "pad",
+    "elev_ft": 4537
+   },
+   "strip_in": 8,
+   "base_in": 0,
+   "base_name": "Base",
+   "added": true,
+   "show_nums": true,
+   "named_from": null
+  }
+ ],
+ "checks": {
+  "done": []
+ }
+}

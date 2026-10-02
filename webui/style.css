@@ -39,17 +39,17 @@ aside::-webkit-scrollbar, .thumb-list::-webkit-scrollbar,
 .ew-rows::-webkit-scrollbar, .side-scroll::-webkit-scrollbar,
 .style-list::-webkit-scrollbar, .itemized::-webkit-scrollbar,
 .legend-box::-webkit-scrollbar, .ar-list::-webkit-scrollbar,
-.bid-view::-webkit-scrollbar, .gz-rows::-webkit-scrollbar,
+.bid-view::-webkit-scrollbar,
 .ck-rows::-webkit-scrollbar { width: 8px; }
 aside::-webkit-scrollbar-thumb, .thumb-list::-webkit-scrollbar-thumb,
 .ew-rows::-webkit-scrollbar-thumb, .side-scroll::-webkit-scrollbar-thumb,
 .style-list::-webkit-scrollbar-thumb, .itemized::-webkit-scrollbar-thumb,
 .legend-box::-webkit-scrollbar-thumb, .ar-list::-webkit-scrollbar-thumb,
-.bid-view::-webkit-scrollbar-thumb, .gz-rows::-webkit-scrollbar-thumb,
+.bid-view::-webkit-scrollbar-thumb,
 .ck-rows::-webkit-scrollbar-thumb {
   background: var(--t-border-strong); border-radius: 4px; }
 .side-scroll, .style-list, .itemized, .legend-box, .ar-list, .bid-view,
-.ew-rows, .ck-rows, .gz-rows {
+.ew-rows, .ck-rows {
   scrollbar-width: thin; scrollbar-color: var(--t-border-strong) transparent; }
 /* De-shouted. One declaration was doing three jobs (mono = "this is data",
    ALL-CAPS = "this is a heading", tracking = "this is a brand"), applied to
@@ -157,7 +157,7 @@ aside.side-folded .side-fold { width: 14px; transform: scaleX(-1); }
    drew a line where the card now draws one is switched off. */
 .card > .ew-panel, .card > .takeoff-head { border-top: 0; }
 /* ---------- BOUNDED LISTS ----------------------------------------------
-   65 style rows measured 4,886 px and 30 itemized rows 2,309 px on Oncor
+   65 style rows measured 4,886 px and 30 itemized rows 2,309 px on a substation
    C-04, in a column 803 px tall: one long list used to push everything
    after it off the screen. Each long list now scrolls inside its own card
    with the card's header pinned above it, and the header carries the row
@@ -331,24 +331,6 @@ canvas#view.panning { cursor: grabbing; }
    screen, so it tracks the window instead of a constant. */
 .ew-rows { max-height: 32vh; }
 .ew-hint { color: var(--dim); font-size: var(--t-fs-xs); padding: 6px 12px 2px; }
-.ew-hint.ew-unsplit { color: var(--fg); }
-.ew-howto { color: var(--text); }
-.ew-howto ol { margin: 4px 0 0; padding-left: 20px; }
-.ew-howto li { margin: 2px 0; }
-.ew-howto b { font-weight: 600; }
-.ew-hint.ew-unsplit button { margin: 4px 6px 0 0; }
-.ew-ocr-cut { margin-bottom: 4px; }
-/* the in-flight line for /earthwork/suggest - sits under the panel HEAD,
-   above the fold, because the old hint rendered into #ewRows at the bottom
-   of the panel where the operator could not see it */
-.ew-busy { font-size: var(--t-fs-xs); padding: 6px 12px; margin: 4px 8px 0;
-           border-radius: 6px; background: var(--hover);
-           border-left: 3px solid var(--accent); }
-.ew-busy.err { border-left-color: var(--t-stop); color: var(--t-stop); }
-/* the read's progress bar: only drawn when the server has reported a
-   fraction (ewBusyPut frac), never invented */
-.ew-prog { height: 5px; margin-top: 6px; border-radius: 3px; background: rgba(128,128,128,.28); overflow: hidden; }
-.ew-prog i { display: block; height: 100%; background: var(--accent); transition: width .6s ease; }
 .ew-rows { overflow-y: auto; padding: 4px 8px; }
 .ew-row { display: grid; grid-template-columns: 60px 1fr auto; gap: 6px; align-items: center; padding: 3px 4px; border-radius: 6px; }
 /* contour rows carry a 4th column (the x remove button); .co-row reuses
@@ -357,14 +339,10 @@ canvas#view.panning { cursor: grabbing; }
 .ew-row:hover { background: var(--hover); }
 .ew-row input.z { width: 100%; padding: 2px 6px; font-size: var(--t-fs-xs); }
 .ew-row .x { font-size: var(--t-fs-xs); padding: 1px 6px; border-radius: 4px; }
-/* head above the contour rows: the manual "+ Add contour" entry point */
-.ew-rows-head { display: flex; gap: 6px; align-items: center; color: var(--dim); padding: 5px 12px 0; }
-.ew-rows-head span { flex: 1; font-weight: 600; letter-spacing: .03em; font-size: var(--t-fs-xs); }
-.ew-rows-head #ewAddRow.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
-.ew-row .seg, .ew-spots .seg { display: flex; gap: 2px; }
-.ew-row .seg button, .ew-spots .seg button { font-size: var(--t-fs-xs); padding: 3px 7px; border-radius: 4px; }
-.ew-row .seg button.on-ex, .ew-spots .seg button.on-ex { background: var(--t-exist-bg); border-color: var(--t-exist); color: var(--t-exist); }
-.ew-row .seg button.on-pr, .ew-spots .seg button.on-pr { background: var(--t-prop-bg); border-color: var(--t-prop); color: var(--t-prop); }
+.ew-row .seg { display: flex; gap: 2px; }
+.ew-row .seg button { font-size: var(--t-fs-xs); padding: 3px 7px; border-radius: 4px; }
+.ew-row .seg button.on-ex { background: var(--t-exist-bg); border-color: var(--t-exist); color: var(--t-exist); }
+.ew-row .seg button.on-pr { background: var(--t-prop-bg); border-color: var(--t-prop); color: var(--t-prop); }
 /* WRAP, or the blocks that are supposed to own a line cannot get one.
    .ew-map-note and .ew-result.ew-refused both ask for flex-basis:100%,
    which does nothing in a nowrap row: they stay flex ITEMS between the
@@ -381,162 +359,19 @@ canvas#view.panning { cursor: grabbing; }
 .ew-row .ew-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .co-row { grid-template-columns: 1fr auto; }
 .co-row .ew-meta { white-space: normal; overflow: visible; text-overflow: clip; }
-/* the row's second line: where the elevation came from, full width under the
-   identity and the buttons (see renderEw: two lines, not five) */
-.ew-src { grid-column: 1 / -1; color: var(--t-text-faint); font-size: var(--t-fs-xs); line-height: 1.45; padding: 0 4px 2px; }
-.ew-src .ew-cls { margin-right: 6px; vertical-align: baseline; }
-.ew-row.ew-inferred .ew-src { color: var(--dim); }
-/* layer stacks: what comes off the existing side, what goes on the proposed */
-.ew-layers { padding: 4px 8px 6px; border-top: 1px solid var(--line); }
-.ew-layers-head { display: flex; gap: 6px; align-items: center; font-size: var(--t-fs-xs); color: var(--dim); padding: 5px 4px 2px; }
-.ew-layers-head span { flex: 1; font-weight: 600; letter-spacing: .03em; font-size: var(--t-fs-xs); }
-.ew-layer-rows:empty::after { content: "none"; color: var(--dim); font-size: var(--t-fs-xs); padding: 2px 4px; display: block; }
-.ew-layer-row { display: grid; grid-template-columns: 1fr 54px auto auto; gap: 6px; align-items: center; padding: 2px 4px; border-radius: 6px; }
-.ew-layer-row:hover { background: var(--hover); }
-.ew-layer-row input { width: 100%; padding: 2px 6px; font-size: var(--t-fs-xs); }
-.ew-layer-row .unit { color: var(--dim); font-size: var(--t-fs-xs); }
-.ew-layer-row .x { font-size: var(--t-fs-xs); padding: 1px 6px; border-radius: 4px; }
-.ew-layer-out { font-size: var(--t-fs-xs); padding: 4px 4px 0; }
-.ew-layer-out div { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
-.ew-layer-out b { font-variant-numeric: tabular-nums; }
-.ew-layer-out .sub { color: var(--dim); }
-/* material balance: per-removal disposition + the export/reuse/import rows */
-.ew-layer-disp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
-  font-size: var(--t-fs-xs); color: var(--dim); padding: 0 4px 4px 6px; }
-.ew-layer-disp input[type=number] { width: 42px; padding: 1px 4px; font-size: var(--t-fs-xs); }
-.ew-layer-disp input[type=text] { width: 74px; padding: 1px 4px; font-size: var(--t-fs-xs); }
-.ew-layer-disp .exp { color: var(--text); font-variant-numeric: tabular-nums; }
-.ew-layer-disp .sep { opacity: .45; }
-.ew-balance { padding: 6px 8px 10px; border-top: 1px solid var(--line); }
-.ew-bal-cut { display: flex; align-items: center; gap: 6px; font-size: var(--t-fs-xs);
-  padding: 2px 4px 6px; cursor: pointer; }
-.ew-bal-out:empty::after { content: "run Calculate to see where the dirt goes";
-  color: var(--dim); font-size: var(--t-fs-xs); padding: 2px 4px; display: block; }
-.ew-bal-out .bal-row { display: grid; grid-template-columns: 1fr auto; gap: 8px;
-  align-items: baseline; padding: 3px 4px; border-radius: 6px; }
-.ew-bal-out .bal-row.k-export { background: var(--t-fill-bg); }
-.ew-bal-out .bal-row.k-import { background: var(--t-cut-bg); }
-.ew-bal-out .bal-row b { font-variant-numeric: tabular-nums; font-size: var(--t-fs-xs); }
-.ew-bal-out .bal-row .lab { font-size: var(--t-fs-xs); }
-.ew-bal-out .bal-row .why { display: block; color: var(--dim); font-size: var(--t-fs-xs);
-  line-height: 1.4; margin-top: 1px; }
-.ew-bal-out .bal-sum { font-size: var(--t-fs-xs); color: var(--dim); padding: 6px 4px 0;
-  border-top: 1px dashed var(--line); margin-top: 5px; line-height: 1.5; }
-.ew-bal-out .bal-sum b { color: var(--text); font-variant-numeric: tabular-nums; }
-.ew-bal-factors { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  font-size: var(--t-fs-xs); color: var(--dim); padding: 8px 4px 0; }
-.ew-bal-factors input { width: 62px; }
-.ew-bal-note { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.45;
-  padding: 6px 4px 0; }
-.ew-map-toggle { display: flex; align-items: center; gap: 5px; font-size: var(--t-fs-xs); margin-left: auto; white-space: nowrap; cursor: pointer; }
-.ew-map-toggle input { margin: 0; }
-/* the permanent limitation statement: always on, never dismissible, and
-   deliberately not styled as an alert - it is what the feature IS, not a
-   warning that a later run might clear */
-.ew-limit { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.5;
-  margin: 6px 12px 2px; padding: 7px 9px; border-radius: 7px;
-  border: 1px solid var(--line); background: var(--t-warn-bg); }
-.ew-limit b { color: var(--text); font-weight: 600; }
-.ew-limit .ew-limit-more { display: block; margin: 6px 0 0; font-size: var(--t-fs-xs); }
-/* what the number rests on, beside the number */
-.ew-proof { font-size: var(--t-fs-xs); line-height: 1.5; margin-top: 6px;
-  border: 1px solid var(--line); border-radius: var(--t-radius);
-  padding: 7px 9px; color: var(--dim); }
-.ew-proof.off { display: none; }
-.ew-proof .ep-head { color: var(--text); font-weight: 600; }
-.ew-proof .ep-verdict { font-variant-numeric: tabular-nums; }
-.ew-proof.v-pass { border-color: var(--t-ok, #2ea043); }
-.ew-proof.v-pass .ep-verdict { color: var(--t-ok, #2ea043); }
-.ew-proof.v-warn { border-color: var(--t-warn); }
-.ew-proof.v-warn .ep-verdict { color: var(--t-warn); }
-.ew-proof ul { margin: 4px 0 0; padding-left: 16px; }
-.ew-proof li { margin: 2px 0; }
-.ew-proof li.s-warn { color: var(--t-warn); }
-.ew-proof li.s-none { color: var(--dim); }
-.ew-proof .ep-worst { display: block; margin-top: 4px;
-  font-variant-numeric: tabular-nums; }
-/* the contour interval, with somewhere to type your own */
-.ew-cov-ivset { margin-top: 6px; display: flex; flex-wrap: wrap;
-  align-items: baseline; gap: 6px; }
-.ew-cov-ivset label { font-weight: 600; }
-.ew-cov-ivset input { width: 72px; font: inherit; padding: 1px 4px;
-  border: 1px solid var(--line); border-radius: 6px;
-  background: transparent; color: var(--text); }
-.ew-cov-ivset .ew-iv-why { color: var(--dim); }
-.ew-cov-ivset .ew-iv-quote { flex-basis: 100%; color: var(--dim);
-  font-style: italic; }
-
-/* THE REQUIRED-INPUT CONTRACT. Green only when nothing required is open;
-   otherwise the warn colour every other "check this before you price it"
-   state uses on this panel. */
-.ew-ready { font-size: var(--t-fs-xs); line-height: 1.5; margin: 6px 12px 8px;
-  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
-.ew-ready.off { display: none; }
-.ew-ready .ri-head { font-weight: 600; }
-.ew-ready .ri-verdict { font-variant-numeric: tabular-nums; }
-.ew-ready.r-ready { border-color: var(--t-ok, #2ea043); }
-.ew-ready.r-ready .ri-verdict { color: var(--t-ok, #2ea043); }
-.ew-ready.r-open { border-color: var(--t-warn); }
-.ew-ready.r-open .ri-verdict { color: var(--t-warn); }
-.ew-ready ul { margin: 5px 0 0; padding-left: 4px; list-style: none; }
-.ew-ready li { margin: 3px 0; padding-left: 16px; text-indent: -16px; }
-.ew-ready .ri-mark { display: inline-block; width: 12px; text-indent: 0; }
-.ew-ready li.ri-supplied .ri-mark { color: var(--t-ok, #2ea043); }
-.ew-ready li.ri-missing .ri-mark { color: var(--t-warn); }
-.ew-ready li.ri-assumed .ri-mark { color: var(--t-warn); }
-.ew-ready li.ri-not-built { color: var(--dim); }
-.ew-ready .ri-why { display: block; color: var(--dim); text-indent: 0;
-  padding-left: 12px; }
-.ew-ready .ri-ok { font: inherit; margin-left: 6px; padding: 0 6px;
-  border: 1px solid var(--line); border-radius: 6px; background: transparent;
-  color: var(--text); cursor: pointer; }
-.ew-ready .ri-ok:hover { border-color: var(--t-ok, #2ea043); }
-
-/* what the software carried to the top of a hill, and what it refused to.
-   Folded: the summary is the whole claim, the list is the evidence. */
-.ew-proof .ep-closure { display: block; margin-top: 5px; }
-.ew-proof .ep-closure > summary { cursor: pointer; color: var(--t-warn); }
-.ew-proof .ep-closure .ep-why { color: var(--dim); }
-.ew-proof .ep-closure ul { margin: 3px 0 0; }
-.ew-basis { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.5;
-  padding: 0 12px 8px; }
-.ew-basis b { color: var(--text); font-variant-numeric: tabular-nums; }
-.ew-basis .unbounded { display: block; margin-top: 3px; color: var(--t-warn); }
-/* machine-read elevations under a volume: the same warn colour the
-   unbounded-region caveat uses, because it is the same class of fact -
-   something about this number needs checking before it is priced. */
-.ew-basis .ew-basis-ocr { display: block; margin-top: 3px; color: var(--t-warn); }
-/* which surface produced the number - stated, never implied */
-.ew-basis .ew-basis-model { display: block; margin-top: 3px;
-  color: var(--t-info); }
-
-/* the surface-model picker, above Calculate */
-.ew-model { display: flex; align-items: center; gap: var(--t-sp-2);
-  padding: var(--t-sp-2) 12px; flex-wrap: wrap;
-  font-size: var(--t-fs-xs); border-top: 1px solid var(--line); }
-.ew-model label { color: var(--dim); }
-.ew-model select { font-size: var(--t-fs-xs); padding: 2px 4px; }
-.ew-model .ew-model-note { flex: 1 1 100%; color: var(--t-info);
-  font-size: var(--t-fs-xs); line-height: var(--t-lh-tight); }
 
 /* an INFERRED elevation - counted between two labelled contours, never
    printed on the sheet. Marked on the row itself so it cannot pass for a
    read label at a glance. */
-.ew-row.ew-inferred { background: var(--t-info-bg); }
 .ew-row input.z.inferred { border-style: dashed; }
-.ew-inf-tag { display: inline-block; margin-right: 4px; padding: 0 4px;
-  border-radius: var(--t-r-pill); background: var(--t-info);
-  color: var(--t-stage); font-size: var(--t-fs-xs); font-weight: 600; }
-.ew-inf-why { color: var(--dim); font-size: var(--t-fs-xs);
-  line-height: var(--t-lh-tight); margin-top: 2px; }
 /* consent row: nothing priced until this is pressed */
 .ew-take { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   padding: 0 12px 10px; }
 /* .off, not the hidden attribute: the section collapse handler writes
    el.hidden on every id it owns and would un-hide these on expand */
-.ew-basis.off, .ew-take.off { display: none; }
-#ewAdd, #trAdd { font-weight: 600; }
-#ewAdd.on, #trAdd.on { background: var(--t-warn-bg); border-color: var(--t-warn); color: var(--t-warn); }
+.ew-take.off { display: none; }
+#trAdd { font-weight: 600; }
+#trAdd.on { background: var(--t-warn-bg); border-color: var(--t-warn); color: var(--t-warn); }
 .ew-take-note { font-size: var(--t-fs-xs); color: var(--dim); line-height: 1.45; flex: 1; min-width: 160px; }
 
 .side-head h2, .takeoff-head h2 { cursor: pointer; user-select: none; }
@@ -549,7 +384,7 @@ canvas#view.panning { cursor: grabbing; }
 .tr-grid input, .tr-grid select { width: 100%; padding: 3px 6px; font-size: var(--t-fs-xs); }
 .tr-rules { font-size: var(--t-fs-xs); color: var(--dim); }
 .tr-rule { display: grid; grid-template-columns: 1fr 66px 1fr 66px; gap: 5px; align-items: center; padding: 2px 0; }
-/* Pierce depth bands (read-only LF per band, from the typed profile).
+/* Contractor depth bands (read-only LF per band, from the typed profile).
    .off like .ew-take: the trHead collapse handler owns `hidden`, so an
    attribute here would be un-hidden on every expand. */
 .tr-bands { margin: 2px 12px 4px; padding: 7px 9px; border: 1px solid var(--line);
@@ -562,6 +397,23 @@ canvas#view.panning { cursor: grabbing; }
 .tr-band-row { display: flex; justify-content: space-between; gap: 8px;
   padding: 1px 2px; font-variant-numeric: tabular-nums; }
 .tr-bands-note { color: var(--dim); font-size: var(--t-fs-xs); line-height: 1.45; margin-top: 4px; }
+/* runs list, profile picture and notes (fix/trenching, 2026-09-26) */
+.tr-runs { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font-size: var(--t-fs-xs); }
+.tr-runs-head { margin-bottom: 3px; }
+.tr-sys { color: var(--dim); margin: 4px 0 2px; font-weight: 600; }
+.tr-run { display: flex; gap: 6px; align-items: baseline; padding: 3px 6px; border-radius: 5px; cursor: pointer;
+  border: 1px solid transparent; }
+.tr-run:hover { background: var(--hover, rgba(0,0,0,0.05)); }
+.tr-run.on { border-color: var(--accent); background: var(--accent-bg, rgba(0,160,80,0.08)); }
+.tr-run.added b::after { content: ""; }
+.tr-run .tr-run-q { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tr-split { display: block; color: var(--dim); margin-top: 5px; line-height: 1.4; }
+.tr-prof { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font-size: var(--t-fs-xs); }
+#trProf { width: 100%; height: auto; display: block; background: #fff; border-radius: 4px; }
+.tr-prof-line { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+.tr-prof-line select { font-size: var(--t-fs-xs); padding: 2px 4px; max-width: 100%; }
+.tr-note { color: var(--dim); font-size: var(--t-fs-xs); line-height: 1.45; margin-top: 3px; }
+.tr-note.warn { color: var(--t-warn, #a65f00); }
 
 .sym-row { display: grid; grid-template-columns: 54px 1fr 60px; gap: 6px; align-items: center; padding: 3px 6px; border-radius: 6px; }
 .sym-row:hover { background: var(--hover); }
@@ -574,6 +426,8 @@ canvas#view.panning { cursor: grabbing; }
 .sym-name { font-family: var(--mono); font-weight: 600; letter-spacing: .04em; }
 .sym-chk-ok { color: var(--t-ok); }
 .sym-chk-bad { color: var(--t-stop); font-weight: 600; }
+/* fewer than a schedule that counts the whole set: a fact about this sheet, not an alarm */
+.sym-chk-part { color: var(--t-text-dim, #8a8f98); }
 .sym-sched { font-size: var(--t-fs-xs); color: var(--dim); padding: 4px 8px 6px; border-bottom: 1px solid var(--line); }
 .sym-sched b { color: var(--t-text); font-family: var(--mono); }
 .sym-total { font-size: var(--t-fs-xs); padding: 6px 8px; border-top: 1px solid var(--line); color: var(--dim); }
@@ -845,6 +699,8 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .page-strip.collapsed .triage-bar { display: none; }
 .thumb.tri-core { border-top: 3px solid var(--ok); }
 .thumb.tri-maybe { border-top: 3px solid var(--t-warn); }
+/* a floor or foundation plan: the sheets Flooring, Count and Structure work on */
+.thumb.tri-plan { border-top: 3px solid var(--accent, var(--ok)); }
 .thumb.tri-unknown { border-top: 3px dashed var(--dim); }
 .thumb.tri-dim { opacity: .35; }
 .thumb.tri-dim:hover { opacity: 1; }
@@ -882,6 +738,9 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .bid-mode { margin-left: auto; font-size: var(--t-fs-xs); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .bid-bucket.bid-empty summary { opacity: .55; }
 .bm-nounit { font-size: var(--t-fs-xs); color: var(--t-warn); margin-left: 6px; white-space: nowrap; }
+/* the "replaced by its run row" note (D03): long enough to wrap, so it shares
+   the row with the family name instead of squeezing it to one letter a line */
+.bm-nounit.bm-note { white-space: normal; flex: 1 1 100%; min-width: 0; max-width: 100%; margin-left: 0; }
 /* the watch-list block at the top of the Sheet callouts panel */
 .wl-rows { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .wl-title { font-weight: 600; font-size: var(--t-fs-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--dim); }
@@ -895,12 +754,6 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .wl-item:hover { color: inherit; }
 .wl-item.oos { text-decoration: line-through; }
 .ps-row .wl-line { flex-wrap: wrap; }
-/* the earthwork panel's rough-place line (area x depth) */
-.ew-place { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 4px; font-size: var(--t-fs-xs); }
-.ew-place input[type=number] { width: 64px; padding: 2px 6px; font-size: var(--t-fs-xs); }
-.ew-place #ewPlaceLess { width: 84px; }
-.ew-place .ew-meta { flex-basis: 100%; }
-#ewMapNumsWrap { margin-left: 8px; }
 .st-modes button.active { background: var(--t-select); border-color: var(--t-select); color: #fff; }
 .st-draft { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px;
   border: 1px solid var(--t-select); border-radius: 8px; }
@@ -919,31 +772,6 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .st-row-in input { width: 100%; padding: 2px 4px; font-size: var(--t-fs-xs); }
 .st-total { font-family: var(--mono); font-size: var(--t-fs-xs); color: var(--text); padding: 6px 6px 2px;
   border-top: 1px solid var(--line); margin-top: 4px; }
-
-/* spot grades + strip-area control (earthwork) */
-.ew-spots { border-top: 1px solid var(--line); padding: 8px 10px 10px; }
-.ew-spots .sp-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-  font-size: var(--t-fs-xs); color: var(--dim); }
-.ew-spots .sp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
-.ew-spots label.sp-tag { display: inline-flex; align-items: center; gap: 4px;
-  font-size: var(--t-fs-xs); background: var(--panel); border: 1px solid var(--line);
-  border-radius: 3px; padding: 2px 7px; cursor: pointer; }
-.ew-spots label.sp-tag.on { border-color: var(--accent); color: var(--text); }
-.ew-spots .sp-note { font-size: var(--t-fs-xs); color: var(--dim); margin-top: 7px; line-height: 1.45; }
-.ew-spots button.sp-side { font-size: 10px; padding: 1px 5px; margin-left: 2px;
-                           border-radius: 4px; line-height: 1.5; }
-.ew-spots button.sp-side.on-ex { background: var(--t-exist-bg); border-color: var(--t-exist); color: var(--t-exist); }
-.ew-spots button.sp-side.on-pr { background: var(--t-prop-bg); border-color: var(--t-prop); color: var(--t-prop); }
-#gzSection.gz-wait .ew-bound-row button { opacity: .45; pointer-events: none; }
-#gzSection.gz-wait .ew-bound-lab { opacity: .6; }
-.gz-wait-note { font-size: var(--t-fs-xs); color: var(--dim); margin-top: 6px; line-height: 1.45; }
-.ew-spots .sp-datum { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-size: var(--t-fs-xs); }
-.ew-spots .sp-datum input { width: 78px; }
-.ew-area { display: flex; align-items: center; gap: 7px; padding: 8px 10px;
-  border-top: 1px solid var(--line); font-size: var(--t-fs-xs); flex-wrap: wrap; }
-.ew-area input { width: 92px; }
-.ew-area .ew-unit { color: var(--dim); }
-.ew-area .ew-area-note { flex: 1 1 100%; color: var(--dim); font-size: var(--t-fs-xs); line-height: 1.45; }
 
 /* whole-job mark rollup: one row per mark code, one column per sheet */
 .roll-tbl { width: 100%; border-collapse: collapse; font-size: var(--t-fs-xs);
@@ -977,6 +805,8 @@ canvas.ml-swatch { width: 40px; height: 9px; }
 .ar-why.tag { background: var(--t-ok-bg); color: var(--t-ok); }
 .ar-why.legend, .ar-why.layer { background: var(--t-info-bg); color: var(--t-info); }
 .ar-why.none, .ar-why.unnamed { background: var(--t-warn-bg); color: var(--t-warn); }
+.ar-note { display: flex; align-items: center; gap: 6px; margin: 4px 0; padding: 4px 8px; border-radius: 6px; background: var(--t-stop-bg); color: var(--t-stop); font-size: var(--t-fs-xs); }
+.ar-note span { flex: 1; }
 .ar-check { font-size: var(--t-fs-xs); font-weight: 700; padding: 1px 6px; border-radius: 10px; }
 .ar-check.ok { background: var(--t-ok-bg); color: var(--t-ok); }
 .ar-check.bad { background: var(--t-stop-bg); color: var(--t-stop); }
@@ -1197,67 +1027,13 @@ canvas.ml-swatch { width: 40px; height: 9px; }
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* --- earthwork volumes computed at a scale that is no longer in force ----
-   Unlike areas, cut and fill cannot be rescaled by arithmetic on the client:
-   the two surfaces are re-integrated server-side. So the panel says the
-   number is stale and offers the redo, rather than showing cubic yards that
-   quietly belong to a superseded scale. */
-.ew-stale {
-  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
-  margin: 8px 0; padding: 9px 11px; border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--t-warn) 45%, transparent);
-  background: var(--t-warn-bg); color: var(--t-warn);
-  font-size: var(--t-fs-sm); line-height: 1.45;
-}
-.ew-stale b { color: var(--t-text); }
-
-/* THE ABSTAIN, and the rows the reader refused. Both say "the number you
-   expected is not here, and this is why" - the same amber register as
-   .ew-stale, deliberately, because they are the same kind of statement.
-   .ew-refused turns the result into a BLOCK (it is normally an inline
-   span beside the button) so a refusal and its per-surface counts can
-   never be skimmed as a volume. */
-.ew-result.ew-refused {
-  /* flex-basis with the wrap above = its own full-width line (see
-     .ew-actions); `display:block` alone left it a squeezed flex item. */
-  display: block; flex-basis: 100%; margin: 6px 0 0; padding: 9px 11px; border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--t-warn) 45%, transparent);
-  background: var(--t-warn-bg); color: var(--t-warn);
-  font-size: var(--t-fs-sm); line-height: 1.45;
-}
-.ew-result.ew-refused b { color: var(--t-text); }
-.ew-result.ew-refused .ew-meta { margin-top: 5px; display: block; }
-.ew-dropped {
-  margin: 6px 0; padding: 8px 10px; border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--t-warn) 45%, transparent);
-  background: var(--t-warn-bg); color: var(--t-warn);
-  font-size: var(--t-fs-xs); line-height: 1.45;
-}
-.ew-dropped b { color: var(--t-text); }
-/* The cut/fill map's own refusal. Same amber register, and a BLOCK on its
-   own line inside .ew-actions so it can never be read as part of the
-   volume sentence beside it - the volume may be perfectly good while the
-   map is impossible (a layers-only sheet has no dz grid to paint). */
-.ew-map-note {
-  flex-basis: 100%; margin: 6px 0 0; padding: 8px 10px; border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--t-warn) 45%, transparent);
-  background: var(--t-warn-bg); color: var(--t-warn);
-  font-size: var(--t-fs-xs); line-height: 1.45;
-}
-.ew-map-note b { color: var(--t-text); }
-
 /* --- earthwork limit of work -------------------------------------------
    Without one, cut/fill is integrated over the intersection of the two
    surfaces' convex hulls. On a 600-acre sheet that read fill 2.6M CY against
    the estimator's own 1.6M - "it's filling all that stuff outside". */
 .ew-bound { margin: 8px 0; padding: 8px 10px; border-radius: 8px;
   border: 1px solid var(--line); background: var(--t-surface-1); }
-.ew-bound-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ew-bound-row + .ew-bound-row { margin-top: 6px; }
-.ew-bound-lab { font-size: var(--t-fs-xs); color: var(--dim); }
-.ew-bound-state { font-size: var(--t-fs-xs); color: var(--dim); }
 .ew-bound.on { border-color: var(--accent); background: var(--accent-deep); }
-.ew-bound.on .ew-bound-state { color: var(--accent); font-weight: 600; }
 :root[data-theme="light"] .ew-bound.on { background: color-mix(in srgb, var(--t-accent) 14%, transparent); }
 
 /* --- upload: drag a plan set onto the window ----------------------------
@@ -1437,7 +1213,7 @@ button.ghost:hover { color: var(--text); background: var(--hover); }
    struck through - the visible state the consent pattern requires - and
    the cap row is a button because "and N more" must open, never hide. */
 .ck-panel { border-bottom: 1px solid var(--line); }
-/* Bounded like the other long lists: 12 doubt rows measured 1,467px on Oncor
+/* Bounded like the other long lists: 12 doubt rows measured 1,467px on a substation
    C-04, which is twice the height of the whole column. The count is already
    in the header (renderCheckQueue writes "Check these (N)" into #ckTitle),
    and #ckMore / #ckPending stay OUTSIDE this scroll so the "there are more"
@@ -1487,19 +1263,19 @@ button.ghost:hover { color: var(--text); background: var(--hover); }
 /* UNASSIGNED is a finding, not a bid line: amber, the register the app
    already uses for "look at this" (.ew-stale, .sp-conflict). */
 .bid-unassigned .bid-b-name { color: var(--t-warn); }
-.bid-member { display: flex; align-items: flex-start; gap: 6px;
+.bid-member { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap;
   padding: 2px 0 2px 15px; font-size: var(--t-fs-xs); cursor: pointer; }
 .bid-member:hover .bm-label { color: var(--accent); }
 .bid-member.nogeom { cursor: default; }
 .bid-member.nogeom:hover .bm-label { color: inherit; }
 .bid-member.bid-iso .bm-label { color: var(--accent); font-weight: 600; }
 /* The bid view is where an estimator reads WHAT is being priced, so a family
-   name is not decoration. Measured 2026-09-01 on Oncor C-04: all 29 member
+   name is not decoration. Measured 2026-09-01 on a substation C-04: all 29 member
    rows truncated, the worst losing 51% ("ADJACENT PROPERTY LINE (legend)" ->
    half a name). The full text was only reachable by hovering for a tooltip.
    They wrap now; the row's other columns are flex:none, so the label is the
    only thing that grows and nothing else moves. */
-.bm-label { flex: 1; min-width: 0;
+.bm-label { flex: 1; min-width: 9ch;
   white-space: normal; overflow-wrap: anywhere; }
 .bm-size { flex: none; font-size: var(--t-fs-xs); line-height: 1.4; padding: 0 3px;
   border: 1px solid var(--line); border-radius: 3px; color: var(--dim); }
@@ -1513,15 +1289,6 @@ button.ghost:hover { color: var(--text); background: var(--hover); }
 .bid-bysize { padding: 0 0 3px 15px; color: var(--dim); font-size: var(--t-fs-xs);
   font-family: var(--mono); }
 .bid-none { color: var(--dim); font-size: var(--t-fs-xs); padding: 6px 0; }
-
-/* cut/fill map legend: the gradient IS the map's own color ramp (cut blue,
-   fill yellow-orange), labeled with the ref depth so "how dark = how deep"
-   is on screen, not in a tooltip. */
-.ew-map-legend { display: inline-flex; align-items: center; gap: 6px;
-  margin-left: 10px; font-size: var(--t-fs-xs); color: var(--dim); }
-.ew-map-legend .eml-bar { width: 92px; height: 9px; border-radius: 4px;
-  background: linear-gradient(90deg, rgba(43,98,209,.95), rgba(43,98,209,0) 48%,
-    rgba(232,150,34,0) 52%, rgba(232,150,34,.95)); border: 1px solid var(--t-border); }
 
 /* ---------- TOOLS dropdown: the header's tool buttons, one entry point ----
    The nine tool buttons MOVED into #toolsMenu unchanged (ids, handlers,
@@ -1618,8 +1385,6 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
 .sv-note { color: var(--dim); font-size: var(--t-fs-xs); margin: 2px 0 8px; }
 .sv-table { display: grid; grid-template-columns: 1fr 60px 110px 110px 26px;
   gap: 2px 10px; align-items: center; font-size: var(--t-fs-xs); }
-.sv-table .sv-th { font-size: var(--t-fs-xs); color: var(--dim);
-  padding-bottom: 4px; }
 .sv-table .sv-lab { overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .sv-table .sv-unit, .sv-table .sv-where { color: var(--dim);
@@ -1634,15 +1399,6 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
   flex-wrap: wrap; }
 .sv-addrow input[type=text] { flex: 1; min-width: 180px; }
 .sv-addrow input[type=number] { width: 100px; }
-.sv-mat { display: grid; grid-template-columns: 1fr 90px 110px 110px;
-  gap: 2px 10px; align-items: baseline; font-size: var(--t-fs-xs); margin-top: 6px; }
-.sv-mat .sv-th { font-size: var(--t-fs-xs); color: var(--dim);
-  padding-bottom: 4px; }
-.sv-cite { grid-column: 1 / -1; color: var(--dim); font-size: var(--t-fs-xs);
-  padding: 0 0 8px 12px; }
-.sv-ovr { display: flex; gap: 8px; align-items: center; margin-top: 10px;
-  flex-wrap: wrap; font-size: var(--t-fs-xs); }
-.sv-ovr input[type=number] { width: 90px; }
 .sv-io { display: flex; gap: 10px; align-items: center; }
 .sv-preview { margin-top: 10px; font-size: var(--t-fs-xs); }
 .sv-preview .sv-badline { color: var(--dim); font-family: var(--mono);
@@ -1657,95 +1413,6 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
 #selInfo { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 #selInfo:empty { display: none; }   /* the id rule above outranks .tk-info:empty */
 .sel-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The contour elevation, as its own flex:none chip. It is the one value on
-   this pill that must survive any window width, so it is deliberately NOT
-   part of .sel-txt - a flex:none child cannot be ellipsized. */
-/* ---- THE ELEVATION READOUT --------------------------------------------
-   The elevation is the number the operator acts on, so it does not compete
-   for room on the floating selection pill and it does not move.
-
-   WHAT WAS WRONG. .canvas-status is bottom-anchored, CENTRED
-   (left:50%/translateX(-50%)) and flex-wrap:wrap. So the chip's screen
-   position was a function of (a) how long this line's description happened
-   to be, (b) which of the pill's five children were present, and (c)
-   whether #ghostInfo happened to be sharing the row. Measured on Oncor
-   Cloudcrest engine page index 3 = printed C-04, 1536 px: over 14 contours
-   the chip's left edge ranged 920.4 -> 1023.0 px, and hovering any style
-   row wrapped the row and lifted the chip 785.4 -> 747.4 px. Nothing was
-   clipped at any width tested (1280/1366/1440/1920 at 100/110/125% zoom,
-   24 combinations, chip 100% visible in all 24) - it moved.
-
-   WHAT THIS IS. One box, absolutely positioned against a CORNER of the
-   sheet area, on its own line, with nothing beside it. top/right are
-   constants, so its position cannot depend on its own width, on a
-   sibling's, or on the window's. It wraps INSIDE itself and is capped at
-   the stage width, so a long provenance sentence can never push anything
-   off screen. z-index sits above .canvas-status (5) and .mini-legend (4).
-   It deliberately overlays the drawing, exactly as those two already do. */
-.sel-elev { position: absolute; top: 12px; right: 12px; z-index: 6;
-  /* A FIXED FOOTPRINT, so the digits land on the same pixel every time.
-     Anchoring the box alone was not enough: right-anchored and shrink-to-
-     fit, its LEFT edge still moved 1288.9 -> 1389.0 px over 14 contours,
-     because "EL 564 · inferred" is 89 px narrower than "EL 554.3 · “BW”
-     label 7.7 pt away". Width fixed and content left-aligned, the number
-     starts at one x forever and a long provenance sentence wraps DOWNWARD
-     inside the box, where nothing else is. */
-  width: 250px; max-width: calc(100% - 24px);
-  display: flex; flex-direction: column;
-  /* THE BOX IS NOT A BUTTON, AND IT SITS ON THE DRAWING. With
-     pointer-events on the container, a fixed 250 x 55 patch of sheet
-     stopped being clickable for every selected line - measured 2026-09-03,
-     a click at its centre left the selection unchanged where the same
-     pixel used to pick a line. The container lets clicks through; only the
-     text itself takes the pointer, because the provenance tooltip needs a
-     hover target and the words are a fraction of the box. */
-  align-items: flex-start; gap: 3px; pointer-events: none;
-  background: color-mix(in srgb, var(--panel) 92%, transparent);
-  border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; }
-.sel-elev[hidden] { display: none; }
-/* the constant caption is the whole point of a fixed home: the operator
-   learns one place to look, and the place still says what it is when the
-   line has no number. */
-.se-cap { font-size: var(--t-fs-xs); letter-spacing: .08em; color: var(--dim);
-  text-transform: uppercase; line-height: 1; }
-.se-none { font-size: var(--t-fs-xs); color: var(--dim); }
-.sel-elev .sel-el { font-size: var(--t-fs-sm); white-space: normal;
-  pointer-events: auto; }
-.sel-elev .se-cap, .sel-elev .se-none { pointer-events: auto; }
-.sel-el { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums;
-  font-size: var(--t-fs-xs); padding: 2px 7px; border-radius: 999px;
-  background: var(--chip); border: 1px solid var(--line); color: var(--text); }
-/* AN ELEVATION THE SHEET DOES NOT PRINT. Carried across a weld from another
-   fragment, or counted between two labelled contours - either way nothing on
-   the drawing states it. Same treatment as the earthwork panel's inferred
-   row (.ew-row.ew-inferred / input.z.inferred above): tinted, dashed edge,
-   and the word "inferred" in the chip text itself, because the number is
-   what gets read. The dashed border is the tell that survives greyscale. */
-.sel-el.inferred { background: var(--t-info-bg); border-color: var(--t-info);
-  border-style: dashed; }
-/* A NUMBER PRINTED BESIDE THE LINE, NOT IN ITS BREAK (`radius`). Real text
-   on the sheet, matched to this contour by proximity alone - on C-04 that
-   is a "551.2 BW" wall spot 2.7 pt from contour 168. Neither solid (which
-   reads as "this line's own label") nor dashed (which reads as "nothing
-   printed this"): a DOTTED edge, its own third state, and the distance -
-   plus the sheet's own tag when there is one - in the chip text. */
-.sel-el.nearby { border-style: dotted; border-color: var(--t-warn, var(--line));
-  background: var(--t-warn-bg, var(--chip)); }
-/* A NUMBER MACHINE-READ OFF A PICTURE (`gap-ocr`). The border in this
-   vocabulary says WHERE the number came from, and for this case that is not
-   in doubt: the sheet prints the label in this contour's own break, so the
-   edge stays SOLID exactly like an `inline` read. What is in doubt is the
-   TRANSCRIPTION - the drafter exploded the label to vectors, so the digits
-   came out of an OCR pass, and on C-04 that is 69 of 150 rows (46%, the
-   largest bucket) with a confirmed misread among them (chain 417: the patch
-   prints 582/582/581/579/580, the reader returned 551). So: same edge, a
-   warn tint, and - the tell that survives greyscale - "· read from a
-   picture" in the chip TEXT, beside the number itself. */
-.sel-el.ocr { border-color: var(--t-warn, var(--line));
-  background: var(--t-warn-bg, var(--chip)); }
-/* ...and the abstain state: the reader did not say where the number came
-   from, so the chip does not claim either way. */
-.sel-el.unknown { border-style: dashed; color: var(--dim); }
 .fam-sel { flex: none; max-width: 180px; font-size: var(--t-fs-xs); padding: 2px 6px;
   border-radius: 6px; background: var(--chip); color: var(--text);
   border: 1px solid var(--line); cursor: pointer; }
@@ -1785,7 +1452,7 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
    A row that is both isolated and selected says both, in one string.
 
    IT GETS ITS OWN LINE - `grid-column: 3 / -1`, the same span .style-layer
-   and .style-scope already use. Measured live on Oncor C-04 2026-09-01: at
+   and .style-scope already use. Measured live on a substation C-04 2026-09-01: at
    the row's right-hand end (margin-left:auto, which is what .iso::after
    does) the tag ate the name column and five selected rows printed
    "Unnai", "Unna", "Unn". The name is the thing the operator is reading
@@ -1816,37 +1483,9 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
 .ms-pop .fam-sel { max-width: 100%; width: 100%; }
 .ms-pop .ms-note { margin-top: var(--t-sp-2); font-size: var(--t-fs-xs);
   line-height: var(--t-lh-tight); color: var(--t-text-dim, var(--dim)); }
-/* --- grading zones -------------------------------------------------------
-   Declared-design regions (pad / plane / balance / strip) computed against
-   the detected existing ground. Panel rows live inside the earthwork panel;
-   the modal is a plain centered overlay, app-styled, no library. */
-.gz-hint { font-size: var(--t-fs-xs); color: var(--dim); margin-top: 6px; }
-.gz-rows { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.gz-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; }
-.gz-row.added { border-color: var(--accent); }
-.gz-row input.gz-name { width: 84px; font-size: var(--t-fs-xs); padding: 1px 4px;
-  background: transparent; border: 1px solid transparent; color: var(--text); }
-.gz-row input.gz-name:hover, .gz-row input.gz-name:focus {
-  border-color: var(--line); }
-.gz-row .gz-sum { font-size: var(--t-fs-xs); color: var(--dim); font-family: var(--mono); }
-.gz-row .gz-cyf { font-size: var(--t-fs-xs); margin-left: auto; white-space: nowrap; }
-.gz-row .gz-err { color: var(--t-warn); font-size: var(--t-fs-xs); }
-.gz-row .mini.on { border-color: var(--accent); color: var(--accent); }
-.gz-totals { margin-top: 6px; font-size: var(--t-fs-xs); display: flex; gap: 12px;
-  font-family: var(--mono); color: var(--text); }
-.gz-totals b { font-weight: 600; }
-/* ZONE TABLE: one line per zone - area, strip, cut, fill, net, total, base -
-   with an all-zones row once there are two (Beaumont's per-region sheet) */
-.gz-table { margin-top: 6px; overflow-x: auto; }
-.gz-table table { border-collapse: collapse; font-size: var(--t-fs-xs); width: 100%; }
-.gz-table th, .gz-table td { padding: 2px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-.gz-table td:first-child { max-width: 76px; overflow: hidden; text-overflow: ellipsis; }
-.gz-table th { color: var(--dim); font-weight: 500; text-align: left; }
-.gz-table th.num, .gz-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.gz-table tr.gz-tot td { font-weight: 600; border-bottom: none; }
-.gz-table .gz-m-note { margin-top: 3px; }
 
+/* --- the plain centered overlay (today: the bid-file chooser, #bidPick) --
+   app-styled, no library. The gz- names are historical. */
 .gz-modal { position: fixed; inset: 0; z-index: 80;
   background: rgba(0, 0, 0, .45); display: flex; align-items: center;
   justify-content: center; }
@@ -1857,27 +1496,7 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
 .gz-m-head { display: flex; align-items: center; gap: 8px; }
 .gz-m-head h2 { margin: 0; font-size: var(--t-fs-base); flex: 1; }
 .gz-m-exist { font-size: var(--t-fs-xs); color: var(--dim); margin: 6px 0 10px; }
-.gz-m-design { display: flex; flex-direction: column; gap: 6px; }
-.gz-m-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  font-size: var(--t-fs-xs); }
 .gz-num { width: 84px; font-size: var(--t-fs-xs); padding: 2px 4px; }
-.gz-num.gz-sm { width: 56px; }
-.gz-m-note { font-size: var(--t-fs-xs); color: var(--dim); }
-.gz-m-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  margin: 10px 0; font-size: var(--t-fs-xs); }
-.gz-m-live { border: 1px solid var(--line); border-radius: 8px;
-  background: var(--t-surface-1); padding: 8px 10px; min-height: 40px;
-  font-size: var(--t-fs-xs); }
-.gz-m-live .gz-big { font-size: var(--t-fs-md); font-weight: 600; }
-.gz-m-live .gz-meta { font-size: var(--t-fs-xs); color: var(--dim); display: block;
-  margin-top: 3px; }
-.gz-m-live .gz-warn { color: var(--t-warn); }
-.gz-m-live img.gz-map { display: block; max-width: 100%; margin-top: 8px;
-  image-rendering: pixelated; border: 1px solid var(--line);
-  border-radius: 4px; background: #fff; }
-.gz-m-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px;
-  flex-wrap: wrap; }
-#gzMSave { background: var(--accent-deep); border-color: var(--accent); }
 
 /* Rich hover demo popover beside the toolkit rail (TIPVID, end of app.js).
    A hint, never a click target: pointer-events none, closed on leave/Esc/
@@ -1890,6 +1509,10 @@ main.sv-open #pageStrip, main.sv-open #sidebar, main.sv-open #stage {
   box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
 #tipvid video { display: block; width: 300px; aspect-ratio: 46 / 30;
   border-radius: 6px; background: var(--t-stage); border: 1px solid var(--line); }
+/* text-only tips (clips pulled 2026-10-01): no video, so no empty box - a
+   hidden video must not keep its display:block box, and the title leads */
+#tipvid video[hidden] { display: none; }
+#tipvid .tv-title:first-child { margin-top: 0; }
 #tipvid .tv-title { margin-top: 7px; font-size: var(--t-fs-xs); line-height: 1.45;
   color: var(--text); }
 #tipvid .tv-cap { margin-top: 5px; font-size: var(--t-fs-xs); line-height: 1.5;
@@ -2094,7 +1717,7 @@ body { --w1-warn: #d79b3a; }
    label box - the app's existing rename path, not a new one. Nothing about
    the row's data changed. */
 /* Everything below was fitted to the sidebar as it is TODAY - 330px, which
-   leaves this row's main column ~131px - and measured on Oncor C-04
+   leaves this row's main column ~131px - and measured on a substation C-04
    (engine page index 3 = printed sheet 4), 65 style rows, 57 of them
    unnamed. Baseline style list: 3,663px, every row 53px.
      - the full phrase "Unnamed - no legend match" in the label box needs
@@ -2240,7 +1863,7 @@ body { --w1-warn: #d79b3a; }
   border-radius: var(--t-r-1, 4px); padding: 3px 9px; }
 /* Card names wrap to two lines rather than ellipsising at one. Measured on
    this box: 54 of the cards truncated, the worst losing 44% - and plan sets
-   routinely share a long prefix ("SHERIDAN WASHINGTON STREET WATER MAIN..."),
+   routinely share a long prefix ("TOWN NAME MAIN STREET WATER MAIN..."),
    so the cut fell exactly where the names differ. The clamp keeps the grid
    even; the full name stays in the card's title. */
 .pv-name { font-size: var(--t-fs-sm, 13px); font-weight: 600;
@@ -2449,20 +2072,6 @@ body { --w1-warn: #d79b3a; }
 
 /* ---------- PRICING: material defaults ----------------------------------- */
 #svMatBox { padding: 0 var(--t-sp-4, 16px) var(--t-sp-3, 12px); }
-.sv-mat { grid-template-columns: 1fr 90px 116px 130px;
-  font-size: var(--t-fs-sm, 13px); gap: 2px var(--t-sp-3, 12px);
-  border-top: 1px solid var(--t-border, var(--line));
-  padding-top: var(--t-sp-2, 8px); }
-.sv-mat .sv-th { font-family: var(--t-font-ui, inherit);
-  font-size: var(--t-fs-xs, 12px); font-weight: 600; letter-spacing: .04em;
-  color: var(--t-text-faint, var(--dim)); }
-/* citations are rendered verbatim from ew_defaults.js - readable, not 10.5px */
-.sv-cite { font-size: var(--t-fs-xs, 12px); line-height: 1.5;
-  color: var(--t-text-faint, var(--dim));
-  padding: 1px 0 var(--t-sp-2, 8px) var(--t-sp-3, 12px); }
-.sv-ovr { font-size: var(--t-fs-sm, 13px); gap: var(--t-sp-2, 8px);
-  margin-top: var(--t-sp-2, 8px); }
-.sv-ovr .sv-note { flex-basis: 100%; margin: 0; }
 .sv-preview .sv-badline { font-size: var(--t-fs-xs, 12px); }
 
 /* ---------- TOOLS MENU: icon + name + description + dot ------------------ */
@@ -2509,7 +2118,7 @@ body { --w1-warn: #d79b3a; }
    silently defeated the wrap this menu was written for: 7 of the 9 rows were
    cut mid-word (Analyze needed 562px in a 296px column). The name and the
    description both wrap here; `anywhere` so one long unbroken token cannot
-   push the menu wider instead. Measured 2026-09-01 on Oncor C-04. */
+   push the menu wider instead. Measured 2026-09-01 on a substation C-04. */
 .tm-txt { min-width: 0; display: block;
   white-space: normal; overflow-wrap: anywhere; }
 .tm-nm, .tm-ds { white-space: normal; }
@@ -2536,7 +2145,7 @@ body { --w1-warn: #d79b3a; }
 /* ==========================================================================
    WAVE 2 — CRITIQUE fix 4: the masthead stops being a junk drawer
    --------------------------------------------------------------------------
-   Measured before this block, live at 1920x1080 on Oncor C-04: the header
+   Measured before this block, live at 1920x1080 on a substation C-04: the header
    held 17 rendered top-level children, wrapped to THREE rows, stood 147px
    tall, and grew to 234px the moment a long status string arrived - taking
    87px straight out of the sheet, in exchange for controls that are only
@@ -2662,6 +2271,24 @@ header #pageSel { flex: none; max-width: 220px; }
   font-family: var(--t-font-data, var(--mono)); }
 .bid-pick-act { display: flex; gap: 8px; }
 
+/* FLOORING: floor types (colour, name, prices, totals) and room rows */
+.fl-types-tbl { display: grid; grid-template-columns: minmax(0, 1fr) 58px 58px 26px;
+  gap: 2px 6px; align-items: center; font-size: var(--t-fs-xs, 12px); margin-bottom: 6px; }
+.fl-tot { grid-column: 1 / -1; padding: 0 0 4px 30px; }
+.fl-th { color: var(--t-text-dim, var(--dim)); font-size: var(--t-fs-xs, 12px); }
+.fl-td-name { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.fl-swatch { width: 22px; height: 22px; padding: 0; border: 1px solid var(--t-border, var(--line));
+  border-radius: 4px; background: none; cursor: pointer; flex: none; }
+.fl-name { flex: 1; min-width: 0; font-size: var(--t-fs-xs, 12px); padding: 2px 4px; }
+/* a room's row: the name keeps a readable width and the controls wrap under it (the box was
+   20 px wide in the 310 px rail: a name could not be read or edited in place) */
+.fl-row-top .fl-name { flex: 1 1 150px; min-width: 120px; }
+.fl-num { width: 58px; font-size: var(--t-fs-xs, 12px); padding: 2px 4px; }
+.fl-unassigned { color: var(--t-warn, #f2a33a); margin-top: 4px; }
+.fl-row-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.fl-dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.fl-sel { font-size: var(--t-fs-xs, 12px); max-width: 120px; }
+
 /* ---------- THE STATUS BAR ----------------------------------------------- */
 /* One 34px strip at the foot of the window, outside <main>, so it survives
    the Projects / Pricing view toggles: an upload that fails while the plan
@@ -2686,6 +2313,16 @@ header #pageSel { flex: none; max-width: 220px; }
   overflow: hidden; text-overflow: ellipsis; }
 .sb-seg:empty { display: none; }
 .sb-zoom { cursor: help; }
+/* why this page's cut / fill rows left its takeoff: money that left the bid, kept in view until they come back. It
+   sits beside the transient line and, like it, has a basis of 0: it shares only the room the facts and the utilities
+   leave, so it can never cut the sheet facts (a shrink weight could: critic 10, m2 - see .status-bar .status below) */
+.sb-cf { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* no margin or padding: at a basis of 0 those alone would still take room from the facts (app.js ends its words
+     with a separator instead) */
+  font-size: var(--t-fs-xs, 12px); color: var(--t-stop); cursor: help; }
+.sb-cf:empty { display: none; }
+main.pv-open ~ .status-bar .sb-cf,
+main.sv-open ~ .status-bar .sb-cf { display: none; }
 /* Middle: the transient line. It CLIPS - a 350-character message ellipsizes
    inside the bar instead of reflowing the chrome around it.
    `flex-basis: 0` is load-bearing and was arrived at by measuring, not by
@@ -3093,10 +2730,10 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
    the group leaves it where it is, unticking takes it to "nothing counted".
 
    It replaces the old `.class-head`, which was a plain text label with no
-   controls and one header per ENGINE class (five on Barn C3.0, six on Oncor
-   C-04). That rule is still in this file, further up and marked superseded,
+   controls and one header per ENGINE class (five on a civil C3.0, six on a
+   substation C-04). That rule is still in this file, further up and marked superseded,
    because nothing in app.js builds one any more. */
-/* WRAPS. Measured at the 400px sidebar on Barn C3.0: unwrapped, the
+/* WRAPS. Measured at the 400px sidebar on a civil sheet C3.0: unwrapped, the
    "rows hidden" and "opened by filter" chips ran off the right edge and were
    cut - and those two chips are the only thing on screen saying WHY the rows
    under a header are missing, so losing them is exactly the failure this
@@ -3192,7 +2829,10 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
   background: var(--t-surface-2); color: var(--t-text-dim); cursor: pointer; }
 .sel-goto:hover { background: var(--t-accent); color: var(--t-accent-ink);
   border-color: var(--t-accent); }
-.sel-goto:focus-visible { outline: 2px solid var(--t-focus);
+/* the ring is drawn with the accent itself: --t-focus is a box-shadow value
+   (0 0 0 2px accent, tokens.css) and is not a valid outline, so the five
+   rules below that used it drew no ring at all - measured 2026-09-25. */
+.sel-goto:focus-visible { outline: 2px solid var(--t-accent);
   outline-offset: 1px; }
 
 /* the same jump from the on-canvas mini legend. Quiet until the row is
@@ -3205,7 +2845,7 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
   border-color: var(--t-border); }
 .ml-goto:hover { color: var(--t-accent); border-color: var(--t-accent); }
 .ml-goto:focus-visible { color: var(--t-text-dim);
-  outline: 2px solid var(--t-focus); outline-offset: 1px; }
+  outline: 2px solid var(--t-accent); outline-offset: 1px; }
 
 /* ===== A RUN IN PROGRESS, UNMISSABLE ====================================
    From the 2026-09-02 screen share: "I liked how before it said detecting
@@ -3324,7 +2964,7 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
 .mark svg { width: 15px; height: 15px; fill: none; stroke: currentColor;
   stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .mark:hover { border-color: var(--t-border-strong); background: var(--t-surface-2); }
-.mark:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 1px; }
+.mark:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 1px; }
 /* ON states. The eye lit is the ordinary text colour, because "you can see
    it" is the resting state of a drawing and should not shout; the takeoff
    mark lit is the accent, because that one is a claim about money. */
@@ -3378,7 +3018,7 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
   border: 1px solid transparent; border-radius: var(--t-r-1);
   background: transparent; color: var(--t-text-faint); cursor: pointer; }
 .lc-x:hover { color: var(--t-text); border-color: var(--t-border-strong); }
-.lc-x:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 1px; }
+.lc-x:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 1px; }
 .lc-facts { margin-top: 3px; color: var(--t-text-dim);
   font-family: var(--t-font-data, var(--mono));
   font-variant-numeric: var(--t-numeric, tabular-nums); }
@@ -3422,7 +3062,7 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
   border-radius: 10px; padding: 26px 16px; text-align: center;
   cursor: pointer; background: var(--t-surface-2, transparent); }
 .lg-drop:hover, .lg-drop:focus-visible { border-color: var(--t-accent); }
-.lg-drop:focus-visible { outline: 2px solid var(--t-focus); outline-offset: 2px; }
+.lg-drop:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
 /* a drag is over it: the target has to answer, or a person lets go somewhere
    else and the browser navigates away to the PDF */
 .lg-drop.over { border-color: var(--t-accent);
@@ -3439,72 +3079,16 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
   margin-top: 12px; }
 .lg-note { font-size: var(--t-fs-xs); color: var(--t-text-dim, var(--dim)); }
 .lg-note.err { color: var(--t-stop); }
-/* ---- the contour coverage statement, above the rows --------------------
-   How much of this sheet's contour linework is behind the volume. It is a
-   permanent statement of fact, not a warning: neutral ink, no dismiss. */
-.ew-coverage { margin: 0 12px 6px; padding: 8px 10px;
-  border: 1px solid var(--line); border-radius: var(--t-r-sm, 4px);
-  background: var(--t-info-bg); font-size: var(--t-fs-xs);
-  line-height: var(--t-lh-tight); }
-.ew-coverage .ew-cov-head { font-weight: 600; color: var(--t-text);
-  margin-bottom: 3px; }
-.ew-coverage .ew-cov-line { color: var(--t-text); margin-top: 2px; }
-.ew-coverage .ew-cov-iv { color: var(--dim); margin-top: 4px; }
-.ew-basis .ew-basis-cov { display: block; margin-top: 3px;
-  color: var(--t-info); }
-
-/* ---- the review filter chips ------------------------------------------
-   One chip per class of evidence, each carrying its own count. The colour
-   says how far the number is from the sheet's own text: stop = a number
-   that cannot be a contour elevation on this sheet, warn = printed but
-   maybe not this line's / transcribed by machine, info = inferred, dim =
-   no elevation at all, ok = read out of the sheet's text. */
-.ew-filters { display: flex; flex-wrap: wrap; gap: 4px;
-  padding: 0 12px 6px; }
-.ew-chip { font-size: var(--t-fs-xs); padding: 2px 7px;
-  border: 1px solid var(--line); border-radius: var(--t-r-pill);
-  background: transparent; color: var(--dim); cursor: pointer; }
-.ew-chip:hover { border-color: var(--t-text); color: var(--t-text); }
-.ew-chip.on { background: var(--t-text); color: var(--t-stage);
-  border-color: var(--t-text); font-weight: 600; }
-.ew-chip.c-offinterval { color: var(--t-stop); border-color: var(--t-stop); }
-.ew-chip.c-nearby, .ew-chip.c-machine { color: var(--t-warn);
-  border-color: var(--t-warn); }
-.ew-chip.c-inferred { color: var(--t-info); border-color: var(--t-info); }
-.ew-chip.c-read { color: var(--t-ok); border-color: var(--t-ok); }
-.ew-chip.on.coffinterval { background: var(--t-stop);
-  color: var(--t-stop-ink); }
-.ew-chip.on.cnearby, .ew-chip.on.cmachine { background: var(--t-warn);
-  color: var(--t-warn-ink); }
-.ew-chip.on.cread { background: var(--t-ok); color: var(--t-ok-ink); }
-
-/* THE HYPHEN. app.js builds these as "c-" + key and "k-" + cls
-   (webui/app.js ~12622 and ~12740, and .ew-row.rc-offinterval below
-   already had it). Every rule in this block was written without one,
-   so NONE of them matched: measured live 2026-09-03, every chip
-   rendered the same grey and every row badge the same info-blue, and
-   the whole stop/warn/ok signal this vocabulary declares reached the
-   screen as text only. */
-/* the class badge on the row itself - same vocabulary as the chips */
-.ew-cls { display: inline-block; margin-right: 4px; padding: 0 5px;
-  border-radius: var(--t-r-pill); font-size: var(--t-fs-xs);
-  font-weight: 600; background: var(--t-info); color: var(--t-stage);
-  /* the row shares ~200 px with an input, three buttons and a sentence:
-     the badge stays on one line or the pill outgrows its own background */
-  white-space: nowrap; }
-.ew-cls.k-offinterval { background: var(--t-stop); color: var(--t-stop-ink); }
-.ew-cls.k-nearby, .ew-cls.k-machine { background: var(--t-warn);
-  color: var(--t-warn-ink); }
-.ew-cls.k-read { background: var(--t-ok); color: var(--t-ok-ink); }
-.ew-cls.k-none, .ew-cls.k-typed, .ew-cls.k-unknown { background: transparent;
-  color: var(--dim); border: 1px solid var(--line); font-weight: 400; }
+/* SHEETS FOR CUT / FILL: one row per page - tick, sheet number and page, and what happens to it */
+.cfs-list { margin: 0 0 12px; max-height: 50vh; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 8px; }
+.cfs-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; cursor: pointer;
+  font-size: var(--t-fs-sm, 13px); border-bottom: 1px solid var(--line); }
+.cfs-row:last-child { border-bottom: 0; }
+.cfs-row:hover { background: var(--t-surface-2, rgba(255,255,255,.04)); }
+.cfs-name { flex: 1; font-weight: 600; }
+.cfs-st { font-size: var(--t-fs-xs); color: var(--t-text-dim, var(--dim)); }
 .ew-row.rc-offinterval { background: var(--t-stop-bg); }
-.ew-row.ew-stub { opacity: .85; }
-.ew-more { display: block; width: calc(100% - 24px); margin: 6px 12px;
-  padding: 4px 8px; font-size: var(--t-fs-xs); text-align: left;
-  border: 1px dashed var(--line); border-radius: var(--t-r-sm, 4px);
-  background: transparent; color: var(--dim); cursor: pointer; }
-.ew-more:hover { color: var(--t-text); border-color: var(--t-text); }
 /* Settings -> Accounts (staff): the once-only temporary password box, the
    "you" tag, the must-change flag, and the two-press Remove. */
 .sv-temp { margin: var(--t-sp-3, 12px) 0; padding: var(--t-sp-3, 12px) var(--t-sp-4, 16px);
@@ -3520,3 +3104,66 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
 .sv-users .danger { color: var(--t-danger); }
 .sv-fld-check { display: flex; gap: var(--t-sp-2, 8px); align-items: flex-start; }
 .sv-fld-check input { margin-top: 3px; }
+
+/* ---------- CUT / FILL: the embedded cut / fill engine ---------------------
+   A stage over the workbench (the engine brings its own three-column page and
+   its own canvas); the bar above it is this app's - the totals the engine
+   reported, and the consent button that turns them into takeoff rows. */
+.cf-stage { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; flex-direction: column; background: var(--t-stage); }
+.cf-bar { display: flex; align-items: center; gap: var(--t-sp-3); padding: var(--t-sp-2) var(--t-sp-4); background: var(--t-surface-1); border-bottom: 1px solid var(--t-border); font-size: var(--t-fs-sm); }
+.cf-title { font-weight: 600; }
+.cf-sum { font-family: var(--t-font-data); font-variant-numeric: var(--t-numeric); }
+.cf-sum:empty { display: none; }
+.cf-spacer { flex: 1; }
+/* the note wraps to a second line, never cut: it was cut at 40ch with an ellipsis ("· 2 war...": check 6A);
+   the buttons and the title keep one line while the sentence and the note wrap beside them */
+.cf-note { color: var(--t-text-dim); font-size: var(--t-fs-xs); max-width: 40ch; white-space: normal; overflow-wrap: break-word; line-height: 1.3; }
+.cf-bar > button, .cf-title { flex-shrink: 0; white-space: nowrap; }
+.cf-frame { flex: 1; width: 100%; border: 0; background: var(--t-surface-1); }
+/* ---- dimension-string scale check (sheet header) ---- */
+.dim-chip { cursor: pointer; }
+.dim-use { margin-left: 4px; }
+/* ---- parts behind a calculator row (rooms under a flooring row) ---- */
+.detail-note { color: var(--dim); font-size: var(--t-fs-xs); padding: 0 8px 6px 18px; line-height: 1.35; }
+/* ---- flooring: ceiling, waste, walls by type ---- */
+.fl-types-tbl { grid-template-columns: minmax(0, 1fr) 54px 54px 48px 26px; }
+.fl-clg { width: 54px; }
+.fl-clg.from-sheet { border-style: dashed; }
+.fl-ceil { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.fl-ceil .fl-num { width: 54px; }
+.fl-walls { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+.fl-walls-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: var(--t-fs-xs); }
+.fl-walls-tbl { display: grid; grid-template-columns: minmax(58px, auto) minmax(0, 1fr) 52px 78px 52px; gap: 3px 6px;
+  align-items: center; font-size: var(--t-fs-xs); margin-top: 4px; }
+.fl-walls-styles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fl-wall-sel { max-width: 100%; }
+.fl-walls-opts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.fl-walls-tbl { grid-template-columns: minmax(64px, auto) 36px 56px 86px 56px; }
+.fl-walls-classify { margin-top: 4px; }
+.fl-walls-classify summary { cursor: pointer; }
+.fl-walls-style { display: flex; gap: 6px; align-items: center; justify-content: space-between; padding: 1px 0 1px 10px; }
+.fl-walls-style .ew-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- flooring: what comes out of the floor (fixtures) ---- */
+.fl-deduct { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 6px; }
+.fl-deduct-k { font-size: var(--t-fs-xs); color: var(--t-text); display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
+.fl-objs { margin: 2px 0 2px 18px; }
+.fl-objs summary { cursor: pointer; }
+.fl-obj { display: flex; align-items: center; gap: 4px; font-size: var(--t-fs-xs); color: var(--t-text-dim); padding: 1px 0 1px 10px; }
+.fl-obj input { margin: 0 2px 0 0; }
+
+
+/* THE 3D VIEW (2026-09-09): a full-window overlay over the sheet, its bar in
+   the title-block voice; the stage is three.js's canvas. */
+#fl3d { position: fixed; inset: 0; z-index: 60; background: var(--t-bg); display: flex; flex-direction: column; }
+#fl3d[hidden] { display: none; }
+.fl3d-bar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 6px 12px;
+  border-bottom: 1px solid var(--t-border-strong); background: var(--t-surface-1); font-size: var(--t-fs-xs); color: var(--t-text); }
+.fl3d-title { font-family: var(--t-font-data); text-transform: uppercase; letter-spacing: .08em; color: var(--t-text-dim); }
+.fl3d-bar label { display: inline-flex; gap: 4px; align-items: center; }
+.fl3d-bar input[type="number"] { width: 54px; font-size: var(--t-fs-xs); padding: 2px 4px; }
+.fl3d-note { color: var(--t-text-dim); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#fl3dStage { flex: 1; min-height: 0; position: relative; }
+#fl3dStage canvas { display: block; width: 100% !important; height: 100% !important; }
+/* the point editor's per-room button lights like a mode */
+.fl-row-top button.active { background: var(--t-select); border-color: var(--t-select); color: var(--t-accent-ink); }

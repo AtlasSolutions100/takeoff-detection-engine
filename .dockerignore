@@ -13,3 +13,6 @@ FINDINGS-*.md
 *.md
 .claude
 .DS_Store
+# the customer roster provision_demo.py reads lives on the box's volume only
+provision-accounts.txt
+**/provision-accounts.txt

@@ -1,13 +1,13 @@
 """Footing callouts and the footing schedule, read off a structural set.
 
-What the sheets print (Beaumont's Barn / Guide structural sets by IMEG,
-Jeff Ellis's Van Sickle set; measured 2026-09-16):
+What the sheets print (two residential structural sets by one engineer,
+a foundation contractor's set; measured 2026-09-16):
 
   * A FOOTING MARK next to each wall or pad on the foundation plan:
     ``CF2.0`` / ``CF3.0`` (continuous footing, the digits are the width in
     feet), ``F5.5`` / ``F10.0x6.0`` (spread footing, square or L x W),
-    Ellis's ``F-24`` (a wall footing 24 in wide) and ``S-36`` (a 36 in
-    square pad). Beaumont reads the mark for the trench floor width
+    a second set's ``F-24`` (a wall footing 24 in wide) and ``S-36`` (a 36 in
+    square pad). An excavator reads the mark for the trench floor width
     ("CF3.0 vs CF7.5 doubles the dig", call 2026-09-15 28:00-31:17).
   * A PARENTHETICAL ELEVATION beside the mark, ``(86'-0")``: the bottom of
     that footing on the architectural datum (100'-0" = main level subfloor,
@@ -17,7 +17,7 @@ Jeff Ellis's Van Sickle set; measured 2026-09-16):
   * A FOOTING SCHEDULE on the notes sheet: rows ``F3.0 | 3'-0" | 3'-0" |
     1'-0" | (3)#5 BOTTOM ...`` (spread: length, width, thickness) and
     ``CF3.0 | 3'-0" | 1'-0" | (3)#5 BOTTOM | #5@12"`` (continuous: width,
-    thickness), often two sub-tables side by side on one row band; Ellis
+    thickness), often two sub-tables side by side on one row band; the 2nd set
     prints inches (``S-42 | 42" | 42" | 10" | (5) #4 BARS EACH WAY``).
 
 Everything here is a SUGGESTION with its evidence attached (the word, the
@@ -47,6 +47,38 @@ FTIN_RE = re.compile(r"^\s*(?:" + _FTIN + r")\s*$")
 PAREN_RE = re.compile(r"^\(\s*(?:" + _FTIN + r")\s*\)$")
 BRACK_RE = re.compile(r"^\[\s*(?:" + _FTIN + r")\s*\]?$")
 _SLAB_WORDS = ("T.O.", "T.O", "TO", "TOS", "SLAB")
+
+# WHAT A SCHEDULE ROW MAY SAY. A footing is 1 to 20 ft wide (Res-A: CF2.0 to
+# CF9.5, F2.5 to F10.0x8.0; 2nd set: 24 to 42 in), a pad up to 40 ft long, a
+# thickness under 10 ft. Anything outside is a misread, never a footing:
+# Res-A civil C4.3 prints "CF3.0 ... TOF: 7715'" in a wall-grade table and
+# the reader took the 7,715 ft top-of-footing elevation for a width. That
+# one row made the set "print a schedule", switched the twin pass on for
+# every civil sheet with a neighbour radius wider than the sheet, and took
+# the server to 7-17 GB (audit 2026-09-26, D01). Rejected rows are returned
+# beside the rows, with the reason, so the panel can say what it refused.
+SCHEDULE_WIDTH_FT = (1.0, 20.0)
+SCHEDULE_LENGTH_FT = (1.0, 40.0)
+SCHEDULE_DEPTH_FT = (0.25, 10.0)
+
+
+def schedule_row_problem(rec: dict) -> str | None:
+    """Why a schedule row cannot be a footing, or None when it is sane."""
+    def bad(name, lo, hi):
+        v = rec.get(name)
+        if v is None:
+            return None
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return f"{name} unreadable"
+        if not (lo <= v <= hi):
+            return f"{name} {v:g} ft is outside {lo:g}-{hi:g} ft"
+        return None
+    if rec.get("width_ft") is None:
+        return "no width"
+    return (bad("width_ft", *SCHEDULE_WIDTH_FT) or bad("length_ft", *SCHEDULE_LENGTH_FT)
+            or bad("depth_ft", *SCHEDULE_DEPTH_FT))
 
 
 def parse_ft_in(text: str):
@@ -149,7 +181,7 @@ def find_footing_callouts(words: list, max_d_pt: float = 60.0) -> dict:
     for i, w in parens:
         x, y = _cx(w), _cy(w)
         # the tag may sit beside the number or on the line under it
-        # (Barn S1-1.3 stacks "EL (87'-0\")" over "T.O. SLAB")
+        # (Res-A S1-1.3 stacks "EL (87'-0\")" over "T.O. SLAB")
         nb = [v for v in words if ((_cx(v) - x) ** 2 + (_cy(v) - y) ** 2) ** 0.5 <= 48.0]
         tags = {_txt(v).upper().rstrip(".") for v in nb}
         if ("EL" in tags or "ELEV" in tags) and ("SLAB" in tags or "T.O" in tags or "TOS" in tags):
@@ -203,21 +235,25 @@ def read_footing_schedule(words: list, y_tol: float = 5.0) -> dict:
     A schedule is recognised by its MARK COLUMN: two or more mark words
     stacked at one x (within 8 pt). Each mark's row is the words on its
     line to the right, up to the next mark column (two sub-tables share a
-    row band on Barn S0-0.4: F... on the left, CF... on the right) or 420
+    row band on Res-A S0-0.4: F... on the left, CF... on the right) or 420
     pt. Dimension tokens in order are length, width, thickness for a
     spread footing (three) or width, thickness for a continuous one (two);
     tokens with '#' are the reinforcing, kept as printed.
 
     Returns {"rows": {mark: {kind, length_ft, width_ft, depth_ft, reinf,
                              from: "schedule"}}, "found": bool,
-             "columns": n}
+             "columns": n, "rejected": [{mark, width_ft, why}]}
+
+    A row whose numbers cannot be a footing (schedule_row_problem: width
+    outside 1-20 ft, and so on) is never a row: it is listed under
+    "rejected" with the reason instead.
     """
-    out = {"rows": {}, "found": False, "columns": 0}
+    out = {"rows": {}, "found": False, "columns": 0, "rejected": []}
     marks = [w for w in words if parse_mark(_txt(w))]
     if len(marks) < 2:
         return out
     # columns: mark words sharing an x0 within 18 pt, at least two deep.
-    # 18, not 8: on Barn S0-0.4 the three F10.0xN.0 rows start 11 pt left
+    # 18, not 8: on Res-A S0-0.4 the three F10.0xN.0 rows start 11 pt left
     # of the other F rows (a wider mark, the same column) and an 8 pt rule
     # made them a column of their own whose rows ended 4 pt later.
     cols: list = []
@@ -265,6 +301,12 @@ def read_footing_schedule(words: list, y_tol: float = 5.0) -> dict:
                 rec = {"kind": fb.get("kind"), "length_ft": None, "width_ft": dims[0], "depth_ft": None}
             rec.update({"reinf": " ".join(reinf).strip() or None, "from": "schedule",
                         "mark": m["mark"], "y": round(y, 1)})
+            why = schedule_row_problem(rec)
+            if why:
+                out["rejected"].append({"mark": m["mark"], "width_ft": rec.get("width_ft"),
+                                        "length_ft": rec.get("length_ft"),
+                                        "depth_ft": rec.get("depth_ft"), "why": why})
+                continue
             out["rows"].setdefault(m["mark"], rec)
     out["found"] = bool(out["rows"])
     return out
@@ -280,8 +322,8 @@ def join_schedule(callouts: dict, schedule: dict) -> dict:
 
 
 # ---- walls grouped by bottom of footing ---------------------------------------------
-# Beaumont colours every wall by the elevation its footing bottoms at (the
-# Bluebeam legend on Barn S1-1.3: cyan 96'-98', red 85'-2", magenta 84'-2",
+# An excavator colours every wall by the elevation its footing bottoms at (the
+# Bluebeam legend on Res-A S1-1.3: cyan 96'-98', red 85'-2", magenta 84'-2",
 # blue 83'-0") because the dig depth differs per group. Two readings of the
 # same idea, both suggestions, one rule: a line takes the callouts within
 # reach of it; one callout claims the whole line, several split it between
@@ -295,7 +337,7 @@ def join_schedule(callouts: dict, schedule: dict) -> dict:
 #     to the outline's perimeter exactly - the split of the wall the dig
 #     formula runs on.
 # Whole-chain-to-nearest-callout was the first cut; measured on S1-1.3
-# against Beaumont's own colour bands it sent his 64.6 ft red (85'-2")
+# against the excavator's own colour bands it sent his 64.6 ft red (85'-2")
 # stroke whole to 84'-2" because its legs run down past the 84'-2" callouts.
 GROUP_COLOURS = ["#00c8ff", "#ff2d2d", "#ff3df0", "#2d5bff", "#19c46a", "#ff9b1f", "#9b5cff", "#a06a2c"]
 

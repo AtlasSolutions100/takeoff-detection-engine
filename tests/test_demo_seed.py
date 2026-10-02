@@ -119,7 +119,7 @@ import provision_demo  # noqa: E402
 
 shared = provision_demo._demo_names()
 missed = sorted(n for n in manifest if n not in shared
-                and not n.startswith(provision_demo.SHARED_PREFIXES))
+                and n.casefold() not in provision_demo._shared_names())
 ok(not missed,
    "provision_demo shares every demo card (it used to hand 3 of 7 to staff)",
    missed)
