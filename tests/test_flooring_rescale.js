@@ -1,7 +1,7 @@
-// THE FLOORING ROOMS FOLLOW THE SCALE IN FORCE (check 4B, 2026-09-27). Rooms picked at 1/4" on
-// a sheet then corrected to 1/8" stayed 177.9 SF where 711.6 follows, while the status said
-// every quantity on the sheet was recalculated. flRescale() measures every room again from its
-// own outline at the scale now in force - except a room measured at an inset's own caption.
+// THE FLOORING ROOMS AND THE SCALE IN FORCE (check 4B, 2026-09-27; ruling P, 2026-10-02). Rooms picked at 1/4"
+// on a sheet then corrected to 1/8" stayed 177.9 SF where 711.6 follows, with nothing said. The rooms are the
+// server's now: a sheet whose scale on screen is not the one its rooms stand on says so and offers one click to
+// measure them again; nothing changes by itself.
 //
 // run: node tests/test_flooring_rescale.js
 "use strict";
@@ -59,68 +59,31 @@ check(/out\.rows_scale = rs/.test(fnSrc("calcStatePayload")) && /saved\.rows_sca
   check(seen.tr === 1 && seen.fl === 1 && seen.status.length === 0, "a scale change in this seat always calculates both again (its own status line says so)");
 }
 
-const calls = { applied: 0, rendered: 0, synced: 0 };
-const mk = (state, panelHidden) => new Function("state", "calls", "panelHidden",
-  "const FL_LABEL_RX = /^(Flooring|Base\\/molding|Waste|Wall area|Transition strips|Walls) \\u2014 /;\n"
-  + "const $ = (id) => ({ hidden: panelHidden });\n"
-  + "const flApplyItems = () => { calls.applied++; }; const renderFl = () => { calls.rendered++; };\n"
-  + "const flSync = () => { calls.synced++; state.fl = state._saved; state.fl.result = state.result; return state.fl; };\n"
-  + fnSrc("flScreenScale") + "\n" + fnSrc("flRescale") + "\nreturn { flRescale };")(state, calls, panelHidden);
-
-// the checker's own room: 57,624.8 pt2, picked at 4 ft per inch (1/4" = 1'-0")
+// THE ROOMS STAND ON THE SCALE THEY WERE MEASURED AT (ruling P/Q, 2026-10-02): the server's record. A sheet whose
+// scale on screen is not that one SAYS SO (Approve records the scale on screen; the server measures the rooms again)
+// and nothing is changed or written by itself: a page that merely loads with another seat's typed scale writes nothing.
+const mk = (state) => new Function("state",
+  "const $ = (id) => ({ hidden: true });\n" + fnSrc("flScreenScale") + "\n" + fnSrc("flRescale") + "\nreturn { flRescale };")(state);
 const result = { scale: { ft_per_paper_inch: 8 } };
-const bedroom = () => ({ name: "PRIMARY BEDROOM", area_pt2: 57624.8, area_sf: 57624.8 * (4 / 72) ** 2, perim_pt: 956.0, perim_lf: 956.0 * 4 / 72,
-  openings_lf: 3.0, holes_sf: 2.0, scale_ft_per_in: 4, scale_by: "on screen",
-  objects: [{ kind: "tub", area_sf: 14.1, w_ft: 4.96, h_ft: 2.92, deduct: true }], deductions: [{ name: "clicked out", area_sf: 6.0 }] });
-const inset = () => ({ name: "INSET ROOM", area_pt2: 14379.4, area_sf: 14379.4 * (8 / 72) ** 2, perim_pt: 480, perim_lf: 480 * 8 / 72,
-  openings_lf: 0, holes_sf: 0, scale_ft_per_in: 8, scale_by: "inset caption SCALE: 1/8\" = 1'-0\"", objects: [], deductions: [] });
-const drawn = () => ({ name: "DRAWN", area_pt2: 10000, area_sf: 10000 * (4 / 72) ** 2, perim_pt: 400, perim_lf: 400 * 4 / 72,
-  openings_lf: 0, holes_sf: 0, scale_ft_per_in: null, scale_by: null, objects: [], deductions: [] });
-let state = { result, extraItems: [], calcSavedLoaded: true, fl: { result, rooms: [bedroom(), inset(), drawn()] } };
-let n = mk(state, false).flRescale();
-const [b, i, d] = state.fl.rooms;
-check(n === 2 && calls.applied === 1 && calls.rendered === 1, `two rooms moved, the rows were rebuilt once and the open panel redrawn (${n}, ${calls.applied}, ${calls.rendered})`);
-check(Math.abs(b.area_sf - 711.4) < 0.1 && Math.abs(b.perim_lf - 956.0 * 8 / 72) < 1e-9, `the bedroom is measured again at 1/8": ${b.area_sf.toFixed(1)} SF (177.9 at 1/4"), walls ${b.perim_lf.toFixed(1)} LF`);
-check(Math.abs(b.openings_lf - 6.0) < 1e-9 && Math.abs(b.holes_sf - 8.0) < 1e-9 && Math.abs(b.objects[0].area_sf - 56.4) < 1e-9
-  && Math.abs(b.objects[0].w_ft - 9.92) < 1e-9 && Math.abs(b.deductions[0].area_sf - 24.0) < 1e-9,
-  "its door openings, holes, fixtures and clicked-out shapes follow: feet x 2, square feet x 4");
-check(b.scale_ft_per_in === 8 && b.scale_by === "on screen", "and it records the scale it stands on now");
-check(Math.abs(i.area_sf - 14379.4 * (8 / 72) ** 2) < 1e-9 && /^inset caption/.test(i.scale_by), "a room measured at an inset's own caption keeps that scale");
-check(Math.abs(d.area_sf - 10000 * (8 / 72) ** 2) < 1e-9 && d.scale_ft_per_in === 8, `a hand-drawn room (no scale recorded) follows too, from what its own numbers imply: ${d.area_sf.toFixed(1)} SF`);
-{
-  // the round trip is exact: the server's own feet (rounded its way) are scaled by the ratio, never
-  // replaced by the outline times the scale (53.1 LF came back 53.07, a wall-area line 0.3 SF off)
-  const srv = { name: "BED", area_pt2: 57624.8, area_sf: 177.9, perim_pt: 955.2, perim_lf: 53.1, openings_lf: 2.5, holes_sf: 0,
-                scale_ft_per_in: 4, scale_by: "on screen", objects: [], deductions: [] };
-  const st2 = { result: { scale: { ft_per_paper_inch: 8 } }, extraItems: [], calcSavedLoaded: true, fl: { result: null, rooms: [srv] } };
-  st2.fl.result = st2.result;
-  mk(st2, true).flRescale();
-  const at8 = [srv.area_sf, srv.perim_lf];
-  st2.result.scale.ft_per_paper_inch = 4;
-  mk(st2, true).flRescale();
-  check(Math.abs(at8[0] - 711.6) < 1e-9 && Math.abs(at8[1] - 106.2) < 1e-9 && srv.area_sf === 177.9 && srv.perim_lf === 53.1 && srv.openings_lf === 2.5,
-    `4 -> 8 -> 4 returns the very numbers the pick gave: ${srv.area_sf} SF, ${srv.perim_lf} LF (at 1/8": ${at8[0]} / ${at8[1]})`);
-}
-// the same scale again: nothing moves, nothing is rebuilt
-calls.applied = 0; calls.rendered = 0;
-check(mk(state, false).flRescale() === 0 && calls.applied === 0, "the same scale again moves nothing");
-// back to 1/4": the first numbers return exactly
-state.result.scale.ft_per_paper_inch = 4;
-mk(state, true).flRescale();
-check(Math.abs(state.fl.rooms[0].area_sf - 57624.8 * (4 / 72) ** 2) < 1e-9 && Math.abs(state.fl.rooms[0].objects[0].area_sf - 14.1) < 1e-9 && calls.rendered === 0,
-  "put back to 1/4\": the first numbers return; a closed panel is not drawn");
-// a fresh session: the panel was never opened, the rooms are in the job's record
-calls.synced = 0; calls.applied = 0;
-state = { result: { scale: { ft_per_paper_inch: 8 } }, extraItems: [{ label: "Flooring — Carpet", qty: 738.4, unit: "SF" }], calcSavedLoaded: true,
-          fl: null, _saved: { rooms: [bedroom()] } };
-n = mk(state, true).flRescale();
-check(n === 1 && calls.synced === 1 && calls.applied === 1 && Math.abs(state.fl.rooms[0].area_sf - 711.4) < 0.1,
-  "a session that never opened the Flooring panel brings the saved rooms up and measures them again");
-state = { result: { scale: { ft_per_paper_inch: 8 } }, extraItems: [{ label: "Site Cut", qty: 1, unit: "CY" }], calcSavedLoaded: true, fl: null, _saved: { rooms: [bedroom()] } };
-calls.synced = 0;
-check(mk(state, true).flRescale() === 0 && calls.synced === 0, "no flooring rows in the takeoff: the panel's state is left alone");
-state = { result: { scale: null }, extraItems: [], calcSavedLoaded: true, fl: { result: null, rooms: [bedroom()] } };
-check(mk(state, true).flRescale() === 0, "no scale in force: nothing moves");
+const room = (how, ft, area) => ({ name: how, uid: how, area_sf: area, scale: { how, ft }, c: { net_sf: area } });
+let state = { result, fl: { result, rooms: [room("sheet", 4, 177.9), room("view", 8, 50), room("chosen", 2, 10), room("sheet", 8, 30)] } };
+const before = JSON.stringify(state.fl.rooms);
+let n = mk(state).flRescale();
+check(n === 1 && state.fl.rescaleOffer && state.fl.rescaleOffer.n === 1 && state.fl.rescaleOffer.ft === 8,
+  `one room measured at the sheet's scale stands on 1/4" with the sheet on screen at 1/8": offered, not applied (${JSON.stringify(state.fl.rescaleOffer)})`);
+check(JSON.stringify(state.fl.rooms) === before, "no room's figures moved: they are the server's until the estimator acts");
+check(!/fetch\(|flAct\(/.test(fnSrc("flRescale")), "flRescale sends nothing");
+state.fl.rooms[0].scale.ft = 8;
+check(mk(state).flRescale() === 0 && state.fl.rescaleOffer === null, "the same scale: nothing offered");
+state = { result: { scale: null }, fl: { result: null, rooms: [room("sheet", 4, 1)] } };
+state.fl.result = state.result;
+check(mk(state).flRescale() === 0, "no scale in force: nothing offered");
+const panel = fnSrc("renderFl");
+// critic 4, B1: sheet_rescale took the browser's number as the sheet's scale. The rooms follow the sheet's RECORDED
+// scale on the server; the panel says so and points at Approve, and sends no number
+check(/if \(fl\.rescaleOffer\)/.test(panel) && /set it on the sheet.s scale to record it/.test(panel)
+  && !/kind: "sheet_rescale"[^}]*ft:/.test(panel),
+  "the panel says the rooms stand on the sheet's recorded scale and that Approve records the one on screen; it sends no scale");
 
 // the room's name box
 check(/\.fl-row-top \.fl-name \{[^}]*min-width: 120px/.test(css) && /\.fl-row-top \{[^}]*flex-wrap: wrap/.test(css),

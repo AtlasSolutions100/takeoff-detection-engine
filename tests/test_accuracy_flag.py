@@ -129,6 +129,9 @@ ok("BETA_LONG" in src and src.rindex("BETA_LONG") > src.rindex("_letterhead(tp)"
 #   approved elements JSON GET /api/job/<id>/page/<n>/elements (TakeoffDraft2)  flag: no - machine import format
 #   price book CSV         webui/app.js (Settings -> prices)                    flag: no - prices, no quantity
 #   feedback CSV           GET /api/feedback.csv (staff only)                   flag: no - feedback, no quantity
+#   wall panel proposal   GET /api/job/<id>/wallpanels_proposal.pdf            flag: no - the customer's document: a
+#                                                                               sentence and a price, nothing of ours
+#   wall panel worksheet   GET /api/job/<id>/wallpanels_worksheet.csv           flag: yes (below) - lengths off detected lines
 LINE = server.BETA_LONG
 # 6a. the bid-sheet CSV: the flag is its last line, after a blank row; its header (title, template, approved
 # sheets, note, then any OUT OF DATE / CHECK notes) is where it was
@@ -190,6 +193,19 @@ sf = sf[:sf.index("\n}\n")]
 ok("window.self !== window.top" in sf and "fetch('/api/beta-notice')" in sf and "el.hidden = false" in sf,
    "cut / fill tab: shown when the page is its own tab, words from /api/beta-notice (the host's chip covers the frame)")
 ok("showFlag();" in cf_js, "cut / fill tab: showFlag runs at load")
+# 6d2. the wall panel worksheet (lengths measured off detected lines): the flag is its last line, after a blank row;
+# the customer's proposal is built from an allow-list that has no room for it
+try:
+    wr = server.wallpanels_worksheet_csv(bj, _Req(user=None, staff=True))
+    wl = wr.body.decode("utf-8-sig").rstrip("\n").split("\n")
+    ok(wl[-1] == LINE and wl[-2] == "" and wl[0].startswith("Wall panel worksheet") and sum(1 for ln in wl if ln == LINE) == 1,
+       "wall panel worksheet CSV: ends with a blank row and the flag line, once", wl[-2:])
+except Exception as e:  # noqa: BLE001
+    ok(False, "wall panel worksheet CSV: built", repr(e))
+from takeoff_engine import wp_job as _wpj  # noqa: E402
+
+ok(_wpj.PROPOSAL_KEYS == ("company", "contact", "date", "project", "location", "scope", "notes", "total", "total_words"),
+   "wall panel proposal: built from its allow-list (the customer's document carries nothing of ours)", _wpj.PROPOSAL_KEYS)
 # 6e. nothing else downloads: every Blob / download / Content-Disposition is one of the rows above
 import subprocess  # noqa: E402
 

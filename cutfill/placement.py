@@ -256,7 +256,7 @@ def _by_words(project, key: str, display: str) -> dict:
 
 # a scale the host handed over from a sheet's review (server.py _cutfill_scale_handoff); a scale typed or confirmed in
 # the engine carries its own words ("typed", the printed text) and is the operator's
-HANDED = ("read in review", "confirmed in review")
+HANDED = ("read in review", "confirmed in review", "set in review", "read in review, not confirmed")
 
 # The host's review, asked when a scale is checked: f(project, key) -> the sheet's scale as its review holds it NOW,
 # {"ft": ft per inch, "reviewer": True for a reviewer's pick (else the detection's reading), "at": the pick's time,
@@ -271,6 +271,56 @@ REVIEW_SCALE = None
 # review wins, and a scale read wrong is typed right in either place). The host sets it; run alone the engine has none
 # and a typed scale is its own, as before.
 REVIEW_SET = None
+# True while the Cut / fill Scale card writes a printed reading it CHOSE (its choose control), False for a number TYPED
+# there: the review records `how` from it (server.py _scale_person_how; CRITIC-scale-1 M2). A context variable, so the
+# REVIEW_SET signature (and every stand-in for it) stays as it is.
+import contextvars as _cv
+REVIEW_SET_CHOSEN = _cv.ContextVar("cutfill_review_set_chosen", default=False)
+# The stamp of the review record the Scale card last loaded (review_stamps), sent with its write; None = not sent
+# (an in-process call). The host refuses a write whose stamp is stale (scale verdict S4).
+REVIEW_SET_SEEN = _cv.ContextVar("cutfill_review_set_seen", default=None)
+# (project, key) -> words when the sheet's review readings disagree with no person's record, else None: the engine
+# hands over nothing and must not fall back to its own caption reader there (scale verdict S4). None = run alone.
+REVIEW_CONFLICT = None
+# (project, key) -> the stamp of the review record the sheet answers to (for the Scale card), or None.
+REVIEW_STAMP = None
+
+
+def review_conflict(project, key) -> "str | None":
+    """REVIEW_CONFLICT's answer for sheet `key`, or None (no host, no review, or no answer)."""
+    f = REVIEW_CONFLICT
+    if f is None or not key:
+        return None
+    try:
+        return f(project, key)
+    except Exception:          # noqa: BLE001 - no answer makes no claim
+        return None
+
+
+def review_conflicts(project) -> dict:
+    """{sheet: the words} for every sheet whose review's scale readings disagree (CRITIC-scale-3): the Scale card says
+    them where the scale is typed, and shows no printed default as if it were a scale."""
+    out = {}
+    for k in list(project.data["pages"].keys()):
+        w = review_conflict(project, k)
+        if w:
+            out[k] = w
+    return out
+
+
+def review_stamps(project) -> dict:
+    """{sheet: the stamp of its review record} for the Scale card to send back with a write (scale verdict S4)."""
+    out = {}
+    if REVIEW_STAMP is None:
+        return out
+    for k in list(project.data["pages"].keys()):
+        try:
+            st = REVIEW_STAMP(project, k)
+        except Exception:      # noqa: BLE001
+            st = None
+        if st:
+            out[k] = st
+    return out
 
 
 def review_scale(project, key: str) -> dict | None:

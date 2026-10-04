@@ -98,7 +98,29 @@
     // "(no such account)" - never what was typed: "Someone failed to sign in as x@company.com"
     login_failed: (e) => (e.name && e.name !== "(no such account)"
       ? ["failed to sign in as", e.name] : ["failed to sign in with a name that is no account"]),
+    // an approval taken out of the bid, and an earlier version's approval put back in it (the takeoff starts empty,
+    // merged 2026-10-04; server.py withdraw_approval / put_back_approval)
+    sheet_withdraw: (e) => ["withdrew the approval of", e.name, e.page != null ? `page ${e.page + 1}` : null],
+    sheet_putback: (e) => ["put the earlier approval back on", e.name, e.page != null ? `page ${e.page + 1}` : null],
+    // BIDS BY E-MAIL (takeoff_engine/inbound.py, merged 2026-10-04): ten actions. Nobody is signed in when mail
+    // arrives, so `user` is the account whose bid address the message came to (null when no account could be named:
+    // the line then starts "The bid mailbox", MAILBOX below); `name` is the message's subject or a file's name; `detail`
+    // is the server's own sentence for what happened. A message's text is never in the log.
+    inbound_message: (e) => ["got an e-mail at their bid address", e.name, e.detail],
+    inbound_project: (e) => ["got a project from e-mail", e.name, e.detail],
+    inbound_file_refused: (e) => ["was sent a file that was not opened", e.name, e.detail],
+    inbound_file_held: (e) => ["was sent a plan their keyword rules held", e.name, e.detail],
+    inbound_file_same: (e) => ["was sent a plan they already had", e.name, e.detail],
+    inbound_again: (e) => ["was sent the same e-mail again", e.name, e.detail],
+    inbound_refused: (e) => (e.user ? ["was sent an e-mail that was not read", e.name, e.detail]
+      : ["did not read a message", e.name, e.detail, MAILBOX]),
+    inbound_unknown_address: (e) => ["got an e-mail for an address no account has", e.name, e.detail, MAILBOX],
+    inbound_address_new: (e) => ["made a bid address", e.name, e.detail],
+    inbound_rules: (e) => ["saved their e-mail keyword rules", e.name, e.detail],
   };
+  // who a line is about when no account can be named (an e-mail turned away at the door, or sent to no account's address)
+  const MAILBOX = "The bid mailbox";
+  // -> [verb, what, extra, who]: `who` only when the line is not about the account in `user`
   function phrase(e) {
     const f = PHRASE[e.action];
     if (f) return f(e);
@@ -304,11 +326,11 @@
       if (!a.ok) act.append(h("div", { class: "tm-empty tm-dim" }, "The activity log is not available on this server yet."));
       else if (!ev.length) act.append(h("div", { class: "tm-empty tm-dim" }, "Nothing recorded yet."));
       else act.append(h("ol", { class: "tm-feed" }, ev.map((e) => {
-        const [verb, what, extra] = phrase(e);
+        const [verb, what, extra, who] = phrase(e);
         return h("li", null,
           h("span", { class: "tm-av sm", "aria-hidden": "true" }, initials(e.user || "·")),
           h("span", { class: "tm-feed-t" },
-            h("b", null, e.user || "Someone"), " ", verb, what ? [" ", h("span", { class: "tm-what" }, what)] : null,
+            h("b", null, who || e.user || "Someone"), " ", verb, what ? [" ", h("span", { class: "tm-what" }, what)] : null,
             extra ? h("span", { class: "tm-dim" }, " · " + extra) : null),
           h("time", { datetime: e.ts || "", title: e.ts || "" }, ago(e.ts)));
       })));

@@ -56,7 +56,7 @@ def chain(cid, pts, style=0):
     return {"chain_id": cid, "style_id": style, "points": pts}
 
 
-def plan(with_door=True, wall_style=0, closet=True):
+def plan(with_door=True, wall_style=0, closet=True, door_r=3, drawn=True):
     # room A: (0,0)-(20,15); room B: (20,0)-(32,15); door at x=20, y 6..9
     chains = [
         chain(0, [P(0, 0), P(32, 0)], wall_style),            # top
@@ -75,11 +75,19 @@ def plan(with_door=True, wall_style=0, closet=True):
     if with_door:
         # hinge at (20,6), r = 3 ft, leaf swings into room B: arc midpoint
         # 45 deg between the closed leaf (down the wall, +y) and open (+x)
-        hx, hy, r = 20, 6, 3
+        hx, hy, r = 20, 6, door_r
         import math
         mid = (hx + r * math.cos(math.radians(45)), hy + r * math.sin(math.radians(45)))
         openings.append({"cx": P(hx, hy)[0], "cy": P(hx, hy)[1], "r": r * FT,
                          "mx": P(*mid)[0], "my": P(*mid)[1]})
+        if drawn:
+            # the swing AS DRAWN, on a style that is not a wall: the open leaf
+            # (+x) and the quarter arc down to the closed position (+y). Since
+            # 2026-10-02 a door's two arc ends are measured off the drawn arc;
+            # a record with nothing drawn gets no bridge (see "unplaced")
+            chains.append(chain(10, [P(hx, hy), P(hx + r, hy)], 8))
+            chains.append(chain(11, [P(hx + r * math.cos(math.radians(a)), hy + r * math.sin(math.radians(a)))
+                                     for a in range(0, 91, 10)], 8))
     return {"chains": chains, "openings": openings,
             "page": {"width_pt": W_PT, "height_pt": H_PT},
             "scale": {"ft_per_paper_inch": 4.0}}
@@ -161,7 +169,7 @@ allst = rooms.pick_room(res, words(), *P(10, 10), styles=None, dpi=100)
 check(allst["ok"] and abs(allst["area_sf"] - 223) / 223 < 0.03,
       "with the dimension string counted as a wall the room is cut in two: ~223 SF, got %s" % allst.get("area_sf"))
 leak = rooms.pick_room(res, words(), *P(10, 10), styles={9}, dpi=100)
-check(not leak["ok"] and "not enclosed" in leak["why"], "walls hidden: the fill leaks and says so")
+check(not leak["ok"] and "reached the sheet edge" in leak["why"], "walls hidden: the fill leaks and says so")
 online = rooms.pick_room(res, words(), *P(0, 7), styles={0}, dpi=100)
 check(not online["ok"] and "landed on a line" in online["why"], "a click on a wall says so")
 
@@ -226,9 +234,24 @@ plan_l = plan(with_door=False)
 # the leaf drawn open into room B from the hinge (20,6): 3 ft at 45 degrees
 plan_l["chains"].append({"chain_id": 907, "style_id": 7, "layer": "A-Door", "length_pt": 3 * FT,
                          "points": [P(20, 6), P(20 + 3 * _m.cos(_m.radians(45)), 6 + 3 * _m.sin(_m.radians(45)))]})
+# with NO arc drawn anywhere the swing's ends can not be measured: no bridge, never a guessed
+# bearing - the door is listed for the estimator instead (ruling 2026-10-02)
+rooms._CACHE.clear()
+w_l0, br_l0 = rooms.sealed_walls(plan_l, {0}, 100)
+check(len(br_l0) == 0 and len(br_l0.unplaced) == 1 and br_l0.unplaced[0]["source"] == "leaf",
+      "a leaf with no arc drawn gets no bridge and is listed as not placed: %d / %s" % (len(br_l0), br_l0.unplaced))
+bl0 = rooms.pick_room(plan_l, words(), *P(10, 10), styles={0}, dpi=100)
+check(bl0.get("ok") is False or len(bl0.get("doors_unplaced") or []) == 1,
+      "...and the room says so (or the fill leaks through the open doorway): %s" % bl0.get("doors_unplaced", bl0.get("why")))
+# its arc drawn (dashed: four 10-degree dashes with gaps, 45 -> 90 degrees): the ends are measured
+for a0 in (45, 57.5, 70, 82.5):
+    plan_l["chains"].append({"chain_id": 9070 + int(a0), "style_id": 7, "layer": "A-Door",
+                             "points": [P(20 + 3 * _m.cos(_m.radians(a)), 6 + 3 * _m.sin(_m.radians(a)))
+                                        for a in (a0, a0 + 2.5, a0 + 5, a0 + 7.5)]})
+rooms._CACHE.clear()
 bl = rooms.pick_room(plan_l, words(), *P(10, 10), styles={0}, dpi=100)
 check(bl["ok"] and abs(bl["area_sf"] - (300 - 16)) / 284 < 0.02 and len(bl["bridges_used"]) == 1,
-      "a leaf on the door layer closes room A: %s SF, %d door" % (bl.get("area_sf"), len(bl.get("bridges_used", []))))
+      "a leaf on the door layer with its swing drawn closes room A: %s SF, %d door" % (bl.get("area_sf"), len(bl.get("bridges_used", []))))
 w_l, br_l = rooms.sealed_walls(plan_l, {0}, 100)
 check(len(br_l) == 1 and abs(br_l[0]["x1"] - P(20, 9)[0]) < 1.5 and abs(br_l[0]["y1"] - P(20, 9)[1]) < 1.5,
       "...bridged hinge -> strike along the wall, got %s" % ((br_l[0]["x1"], br_l[0]["y1"]) if br_l else None,))
@@ -387,6 +410,154 @@ check(rooms.pick_room(po, words(), *P(26, 8), styles=None, dpi=100).get("objects
 check(rooms._obj_kind("A-Plumbing", 2.19, 4.7) == ("tub", False) and rooms._obj_kind("A-Plumbing", 1.4, 1.7) == ("sink", False)
       and rooms._obj_kind("P-FIXT", 3.0, 3.2) == ("shower", False) and rooms._obj_kind("I-Furn", 6, 5) == ("furniture", False)
       and rooms._obj_kind("", 1.5, 1.5) == ("shape", True), "kinds by layer family and size")
+
+# ---- the door opening in the base (2026-10-02, critic 1 rulings) --------------------
+# A door takes ONE LEAF out of the base ("from the swing"); the jamb-to-jamb gap replaces it
+# only when every line that reads it has wall on past both jambs, the lines agree within
+# 10 % of the leaf, and the reading is within 10 % of the leaf. The plan's gap is 3 ft (y 6..9).
+print("door opening in the base")
+import math as _m
+rooms._CACHE.clear()
+g = rooms.pick_room(plan(), [], *P(10, 10), styles={0}, dpi=100)
+bu = g["bridges_used"][0] if g.get("ok") and g.get("bridges_used") else {}
+check(bu.get("w_by") == "as drawn" and abs(bu.get("w", 0) - 3 * FT) <= 1.5,
+      "a clean 3 ft gap for a 3 ft leaf is read jamb to jamb: %s pt (%s)" % (bu.get("w"), bu.get("w_by")))
+check(abs(g["openings_lf"] - 3) < 0.1 and g["openings_r_pt"] == round(3 * FT, 1),
+      "the base takes out 3.0 LF; the leaf alone (54 pt) is reported beside it")
+gy = sorted([bu["g"][1], bu["g"][3]]) if bu.get("g") else [0, 0]
+check(abs(gy[0] - P(0, 6)[1]) <= 1.5 and abs(gy[1] - P(0, 9)[1]) <= 1.5,
+      "the gap's two ends sit on the jambs (y %.1f / %.1f vs %.1f / %.1f)" % (gy[0], gy[1], P(0, 6)[1], P(0, 9)[1]))
+# a leaf drawn shorter than its opening (2 ft in a 3 ft gap): the gap disagrees with the leaf by 50 %
+short = plan(door_r=2)
+rooms._CACHE.clear()
+s2 = rooms.pick_room(short, [], *P(10, 10), styles={0}, dpi=100)
+b2 = s2["bridges_used"][0] if s2.get("ok") and s2.get("bridges_used") else {}
+check(s2.get("ok") and b2.get("w_by") == "from the swing" and abs(s2["openings_lf"] - 2) < 0.1 and "x the leaf" in (b2.get("w_why") or ""),
+      "a gap 1.5 x the leaf is refused: the leaf (2 ft) comes out, and why is said (got %s LF, %s)" % (s2.get("openings_lf"), b2.get("w_why")))
+wall = rooms.wall_raster(plan()["chains"], {0}, W_PT, H_PT, 100)
+br = {"x0": P(20, 6)[0], "y0": P(20, 6)[1], "x1": P(20, 9)[0], "y1": P(20, 9)[1], "r": 3 * FT}
+check(rooms.opening_as_drawn(wall, br, 100 / 72.0)["by"] == "as drawn", "the bare reader reads the clean gap")
+nojamb = plan()
+nojamb["chains"] = [c for c in nojamb["chains"] if c["chain_id"] != 5]
+nj = rooms.opening_as_drawn(rooms.wall_raster(nojamb["chains"], {0}, W_PT, H_PT, 100), br, 100 / 72.0)
+check(nj["by"] == "from the swing" and nj["w"] == round(3 * FT, 2), "no jamb within reach: the leaf, from the swing (%s)" % nj["why"])
+across = rooms.wall_raster(plan()["chains"] + [chain(99, [P(19.5, 7.5), P(20.5, 7.5)], 0)], {0}, W_PT, H_PT, 100)
+check(rooms.opening_as_drawn(across, br, 100 / 72.0)["by"] == "from the swing", "ink across the middle of the opening: the leaf")
+mull = rooms.wall_raster(plan()["chains"] + [chain(98, [P(19.6, 8.25), P(20.4, 8.25)], 0)], {0}, W_PT, H_PT, 100)
+check(rooms.opening_as_drawn(mull, br, 100 / 72.0)["by"] == "from the swing", "ink inside the opening (a gap 0.75 x the leaf): the leaf")
+# a DIAGONAL bridge across the swing (hinge to a point out in the room): it meets ink, but no wall runs on
+# along it past either end - refused (critic 1, M3)
+diag = {"x0": P(20, 6)[0], "y0": P(20, 6)[1], "x1": P(22.1, 8.1)[0], "y1": P(22.1, 8.1)[1], "r": 3 * FT}
+check(rooms.opening_as_drawn(wall, diag, 100 / 72.0)["by"] == "from the swing", "a diagonal across the swing is never 'as drawn'")
+# a gap 1.2 x the leaf (an overshoot past a jamb) is refused
+wide = plan()
+wide["chains"] = [c for c in wide["chains"] if c["chain_id"] not in (4, 5)] + [
+    chain(4, [P(20, 0), P(20, 5.4)], 0), chain(5, [P(20, 9), P(20, 15)], 0)]
+ow = rooms.opening_as_drawn(rooms.wall_raster(wide["chains"], {0}, W_PT, H_PT, 100), br, 100 / 72.0)
+check(ow["by"] == "from the swing", "a gap 1.2 x the leaf is refused (%s)" % ow["why"])
+# the doors on a traced outline: the bridge on its edge is found, one far off is not
+on = rooms.openings_on_outline([P(0, 0), P(20, 0), P(20, 15), P(0, 15)],
+                               [dict(br, w=54, w_by="as drawn", w_why=None, g=None), dict(br, x0=900, x1=900, y0=900, y1=950)])
+check(len(on) == 1 and on[0]["w_by"] == "as drawn", "openings_on_outline: the door on the traced room's edge, and only it")
+rooms._CACHE.clear()
+
+# ---- the swing's two ends are MEASURED off the drawn arc (2026-10-02) ----------------
+# A unit-pass record carries only the arc midpoint. The first cut swept 20-70 degrees off it with
+# fixed-size probes and bridged 7 of 8 doors on a reduced sheet the wrong way. Synthetic sheets
+# below, every number round: the same plan at two sizes (a 3 ft door 13.5 pt and 54 pt long).
+print("door bridges from the drawn arc")
+
+
+def door_sheet(ftp, pair=False, mid_at_leaf=False):
+    """Room A (0,0)-(20,15) and room B (20,0)-(32,15) at `ftp` pt per ft, origin (100,100). A 3 ft
+    door in the party wall at y 6..9 hinged at (20,6), swinging into room B (leaf drawn open along
+    +x, arc down to the closed position); or, with pair, two 1.5 ft leaves hinged at y 6 and y 9
+    meeting at y 7.5. Leaves and arcs on a non-wall style, as one polyline each."""
+    Q = lambda x, y: [100 + x * ftp, 100 + y * ftp]
+    ch = [chain(0, [Q(0, 0), Q(32, 0)]), chain(1, [Q(0, 15), Q(32, 15)]), chain(2, [Q(0, 0), Q(0, 15)]),
+          chain(3, [Q(32, 0), Q(32, 15)]), chain(4, [Q(20, 0), Q(20, 6)]), chain(5, [Q(20, 9), Q(20, 15)])]
+    ops = []
+    doors = [(6, 1.5, 1), (9, 1.5, -1)] if pair else [(6, 3, 1)]
+    for k, (hy, r, sy) in enumerate(doors):
+        ch.append(chain(20 + k, [Q(20, hy), Q(20 + r, hy)], 8))
+        ch.append(chain(30 + k, [Q(20 + r * _m.cos(_m.radians(a)), hy + sy * r * _m.sin(_m.radians(a)))
+                                 for a in range(0, 91, 10)], 8))
+        m = Q(20 + r, hy) if mid_at_leaf else Q(20 + r * _m.cos(_m.radians(45)), hy + sy * r * _m.sin(_m.radians(45)))
+        ops.append({"cx": Q(20, hy)[0], "cy": Q(20, hy)[1], "r": r * ftp, "mx": m[0], "my": m[1]})
+    return {"chains": ch, "openings": ops, "page": {"width_pt": 100 + 34 * ftp, "height_pt": 100 + 17 * ftp},
+            "scale": {"ft_per_paper_inch": 72.0 / ftp}}, Q
+
+
+for ftp in (4.5, 18.0):
+    for kw in ({}, {"mid_at_leaf": True}, {"pair": True}):
+        sh, Q = door_sheet(ftp, **kw)
+        rooms._CACHE.clear()
+        _w, brs = rooms.sealed_walls(sh, {0}, 100)
+        if kw.get("pair"):
+            okb = len(brs) == 2 and all(abs(b["x1"] - Q(20, 7.5)[0]) < 1.0 and abs(b["y1"] - Q(20, 7.5)[1]) < 1.0 for b in brs)
+            what = "a pair: both leaves close to the meeting point"
+        else:
+            okb = len(brs) == 1 and abs(brs[0]["x1"] - Q(20, 9)[0]) < 1.0 and abs(brs[0]["y1"] - Q(20, 9)[1]) < 1.0
+            what = "the record's 'midpoint' is the leaf tip, the arc still says where the opening is" if kw else "one door"
+        check(okb, "%s pt/ft, %s: hinge -> strike down the wall, got %s" % (ftp, what, [(b["x1"], b["y1"], b.get("side_by")) for b in brs]))
+        a_ok = rooms.pick_room(sh, [], *Q(10, 10), styles={0}, dpi=100)
+        check(a_ok.get("ok") and abs(a_ok["area_sf"] - 300) / 300 < 0.03,
+              "%s pt/ft, %s: room A closes at its doorway (%s SF)" % (ftp, what, a_ok.get("area_sf")))
+# nothing drawn at the swing radius: no bridge, listed; the room says so
+sh, Q = door_sheet(18.0)
+sh["chains"] = [c for c in sh["chains"] if c["chain_id"] < 20]
+rooms._CACHE.clear()
+_w, brs = rooms.sealed_walls(sh, {0}, 100)
+check(len(brs) == 0 and len(brs.unplaced) == 1 and "no arc" in brs.unplaced[0]["why"],
+      "no swing drawn: no bridge, listed as not placed (%s)" % brs.unplaced)
+check(rooms.unplaced_near([Q(0, 0), Q(20, 0), Q(20, 15), Q(0, 15)], brs.unplaced)
+      and not rooms.unplaced_near([Q(0, 0), Q(10, 0), Q(10, 15), Q(0, 15)], brs.unplaced),
+      "unplaced_near: listed on the outline whose edge holds the hinge, not on one 10 ft away")
+rooms._CACHE.clear()
+
+# ---- WALLS TICKED BY HAND, and the WORK AREA box (2026-10-02, slice 3 step 2) ---------
+# Measured on three client sheets: no set of line types gives their walls without their furniture -
+# the walls share types with it. So single LINES can be ticked: a partition drawn in a non-wall type
+# (add), a heavy line across a room in a wall type (drop). Synthetic plan: rooms A and B with the party
+# wall drawn on style 9 (not ticked), and a beam on the wall style across room A.
+print("walls ticked by hand / work area")
+pw = plan()                                    # the door is drawn and bridged
+for c in pw["chains"]:
+    if c["chain_id"] in (4, 5):
+        c["style_id"] = 9                      # the party wall drawn in a type that is not ticked
+pw["chains"].append(chain(40, [P(10, 0), P(10, 15)], 0))   # a beam in the wall type across room A
+rooms._CACHE.clear()
+m0 = rooms.pick_room(pw, [], *P(5, 10), styles={0}, dpi=100)
+check(m0.get("ok") and m0["area_sf"] < 160, "the beam ticked as wall (its type) cuts room A: %s SF" % m0.get("area_sf"))
+rooms._CACHE.clear()
+m1 = rooms.pick_room(pw, [], *P(5, 10), styles={0}, dpi=100, drop={40}, cache_key=rooms._cache_key("w", 0, 100, {0}, 1, drop={40}))
+# without the beam and without the party wall the two rooms (and the closet hole) are one fill
+check(m1.get("ok") and abs(m1["area_sf"] - (480 - 16)) / 464 < 0.03, "the beam's LINE ticked out: rooms A and B run together, the party wall's type not ticked: %s SF" % m1.get("area_sf"))
+rooms._CACHE.clear()
+m2 = rooms.pick_room(pw, [], *P(5, 10), styles={0}, dpi=100, add={4, 5}, drop={40},
+                     cache_key=rooms._cache_key("w", 0, 100, {0}, 1, add={4, 5}, drop={40}))
+check(m2.get("ok") and abs(m2["area_sf"] - (300 - 16)) / 284 < 0.03,
+      "the party wall's two LINES ticked as wall: room A alone again, its door bridged: %s SF" % m2.get("area_sf"))
+check(rooms._cache_key("j", 0, 100, {0}, 1) != rooms._cache_key("j", 0, 100, {0}, 1, add={4}),
+      "lines by hand are part of the raster's cache key")
+# the work area: room B's door gap open (no swing) - the fill leaks into room A; inside a box around
+# room B only, it reaches the box's edge and is refused - never a wrong "room"
+pz = plan(with_door=False)
+rooms._CACHE.clear()
+z0 = rooms.pick_room(pz, [], *P(26, 4), styles={0}, dpi=100)
+check(z0.get("ok") and z0["area_sf"] > 400, "no box: the fill runs through the open door into room A (%s SF)" % z0.get("area_sf"))
+zb = [P(19, -1)[0], P(19, -1)[1], P(33, 16)[0], P(33, 16)[1]]
+rooms._CACHE.clear()
+z1 = rooms.pick_room(pz, [], *P(26, 4), styles={0}, dpi=100, zone=zb)
+check(not z1.get("ok") and z1.get("zone_edge") and "work area" in z1["why"], "inside a box: the leak reaches the box and is refused: %s" % z1.get("why"))
+zr = [P(18, -1)[0], P(18, -1)[1], P(34, 16)[0], P(34, 16)[1]]
+pz2 = plan()
+rooms._CACHE.clear()
+z2 = rooms.pick_room(pz2, [], *P(26, 4), styles={0}, dpi=100, zone=zr)
+check(z2.get("ok") and abs(z2["area_sf"] - 180) / 180 < 0.03, "a closed room inside the box picks as before: %s SF" % z2.get("area_sf"))
+z3 = rooms.pick_room(pz2, [], *P(5, 5), styles={0}, dpi=100, zone=zr)
+check(not z3.get("ok") and "outside the work area" in z3["why"], "a click outside the box is refused, said")
+rooms._CACHE.clear()
 
 # ---- cache -----------------------------------------------------------------------
 print("cache")

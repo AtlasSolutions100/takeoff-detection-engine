@@ -31,6 +31,10 @@ const htmlSrc = fs.readFileSync(
 // the redesigned row (fix 9) is markup + CSS, so the CSS is part of the pin
 const cssSrc = fs.readFileSync(
   path.join(__dirname, "..", "webui", "style.css"), "utf8");
+// the wall panel calculator's page code is its own file, loaded after app.js: its menu row is registered in app.js
+// like the others, its click handler is attached there
+const wpSrc = fs.readFileSync(
+  path.join(__dirname, "..", "webui", "wallpanels.js"), "utf8");
 
 let failures = 0;
 function check(cond, msg) {
@@ -46,10 +50,10 @@ const T = new Function(appSrc.slice(a, b) +
   " return { TOOLS_MENU_ITEMS, toolsMenuModel, toolsMenuNextIdx };")();
 
 // ---- the registry is exactly the nine required tools ------------------------
-const WANT = ["aiBtn", "cfBtn", "flBtn", "trBtn", "symBtn", "rollBtn",
+const WANT = ["aiBtn", "cfBtn", "flBtn", "wpBtn", "trBtn", "symBtn", "rollBtn",
               "xsBtn", "coBtn", "stBtn", "legendBtn"];
 const got = T.TOOLS_MENU_ITEMS.map((it) => it[0]);
-check(got.length === 10, `registry lists 10 tools (got ${got.length})`);
+check(got.length === 11, `registry lists 11 tools (got ${got.length})`);
 check(WANT.every((id) => got.includes(id)),
   "registry covers ANALYZE..LEGEND SHEET exactly");
 check(!got.includes("detectBtn"), "DETECT LINES is not in the menu registry");
@@ -73,7 +77,7 @@ check(!got.includes("detectBtn"), "DETECT LINES is not in the menu registry");
     id, hidden: false, panelHidden: p ? (id !== "cfBtn") : null,
   }));
   const m = T.toolsMenuModel(rows);
-  check(m.visible.length === 10, "after detect: all 10 rows visible");
+  check(m.visible.length === 11, "after detect: all 11 rows visible");
   check(m.note === false, "after detect: note gone");
   check(m.dots.cfBtn === true, "open cut / fill stage carries the dot");
   const others = Object.entries(m.dots)
@@ -115,8 +119,8 @@ check(htmlSrc.includes('id="detectBtn"'), "#detectBtn still exists");
 
 // ---- every moved button still has its handler wired in app.js ----------------
 for (const id of WANT) {
-  const wired = appSrc.includes(`$("${id}").onclick`);
-  check(wired, `app.js still attaches a click handler to #${id}`);
+  const wired = (id === "wpBtn" ? wpSrc : appSrc).includes(`$("${id}").onclick`);
+  check(wired, `${id === "wpBtn" ? "wallpanels.js attaches" : "app.js still attaches"} a click handler to #${id}`);
 }
 
 // ---- the redesigned row: icon + name + description + dot ---------------------
@@ -179,8 +183,8 @@ const menuHtml2 = htmlSrc.slice(menuStart2, menuEnd2);
 for (const g of ["Calculators", "Counts", "Document"])
   check(menuHtml2.includes(`<div class="tm-group" aria-hidden="true">${g}</div>`),
     `"${g}" group header is an aria-hidden div, not a menu item`);
-check((menuHtml2.match(/<button/g) || []).length === 10,
-  "the menu still holds exactly ten buttons, headers included");
+check((menuHtml2.match(/<button/g) || []).length === 11,
+  "the menu holds exactly eleven buttons, headers included");
 check((menuHtml2.match(/class="tm-sep"/g) || []).length === 2,
   "two separators for three groups");
 check(cssSrc.includes(".tm-group") && /\.tm-group\s*{[^}]*pointer-events:\s*none/
@@ -200,13 +204,13 @@ check(!/const btns = TOOLS_MENU_ITEMS\.map/.test(appSrc),
 {
   // the two orders really are different now, which is why the above matters
   const domOrder = [...menuHtml2.matchAll(/<button[^>]*id="(\w+)"/g)].map(m => m[1]);
-  check(domOrder.length === 10, "ten rows read out of the markup");
+  check(domOrder.length === 11, "eleven rows read out of the markup");
   check(domOrder.join() !== got.join(),
     "DOM order and registry order differ (grouping moved Analyze last)");
   check(domOrder[domOrder.length - 1] === "aiBtn",
     "Analyze is the last row on screen");
   check(domOrder[0] === "cfBtn", "Earthwork is the first row on screen");
-  check(new Set(domOrder).size === 10 && WANT.every(id => domOrder.includes(id)),
+  check(new Set(domOrder).size === 11 && WANT.every(id => domOrder.includes(id)),
     "grouping moved the rows but lost none of them");
 }
 
@@ -231,7 +235,7 @@ check(!/const btns = TOOLS_MENU_ITEMS\.map/.test(appSrc),
       && menu.hidden,
       `menu click on #${btn.id}: handler fired, menu closed after`);
   }
-  check(fired.length === 10, "all ten simulated clicks reached a handler");
+  check(fired.length === 11, "all eleven simulated clicks reached a handler");
 }
 
 // ---- STRUCTURE: every tool panel lives in the dock at the top -------------
@@ -244,7 +248,7 @@ check(!/const btns = TOOLS_MENU_ITEMS\.map/.test(appSrc),
 // panel's own button and close handler, unchanged.
 {
   const PANELS = ["trPanel", "coPanel", "rollPanel", "xsPanel",
-                  "symPanel", "stPanel"];
+                  "symPanel", "stPanel", "wpPanel"];
   const dockAt = htmlSrc.indexOf('<div id="toolDock"');
   const scrollAt = htmlSrc.indexOf('<div id="sideScroll"');
   check(dockAt > 0 && scrollAt > 0 && dockAt > scrollAt,

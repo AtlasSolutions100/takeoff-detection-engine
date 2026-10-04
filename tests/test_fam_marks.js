@@ -17,6 +17,14 @@
 // paint, after memApply's inherited decisions, after a scope pass, after
 // all/none. Section 2 below is that property, exhaustively.
 //
+// SINCE THE TAKEOFF STARTS EMPTY (2026-10-03) the eye's default is the tick OR
+// the engine's pick (state.tkSeed), so after Detect the drawing shows exactly
+// what the old build drew - the engine's picks - while nothing is in the
+// takeoff yet. One rule for every page: nothing is brought over from 2.0 (the
+// repair after CRITIC-empty-1), so no page keeps 2.0's "the eye IS the tick";
+// where the engine picks nothing (an empty seed) the two are the same thing.
+// Section 2 pins both, exhaustively.
+//
 // Also pinned:
 //   * the two marks are two different controls, with aria-pressed and their
 //     own titles - a second identical tick would be the same confusion again;
@@ -52,8 +60,10 @@ if (a < 0 || b <= a) process.exit(1);
 const make = new Function("state",
   src.slice(a, b) + " return { famVis, famVisOverridden, setFamVis };");
 
-function fresh(include) {
-  const state = { include: new Map(Object.entries(include || {})), vis: new Map() };
+// seed = the engine's picks (none: the eye's default is the tick alone)
+function fresh(include, seed = {}) {
+  const state = { include: new Map(Object.entries(include || {})), vis: new Map(),
+                  tkSeed: new Map(Object.entries(seed)) };
   return [make(state), state];
 }
 
@@ -114,14 +124,38 @@ function fresh(include) {
     check(F.famVis("s") === !!v,
       `untouched, famVis === !!include for include=${String(v)}`);
   }
-  // and over a whole sheet's worth, in the shape loadResult seeds
+  // and over a whole sheet's worth of ticks, where the engine picks nothing
   const inc = {};
   for (let i = 0; i < 200; i++) inc["s" + i] = (i % 3 === 0);
   const [F] = fresh(inc);
   let same = 0;
   for (const k of Object.keys(inc)) if (F.famVis(k) === inc[k]) same++;
   check(same === 200,
-    `200 styles, no eye touched: every one renders exactly as before (${same}/200)`);
+    `200 styles, no engine pick, no eye touched: every one renders exactly as its tick (${same}/200)`);
+  // ONE RULE FOR EVERY PAGE: no page keeps 2.0's "the eye IS the tick" (nothing is brought over from 2.0)
+  check(!/tkEyeFollows/.test(src), "no page's eye follows the tick alone: the 2.0 flag is gone from webui/app.js");
+}
+// THE TAKEOFF STARTS EMPTY: after Detect nothing is ticked, and the drawing is
+// what the old build drew after Detect - the engine's picks - row for row
+{
+  const seed = {};
+  for (let i = 0; i < 200; i++) seed["s" + i] = (i % 3 === 0);
+  const none = {};
+  for (const k of Object.keys(seed)) none[k] = false;
+  const [F, st] = fresh(none, seed);
+  let same = 0;
+  for (const k of Object.keys(seed)) if (F.famVis(k) === seed[k]) same++;
+  check(same === 200, `a fresh page, nothing in the takeoff: the drawing shows the engine's picks, as before (${same}/200)`);
+  // a style the person adds is shown; one they take out goes back to the engine's pick
+  st.include.set("s1", true);
+  check(F.famVis("s1") === true && F.famVisOverridden("s1") === false, "a style the person added is shown");
+  st.include.set("s1", false);
+  check(F.famVis("s1") === false && F.famVis("s0") === true, "taken out again: back to the engine's pick (s1 not, s0 yes)");
+  // the eye re-couples to that default, not to the tick alone
+  F.setFamVis("s0", false);
+  check(F.famVisOverridden("s0") === true && F.famVis("s0") === false, "hiding an engine's pick is an override");
+  F.setFamVis("s0", true);
+  check(st.vis.size === 0, "...and showing it again deletes the override (it is the default)");
 }
 
 // =========================================================================
@@ -172,8 +206,8 @@ for (const [fn, cls] of [["styleEyeBtn", "mark-eye"], ["styleTakeBtn", "mark-tak
   check(/setInclude\(s\.style_id, on\)/.test(body), "the takeoff mark calls setInclude");
   check(/scopeKeepRow\(s, true\)/.test(body) && /scopeKeepRow\(s, false\)/.test(body),
     "...and the scope put-back arms are intact");
-  check(/setIncludeSetWide\(s, cbChecked\)/.test(body),
-    "...and a hand tick still speaks for the set");
+  check(!/setIncludeSetWide/.test(src),
+    "...and the set-level hook is gone (a tick stays on its sheet; 2.0's set-level tick records are never read or written)");
 }
 // the key, once, above the rows, built from the SAME icon constants the rows
 // use - so it can never draw a mark the rows do not
@@ -183,7 +217,7 @@ for (const [fn, cls] of [["styleEyeBtn", "mark-eye"], ["styleTakeBtn", "mark-tak
   const body = src.slice(i, src.indexOf("\n}\n", i));
   check(body.includes("EYE_OPEN") && body.includes("TAKE_IN"),
     "the key draws the same two glyphs the rows do");
-  check(/shown on the drawing/.test(body) && /counted in the takeoff/.test(body),
+  check(/shown on the drawing/.test(body) && /in the takeoff \(click to add\)/.test(body),
     "...and names both facts in plain words");
   check(/box\.appendChild\(styleMarksKey\(\)\)/.test(src),
     "renderStyles puts it at the top of the list");

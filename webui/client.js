@@ -1,7 +1,7 @@
 // THE CLIENT MARKER. Loaded FIRST, as the first element of <head>, on every page this app serves that writes (index.html,
 // cutfill/index.html, login.html, change-password.html), so it is in place before any other script on the page - app.js,
 // the cut / fill engine's own page (its own window or frame), and the redesign's frame scripts (shell.js, dock.js,
-// team.js, responsive.js load at the end of <body>, after this). It puts "X-Core-Client: 2" on every state-changing
+// team.js, responsive.js load at the end of <body>, after this). It puts "X-Core-Client: 3" (2 until scale verdict S4) on every state-changing
 // request whatever transport sends it: fetch (a Request object too), XMLHttpRequest, and navigator.sendBeacon (which
 // cannot carry a header, so it goes through fetch with keepalive). The server refuses a write without it (server.py
 // _client_gate): a tab still running an older page's JavaScript - v1.8.5 left open across the deploy - cannot write
@@ -16,7 +16,7 @@
 // not a sign-out; the 409 "CORE was updated. Reload this page to keep working." keeps its own words.
 (function () {
   "use strict";
-  var NAME = "X-Core-Client", VALUE = "2";
+  var NAME = "X-Core-Client", VALUE = "3";
   var SAY = "You were signed out.", LINK = "Sign in again.";
   var signedIn = false, signedOut = false;
   var writes = function (m) {

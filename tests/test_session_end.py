@@ -60,7 +60,7 @@ def check(ok, msg, got=None):
 
 
 async def _asgi(method, path, cookie, body=b""):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"), (b"content-type", b"application/json"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3"), (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode())]
     if cookie:
         headers.append((b"cookie", f"{server.SESSION_COOKIE}={cookie}".encode()))

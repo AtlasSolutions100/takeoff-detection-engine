@@ -53,10 +53,12 @@ function harness(mem) {
   const store = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
   const st = { result: null, extraItems: [], areaRows: [], areaInc: new Map(), areaLabels: new Map(), areaNote: "", ewDropped: false };
   const fns = ["arData", "arGroup", "arRegionsOf", "arLabel", "arFpi", "arSf", "arLf", "arApplyItems", "arKey", "arSelPayload",
-    "arSelRestore", "arNoteClear", "ewOldRow", "calcSave", "calcRestore"];
-  const C = new Function("state", "store", "calcKey", "calcKey2", "areaSelKey", "renderItemized",
+    "arSelRestore", "arNoteClear", "ewOldRow", "calcEarlierHadOldEw", "calcSave", "calcRestore"];
+  // "areasel" stands for THIS build's own key (areaSelKey); what an earlier version kept under its own key is never
+  // read (tests/test_empty_repair2_ui.js)
+  const C = new Function("state", "store", "calcKey", "calcKey2", "calcKey3", "areaSelKey", "renderItemized",
     constLine("EW_OLD_CY_RE") + "\n" + constLine("AR_REMEASURED") + "\n" + fns.map(fnSrc).join("\n")
-    + "\nreturn { " + fns.join(", ") + " };")(st, store, () => "calc", () => "calc2", () => "areasel", () => {});
+    + "\nreturn { " + fns.join(", ") + " };")(st, store, () => "calc", () => "calc2", () => "calc3", () => "areasel", () => {});
   const load = (result) => {   // what loadResult does for these: a fresh page, then calcRestore
     st.result = JSON.parse(JSON.stringify(result));
     st.extraItems = []; st.areaRows = []; st.areaInc = new Map(); st.areaLabels = new Map(); st.areaNote = "";

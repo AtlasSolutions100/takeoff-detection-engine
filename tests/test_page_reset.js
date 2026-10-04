@@ -233,12 +233,16 @@ const CALLEE_OK = {
   memApply: "the reviewer's saved decisions for THIS sheet's styles",
   calcRestore: "the calculator rows he committed on THIS sheet",
   calcStateLoad: "this page's server-side sidecar of calculator inputs",
+  tkLoad: "what THIS page's takeoff holds, from the server's record (the takeoff starts empty, 2026-10-03): it "
+        + "writes include, tkSet, tkSeed, tkNote and tkEarlier, every one emptied by pageReset",
   arApplyItems: "re-derives the area rows from the restored selection",
   runAnalyze: "opt-in auto-analyze; everything it writes is state.ai*",
   cfReconcile: "the cut / fill rows THIS page holds, against the engine's word (its page's last summary, then the "
              + "engine asked by route): it writes extraItems and cfFacts, both emptied by pageReset",
   approvalOutdated: "this page's approval out of date (the server's GET /approved), said on the status bar's lasting "
                   + "note; it writes state.outdatedNote, emptied by pageReset",
+  svHold: "the scale verdict's hold (CRITIC-scale-2): it writes only fields ON state.result (the page's own result, "
+        + "replaced on every load) and a module timer guarded by gen / job / page",
   loadResult: "selectPage's own tail call, checked as a caller in its own right",
   selectPage: "self-reference in a comment-stripped body, not a call",
 };

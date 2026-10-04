@@ -81,7 +81,7 @@ def rows_for(pdf: Path) -> dict:
 
 # ------------------------------------------------------------ ASGI driver
 async def _asgi(method, path, body: bytes, cookie):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3"),
                (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode())]
     if cookie is not None:

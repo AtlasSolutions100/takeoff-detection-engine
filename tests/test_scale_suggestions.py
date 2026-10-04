@@ -193,7 +193,7 @@ _jobs.mkdir(parents=True, exist_ok=True)
 det = server._page_scale(
     "scalesugjob", 0, SUG_RES,
     server.ApproveScale(ft_per_paper_inch=20.0, text='1"=20\'',
-                        picked_by_reviewer=True))
+                        picked_by_reviewer=True, how="typed"))
 eq((det or {}).get("set_by"), server._BY_REVIEWER,
    "an accepted suggestion is recorded as a REVIEWER decision, never auto")
 eq((det or {}).get("basis"), server._BASIS_SUGGESTION,
@@ -238,7 +238,7 @@ ok("The engine found no scale on this sheet" not in _joined,
 # a reviewer number that matches no suggestion is still plain hand-setting
 det2 = server._page_scale(
     "scalesugjob", 1, SUG_RES,
-    server.ApproveScale(ft_per_paper_inch=33.0, text='1" = 33\''))
+    server.ApproveScale(ft_per_paper_inch=33.0, text='1" = 33\'', how="typed"))
 ok((det2 or {}).get("basis") is None,
    "a typed number that matches no suggestion records no suggestion basis")
 ok("the engine read no scale here" in server._scale_name(det2 or {}),

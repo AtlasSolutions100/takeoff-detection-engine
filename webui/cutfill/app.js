@@ -1885,6 +1885,9 @@ function renderScale() {
   // the scale in force is not checked for this sheet (placement.foreign_scale): the why, where the fix is typed
   const refused = scaleRefused(state.key);
   if (refused) box.append(el('div', { class: 'hint', style: 'color:#9c1c1c' }, refused));
+  // the sheet's review readings disagree (CRITIC-scale-3): the words here, and no printed default shown as a scale
+  const conflict = (state.project.review_conflicts || {})[state.key] || null;
+  if (conflict && !refused) box.append(el('div', { class: 'hint', style: 'color:#9c1c1c' }, conflict));
   if (own != null) box.append(el('div', { class: 'hint' }, `This is sheet ${sheetName(state.key)}'s own scale, from its review. The cut / fill measures sheet ${sheetName(shownKey())}, the sheet shown.`));
   if (!cands.length) box.append(el('div', { class: 'hint' }, an ? 'No printed scale found on this sheet. Type it above.' : 'Read the sheet to find printed scales.'));
   for (const c of cands) {
@@ -1899,16 +1902,16 @@ function renderScale() {
   // the box shows the scale as every other print does (a bar measured at 40.016655966932305 ft per
   // inch showed all fifteen decimals); the number in force is kept - only a typed change is saved
   if (document.activeElement !== inp) {
-    inp.value = set != null ? fmtScale(set) : (def ? fmtScale(def.ft_per_in) : '');
+    inp.value = set != null ? fmtScale(set) : (def && !conflict ? fmtScale(def.ft_per_in) : '');
     state.scaleTypedFor = null;             // the box shows the scale again: no typing is pending
     state.scaleSaved = null;
   }
   fitScaleBox(inp);
   const st = $('scaleStatus');
   // a scale the host handed over says so on the pill itself (its source is the point)
-  st.textContent = refused ? 'not checked for this sheet' : own != null ? 'this sheet, in review' : set != null ? (/in review$/.test(s.scale_source || '') ? s.scale_source : 'confirmed') : 'unconfirmed';
+  st.textContent = refused ? 'not checked for this sheet' : conflict && set == null ? 'readings disagree' : own != null ? 'this sheet, in review' : set != null ? (/ in review/.test(' ' + (s.scale_source || '')) ? s.scale_source : 'confirmed') : 'unconfirmed';
   st.className = 'pill ' + (set != null && !refused ? 'ok' : 'warn');
-  st.title = own != null ? `Sheet ${sheetName(state.key)}'s review` : set != null ? `Source: ${s.scale_source || 'typed'}` : def ? `The printed "${def.text}" will be used until you confirm it` : 'Type the scale or confirm a printed one';
+  st.title = conflict && set == null ? conflict : own != null ? `Sheet ${sheetName(state.key)}'s review` : set != null ? `Source: ${s.scale_source || 'typed'}` : def ? `The printed "${def.text}" will be used until you confirm it` : 'Type the scale or confirm a printed one';
 }
 /** The Scale box as wide as its number, and a digit more (check 6A: 56 px showed "40.0" and half a digit
  *  of 40.02). A digit is one ch; the 26 px are the box's padding and its spin buttons. */
@@ -1919,12 +1922,18 @@ function fitScaleBox(inp) {
 // the host holds from the limit alone follow the scale in force
 // the operator's scale names the sheet on screen (scale_sheet): the server keeps it there with its time, where a later
 // reviewer's pick can outrank it (critic 8, r-8 / WRONG-2)
+/** The stamp of sheet `key`'s review record as this card last loaded it (the server's review_stamps): sent with a
+ *  scale write, so a card that did not see the record now in force writes nothing (scale verdict S4). */
+function reviewStamp(key) {
+  const rs = state.project && state.project.review_stamps;
+  return (rs && key && rs[key]) || null;
+}
 async function chooseScale(c) {
   const key = state.key;
   // marked stale here only when it moves the volumes' own scale (typeScale): the server says the rest
   const r0 = state.result, own0 = ownSheetScale(key), v = +c.ft_per_in;
   const moves = own0 != null ? false : !!(r0 && !r0.error && !(Math.abs((+r0.ft_per_in || 0) - v) <= 1e-3 * v));
-  try { await patchSettings({ scale_ft_per_in: c.ft_per_in, scale_source: c.text, scale_sheet: key }); if (reviewTook(key, v)) tellHostScale(key, c.ft_per_in, c.text); renderScale(); renderLimit(); if (moves) markStale(); refreshTakeoff(); setStatus(scaleSetWords(key, c.ft_per_in, 'confirmed')); }
+  try { await patchSettings({ scale_ft_per_in: c.ft_per_in, scale_source: c.text, scale_sheet: key, scale_seen: typeof reviewStamp === 'function' ? reviewStamp(key) : null }); if (reviewTook(key, v)) tellHostScale(key, c.ft_per_in, c.text); renderScale(); renderLimit(); if (moves) markStale(); refreshTakeoff(); setStatus(scaleSetWords(key, c.ft_per_in, 'chosen as printed (not measured)')); }
   // refused: the printed scale is not left ticked, and it is said until the next word (critic 18, MINOR-1)
   catch (e) { renderScale(); setStatus('Could not save the scale: ' + e.message, { error: true, sticky: true }); }
 }
@@ -1949,7 +1958,7 @@ async function typeScale(ev) {
   const r0 = state.result;
   const moves = ownSheetScale(forKey) == null && !!(r0 && !r0.error && !(Math.abs((+r0.ft_per_in || 0) - v) <= 1e-3 * v));
   state.scaleSaved = tag;
-  try { await patchSettings({ scale_ft_per_in: v, scale_source: 'typed', scale_sheet: forKey }); if (reviewTook(forKey, v)) tellHostScale(forKey, v, `1" = ${fmtScale(v)}'`); renderScale(); renderLimit(); if (moves) markStale(); refreshTakeoff(); setStatus(scaleSetWords(forKey, v)); }
+  try { await patchSettings({ scale_ft_per_in: v, scale_source: 'typed', scale_sheet: forKey, scale_seen: typeof reviewStamp === 'function' ? reviewStamp(forKey) : null }); if (reviewTook(forKey, v)) tellHostScale(forKey, v, `1" = ${fmtScale(v)}'`); renderScale(); renderLimit(); if (moves) markStale(); refreshTakeoff(); setStatus(scaleSetWords(forKey, v)); }
   // refused: said until the next word (it faded after 6 s), and the change the blur fires is not a second send of the
   // same refused number (critic 18, MINOR-1); an Enter tries again
   catch (e) { setStatus('Could not save the scale: ' + e.message, { error: true, sticky: true }); }

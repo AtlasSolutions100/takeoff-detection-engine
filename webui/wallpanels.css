@@ -1,0 +1,70 @@
+/* WALL PANELS (2026-10-03): the calculator's panel in the tool dock and its Settings section.
+   Built by webui/wallpanels.js. It borrows the flooring panel's classes (.fl-num, .fl-spec, .fl-est,
+   .fl-check) and the dock's (.ew-panel, .ew-meta, .mini); only what those do not give is here. */
+.wp-body { gap: 0; padding-bottom: 8px; }
+.wp-sec { border-top: 1px solid var(--t-border, var(--line)); padding: 8px 0 6px; }
+.wp-sec:first-child { border-top: 0; }
+.wp-sec-h { font-size: var(--t-fs-xs, 12px); font-weight: 600; color: var(--t-text, var(--text));
+  text-transform: uppercase; letter-spacing: .04em; margin: 2px 0 4px; }
+.wp-row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: flex-end; margin: 4px 0; }
+.wp-fld { display: flex; flex-direction: column; gap: 1px; flex: 1 1 80px; min-width: 0; }
+/* .fl-spec carries flex: 1 1 80px for a ROW; inside this column label that would make the box 80 px tall */
+.wp-fld > input, .wp-fld > select { width: 100%; box-sizing: border-box; flex: none; }
+.wp-fld > .fl-num { min-width: 52px; }
+.wp-lab { color: var(--t-text-dim, var(--dim)); font-size: 11px; white-space: nowrap; }
+.wp-w { width: 76px; }
+.wp-room { border: 1px solid var(--t-border, var(--line)); border-radius: 8px; padding: 6px 8px; margin: 6px 0; }
+/* the room the wall tools write to: the select colour (never green - green is not a status here) */
+.wp-room.on { border-color: var(--t-select, #58b7e6); box-shadow: inset 3px 0 0 var(--t-select, #58b7e6); }
+.wp-room .wp-row > .mini { flex: none; align-self: flex-end; }
+.wp-wall { font-size: var(--t-fs-xs, 12px); font-family: var(--t-font-data, var(--mono)); margin: 2px 0;
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.wp-wall .mini { padding: 0 6px; }
+.wp-len { font-size: 13px; font-weight: 600; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.wp-sugg { font-size: var(--t-fs-xs, 12px); margin: 2px 0; padding: 3px 6px; border-radius: 4px;
+  border: 1px dashed var(--t-border-strong, var(--line)); }
+.wp-miss { color: var(--t-warn, #f2a33a); font-size: var(--t-fs-xs, 12px); }
+/* an alternative size for the same room: offered instead of the one above it, never added to it */
+.wp-sugg.wp-alt { margin-left: 14px; border-style: dotted; opacity: .9; }
+.wp-erased { color: var(--t-warn, #f2a33a); font-family: var(--t-font-ui, inherit); }
+/* a blank of the sentence the job fills by itself: a value, not a box */
+.wp-filled { flex: 1 1 80px; min-width: 0; font-size: 13px; font-weight: 600; padding: 3px 0; overflow-wrap: anywhere; }
+.wp-date { min-width: 120px; }
+.wp-problem { border-color: var(--t-danger, #e0533d); }
+.wp-amt { font-family: var(--t-font-data, var(--mono)); font-size: var(--t-fs-xs, 12px); align-self: center;
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wp-sheet .wp-fld { flex: 1 1 64px; }
+.wp-sheet .wp-items { max-width: none; }
+.wp-line > .fl-spec { flex: 2 1 120px; }
+.wp-lines td { font-variant-numeric: tabular-nums; }
+.wp-lines .wp-total td { font-weight: 700; border-top: 2px solid var(--t-border-strong, var(--line)); }
+.wp-words { margin: 2px 0 4px; font-style: italic; }
+.wp-scope { margin: 6px 0; padding: 6px 8px; border-left: 3px solid var(--t-border-strong, var(--line)); background: var(--hover, rgba(127, 127, 127, 0.08));
+  font-size: 13px; line-height: 1.45; }
+.wp-blank { align-items: center; }
+.wp-blank .wp-lab { flex: 0 0 92px; }
+.wp-note { padding-left: 4px; }
+.wp-held, .wp-differ { margin: 6px 0; padding: 6px 8px; border: 1px solid var(--t-warn, #f2a33a); border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12); font-size: var(--t-fs-xs, 12px); }
+.wp-held .fl-check-line, .wp-differ .fl-check-line, .wp-sv-problems .fl-check-line { margin: 2px 0 2px 8px; }
+.wp-ready { margin: 6px 0; }
+
+/* Settings -> Wall panels */
+.wp-sv { padding: 0 var(--t-sp-4, 16px) var(--t-sp-3, 12px); }
+.wp-sv-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+.wp-sv-row .sv-note { margin: 0; }
+.wp-sv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px 16px; margin-bottom: 12px; }
+.wp-sv-fld { display: flex; flex-direction: column; gap: 3px; font-size: var(--t-fs-xs, 12px); color: var(--t-text-dim, var(--dim)); }
+.wp-sv-fld input, .wp-sv-fld textarea { font-size: 13px; padding: 4px 6px; }
+.wp-sv-grid input { max-width: 140px; }
+.wp-sv-wide { margin: 0 0 10px; }
+.wp-sv-wide textarea { resize: vertical; font: inherit; font-size: 13px; background: var(--field); color: var(--text);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; }
+.wp-sv .sv-note { margin-left: 0; margin-right: 0; }
+.wp-sv-items { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
+.wp-sv-item { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.wp-sv-item .wp-i-name { flex: 2 1 200px; }
+.wp-sv-item .wp-i-code { flex: 1 1 100px; }
+.wp-sv-item .wp-i-price { width: 90px; }
+.wp-sv-problems { margin-top: 10px; padding: 6px 8px; border: 1px solid var(--t-warn, #f2a33a); border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12); font-size: var(--t-fs-xs, 12px); }

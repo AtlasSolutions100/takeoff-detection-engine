@@ -1,7 +1,8 @@
 // THE OLD EARTHWORK CALCULATOR'S ROWS COUNT NOWHERE - the page side (release blocker B1; the owner's decision, 2026-10-01
 // evening; server side: tests/test_legacy_earthwork.py). v1.8.5 kept a page's takeoff rows in the browser under calcKey()
-// as {label, qty, unit} (never an Areas row). At the one move to this app's key (calcKey2) the old calculator's rows are
-// not carried over, v1.8.5's key is left as it is, and the record hears once that the page had them (its note).
+// as {label, qty, unit} (never an Areas row), and 2.0 under calcKey2(). Since CRITIC-empty-2 NO row an earlier version
+// kept in the browser comes back (this build's own cache is calcKey3); their keys are left as they are, and the record
+// still hears once that the page had old calculator rows (its note).
 // The committed functions are cut out of webui/app.js and run here.
 //
 // run: node tests/test_legacy_earthwork_ui.js
@@ -27,10 +28,11 @@ const constLine = (name) => { const i = js.indexOf("const " + name + " = "); if 
 const NOTE = "Earthwork from the old calculator was removed. Redo it in Cut / fill.";
 const tk = (st) => st.extraItems.map((it) => `${it.label} ${it.qty} ${it.unit}`);
 
-// ---- the move: v1.8.5's rows without the old calculator's; its key untouched; the drop recorded once ------------------
+// ---- the move: NO row of an earlier version's browser cache comes back (since CRITIC-empty-2: the takeoff starts empty,
+// counts and calculator rows too); its keys untouched; that it held old calculator rows is still recorded once ----------
 {
   const mem = new Map(), log = [];
-  const OLD_KEY = "doc::C4.0.pdf::p0::calc", NEW_KEY = "doc::C4.0.pdf::p0::calc2";
+  const OLD_KEY = "doc::C4.0.pdf::p0::calc", NEW_KEY = "doc::C4.0.pdf::p0::calc2", KEY3 = "doc::C4.0.pdf::p0::calc3";
   // the rehearsal store's job 1, as v1.8.5 kept it in client A's browser (MANIFEST: "::calc keys duplicate rows that ARE
   // in approved exports"), plus a trench run, a structure row and a count
   const v185 = JSON.stringify([
@@ -45,37 +47,49 @@ const tk = (st) => st.extraItems.map((it) => `${it.label} ${it.qty} ${it.unit}`)
   const store = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => { log.push(["set", k]); mem.set(k, String(v)); },
     removeItem: (k) => { log.push(["remove", k]); mem.delete(k); } };
   const st = { result: {}, extraItems: [], areaRows: [], areaInc: new Map(), areaLabels: new Map(), ewDropped: false };
-  const C = new Function("state", "store", "calcKey", "calcKey2", "areaSelKey",
-    constLine("EW_OLD_CY_RE") + "\n" + fnSrc(js, "ewOldRow") + "\n" + fnSrc(js, "calcSave") + "\n" + fnSrc(js, "calcRestore")
-    + "\nreturn { calcSave, calcRestore };")(st, store, () => OLD_KEY, () => NEW_KEY, () => "areasel");
+  const C = new Function("state", "store", "calcKey", "calcKey2", "calcKey3", "areaSelKey",
+    constLine("EW_OLD_CY_RE") + "\n" + fnSrc(js, "ewOldRow") + "\n" + fnSrc(js, "calcEarlierHadOldEw") + "\n" + fnSrc(js, "calcSave")
+    + "\n" + fnSrc(js, "calcRestore")
+    + "\nreturn { calcSave, calcRestore };")(st, store, () => OLD_KEY, () => NEW_KEY, () => KEY3, () => "areasel");
   C.calcRestore();
-  const first = tk(st);
-  const c2 = JSON.parse(mem.get(NEW_KEY));
+  const first = tk(st), dropped1 = st.ewDropped, wrote1 = log.length;
   st.extraItems = []; st.ewDropped = false;
   C.calcRestore();
   const second = tk(st), dropped2 = st.ewDropped;
   C.calcSave();
-  const afterSave = JSON.parse(mem.get(NEW_KEY));
-  check(JSON.stringify(first) === JSON.stringify(["Trench excavation (Water pressure pipe) 1021.2 CY", "Backfill (Water pressure pipe) 784.5 CY",
-    "Mass Excavation 90 CY", "Perimeter Drain 300 LF", "10x10 symbol 3 EA"])
-    && c2.core === 2 && c2.rows.length === 5 && c2.ew_dropped === true && JSON.stringify(second) === JSON.stringify(first) && dropped2
-    && afterSave.ew_dropped === true && afterSave.rows.length === 5
-    && mem.get(OLD_KEY) === v185 && !log.some(([, k]) => k === OLD_KEY),
-    "R2: the move drops the old calculator's 11 rows (its volumes, zone, layers, balance and its limit's Clear & Grub and "
-    + "fence), keeps the trench, structure and count rows, never writes v1.8.5's key, and remembers the drop: " + JSON.stringify([first, c2]));
-  // a build of 2026-10-01 kept marked old rows under calcKey2: dropped too; an unmarked "Site Cut" there is this app's
+  const afterSave = JSON.parse(mem.get(KEY3));
+  check(first.length === 0 && second.length === 0 && dropped1 && dropped2 && wrote1 === 0
+    && afterSave.core === 3 && afterSave.ew_dropped === true && afterSave.rows.length === 0
+    && mem.get(OLD_KEY) === v185 && !mem.has(NEW_KEY) && !log.some(([, k]) => k === OLD_KEY || k === NEW_KEY),
+    "R2: v1.8.5's browser rows - the old calculator's 11 and the trench, structure and count rows - are NOT restored (the "
+    + "takeoff starts empty); opening writes nothing; v1.8.5's key and 2.0's key are never written; that the page had old "
+    + "calculator rows is remembered: " + JSON.stringify([first, afterSave]));
+  // what 2.0 (or a build of 2026-10-01) kept under ITS key: nothing restored either; a marked old row there is remembered
   mem.clear(); log.length = 0;
-  mem.set(NEW_KEY, JSON.stringify({ core: 2, rows: [{ label: "Site Fill", qty: 900, unit: "CY", src: "earthwork-old" },
+  const two = JSON.stringify({ core: 2, rows: [{ label: "Site Fill", qty: 900, unit: "CY", src: "earthwork-old" },
+    { label: "Site Cut", qty: 5, unit: "CY", src: "cutfill" }, { label: "Paving", qty: 3, unit: "EA" }] });
+  mem.set(NEW_KEY, two);
+  st.extraItems = []; st.ewDropped = false;
+  C.calcRestore();
+  check(tk(st).length === 0 && st.ewDropped && mem.get(NEW_KEY) === two && log.length === 0,
+    "R2: 2.0's browser rows are not restored and its key stays byte for byte; a marked old row among them is remembered");
+  mem.clear(); mem.set(NEW_KEY, JSON.stringify({ core: 2, rows: [{ label: "Paving", qty: 3, unit: "EA" }], ew_dropped: true }));
+  st.extraItems = []; st.ewDropped = false;
+  C.calcRestore();
+  check(tk(st).length === 0 && st.ewDropped, "R2: ...and so is the drop 2.0 itself recorded there (ew_dropped)");
+  // THIS build's own cache: its rows come back; a marked old row in it is dropped; Cut / fill's own Site Cut stays
+  mem.clear(); log.length = 0;
+  mem.set(KEY3, JSON.stringify({ core: 3, rows: [{ label: "Site Fill", qty: 900, unit: "CY", src: "earthwork-old" },
     { label: "Site Cut", qty: 5, unit: "CY", src: "cutfill" }, { label: "Paving", qty: 3, unit: "EA" }] }));
   st.extraItems = []; st.ewDropped = false;
   C.calcRestore();
-  check(tk(st).join("|") === "Site Cut 5 CY|Paving 3 EA" && st.ewDropped && JSON.parse(mem.get(NEW_KEY)).rows.length === 2,
-    "R2: a test build's marked old rows under this app's key are dropped; Cut / fill's own Site Cut stays");
-  // a browser with nothing old: no drop said
-  mem.clear(); mem.set(OLD_KEY, JSON.stringify([{ label: "Paving", qty: 3, unit: "EA" }]));
+  check(tk(st).join("|") === "Site Cut 5 CY|Paving 3 EA" && st.ewDropped && JSON.parse(mem.get(KEY3)).rows.length === 2,
+    "R2: this build's own rows come back from its own key; a marked old row there is dropped; Cut / fill's Site Cut stays");
+  // a browser with nothing old: no drop said, nothing written
+  mem.clear(); log.length = 0; mem.set(OLD_KEY, JSON.stringify([{ label: "Paving", qty: 3, unit: "EA" }]));
   st.extraItems = []; st.ewDropped = false;
   C.calcRestore();
-  check(!st.ewDropped && !("ew_dropped" in JSON.parse(mem.get(NEW_KEY))), "R2: a page without old rows says nothing");
+  check(!st.ewDropped && tk(st).length === 0 && log.length === 0, "R2: a page without old rows says nothing (and restores nothing)");
 }
 // ---- the record hears it once; the saved inputs ride along ----------------------------------------------------------
 {

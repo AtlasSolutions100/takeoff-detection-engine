@@ -567,6 +567,8 @@ canvas.swatch-line { width: 46px; height: 10px; border-radius: 2px; }
 .ml-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ml-ft { font-family: var(--mono); font-size: var(--t-fs-xs); color: var(--dim); }
 .ml-more { font-size: var(--t-fs-xs); color: var(--dim); padding-top: 2px; }
+/* drawn, not in the takeoff (app.js renderMiniLegend): the row dims, one line under the rows says why */
+.ml-row.not-counted .ml-lab, .ml-ft.not-counted { opacity: 0.6; font-style: italic; }
 .mini-legend.collapsed .ml-rows { display: none; }
 canvas.ml-swatch { width: 40px; height: 9px; }
 /* ---------- keyboard help ---------- */
@@ -653,6 +655,32 @@ canvas.ml-swatch { width: 40px; height: 9px; }
    because every length, area and volume on the sheet is downstream of it */
 .sh-chip.bad { background: var(--t-stop-bg); color: var(--t-stop);
                border-color: var(--t-stop); font-weight: 700; }
+/* the scale verdict (S3): amber = one reading, still checking, or no scale; red (.bad) = readings disagree; green (.ok)
+   = confirmed. Its buttons wrap under the chip and never run off a 390 px screen. */
+.sh-chip.amber { background: var(--t-warn-bg); color: var(--t-warn); }
+/* CRITIC-scale-2: waiting for the verdict = grey, never a colour that claims anything; accepted without measuring = an
+   amber OUTLINE (not the filled amber of "not confirmed", never green) */
+.sh-chip.wait { background: var(--chip); color: var(--dim); font-style: italic; }
+.sh-chip.accepted { background: transparent; color: var(--t-warn); border: 1px solid var(--t-warn); }
+.cal-says { color: var(--dim); font-size: var(--t-fs-xs); }
+.sh-sv-btns { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; min-width: 0; }
+.sh-sv-btns button { white-space: normal; max-width: 100%; text-align: left; }
+.item-scale-note { margin: 0 0 6px; padding: 4px 8px; border-radius: 4px; font-size: var(--t-fs-xs);
+  color: var(--t-warn); background: var(--t-warn-bg); }
+.item-scale-note.stop { color: var(--t-stop); background: var(--t-stop-bg); }
+/* the takeoff starts empty (app.js TICKS): what to do, where the rows will be */
+.tk-empty { margin: 4px 0 8px; padding: 10px; border: 1px dashed var(--t-border-strong); border-radius: var(--t-r-1);
+  font-size: var(--t-fs-sm); line-height: 1.4; color: var(--t-text-dim); }
+/* approved on an earlier version (app.js tkEarlierEl): the one line is the summary, what was approved folds behind it */
+.tk-earlier summary { cursor: pointer; line-height: 1.4; }
+.tk-earlier .tk-earlier-detail { margin: 4px 0 2px; line-height: 1.4; }
+/* ...shown in the approve bar, above the tally: where Approve is pressed, in view at every width (app.js tkEarlierShow) */
+.approve-bar .tk-earlier-slot { flex: 1 0 100%; min-width: 0; }
+.approve-bar .tk-earlier-slot[hidden] { display: none; }
+.approve-bar .tk-earlier-slot .tk-earlier { margin: 0; }
+/* a takeoff change the server did not keep (app.js tkUnsavedShow): said in the same place while it waits to be sent */
+.approve-bar .tk-unsaved { flex: 1 0 100%; min-width: 0; margin: 0; line-height: 1.4; }
+.approve-bar .tk-unsaved[hidden] { display: none; }
 
 /* ---------- page thumbnail strip ---------- */
 .page-strip { width: 128px; flex: none; background: var(--panel); border-right: 1px solid var(--line);
@@ -2288,6 +2316,27 @@ header #pageSel { flex: none; max-width: 220px; }
 .fl-row-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .fl-dot { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .fl-sel { font-size: var(--t-fs-xs, 12px); max-width: 120px; }
+/* a floor type's material line: kind, integral base, manufacturer / colour / style */
+.fl-mat { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; padding: 0 0 6px 30px; }
+.fl-mat .fl-kind { max-width: 170px; }
+.fl-spec { flex: 1 1 80px; min-width: 70px; font-size: var(--t-fs-xs, 12px); padding: 2px 4px; }
+.fl-ib { white-space: nowrap; }
+/* a waste filled from the kind's stated default, not typed */
+.fl-waste.from-default { border-style: dashed; }
+/* flooring round 3: the price in its bid unit, the scale of a room, its openings, the estimate */
+.fl-price { display: flex; gap: 3px; align-items: center; }
+.fl-price .fl-price-in { width: 58px; }
+.fl-price .fl-unit { max-width: 52px; }
+.fl-carton { flex: 0 1 70px; }
+.fl-scale-line { margin-top: 2px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.fl-scale-line.fl-check { color: var(--t-warn, #f2a33a); background: rgba(245, 158, 11, 0.16); border: 1px solid var(--t-warn, #f2a33a); border-radius: 4px; padding: 2px 4px; }
+.fl-openings .fl-opening { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.fl-open-w { width: 64px; font-size: var(--t-fs-xs, 12px); padding: 1px 4px; }
+.fl-est-box { margin-top: 8px; border-top: 1px solid var(--t-border, var(--line)); padding-top: 6px; }
+.fl-est-area, .fl-est-line { display: flex; gap: 4px; align-items: center; margin: 3px 0; }
+table.fl-est { width: 100%; border-collapse: collapse; font-size: var(--t-fs-xs, 12px); margin-top: 6px; }
+table.fl-est th, table.fl-est td { border-bottom: 1px solid var(--t-border, var(--line)); padding: 2px 4px; text-align: left; vertical-align: top; }
+table.fl-est td.n { text-align: right; white-space: nowrap; }
 
 /* ---------- THE STATUS BAR ----------------------------------------------- */
 /* One 34px strip at the foot of the window, outside <main>, so it survives
@@ -3126,7 +3175,7 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
 /* ---- parts behind a calculator row (rooms under a flooring row) ---- */
 .detail-note { color: var(--dim); font-size: var(--t-fs-xs); padding: 0 8px 6px 18px; line-height: 1.35; }
 /* ---- flooring: ceiling, waste, walls by type ---- */
-.fl-types-tbl { grid-template-columns: minmax(0, 1fr) 54px 54px 48px 26px; }
+.fl-types-tbl { grid-template-columns: minmax(0, 1fr) 112px 54px 48px 26px; }
 .fl-clg { width: 54px; }
 .fl-clg.from-sheet { border-style: dashed; }
 .fl-ceil { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
@@ -3167,3 +3216,60 @@ canvas.swatch-line.recoloured[role="button"]:focus-visible {
 #fl3dStage canvas { display: block; width: 100% !important; height: 100% !important; }
 /* the point editor's per-room button lights like a mode */
 .fl-row-top button.active { background: var(--t-select); border-color: var(--t-select); color: var(--t-accent-ink); }
+
+/* ---------- BIDS BY E-MAIL (2026-10-03) -------------------------------------
+   The "From e-mail" list on the Projects page (#pvInbox, built by inbRender()
+   in app.js) and Settings -> Bid address. Quiet on purpose: the cards under
+   it are the page; this is the note that says where some of them came from. */
+.pv-inbox { max-width: 1100px; margin: 0 auto var(--t-sp-4, 16px);
+  background: var(--t-surface-1, var(--panel));
+  border: 1px solid var(--t-border, var(--line));
+  border-radius: var(--t-r-3, 12px); padding: var(--t-sp-3, 12px) var(--t-sp-4, 16px); }
+.pv-inbox[hidden] { display: none; }
+.inb-headline { display: flex; align-items: baseline; gap: var(--t-sp-3, 12px); flex-wrap: wrap; }
+.inb-headline h2 { font-family: var(--t-font-ui, inherit); font-size: 15px; font-weight: 600;
+  text-transform: none; letter-spacing: 0; margin: 0; color: var(--t-text, var(--text)); }
+.inb-sub { font-size: var(--t-fs-xs, 12px); color: var(--t-text-dim, var(--dim)); }
+.inb-sub a { color: var(--t-accent, var(--accent)); }
+.inb-entry { border-top: 1px solid var(--t-border, var(--line)); margin-top: var(--t-sp-2, 8px);
+  padding-top: var(--t-sp-2, 8px); font-size: var(--t-fs-sm, 13px); line-height: 1.5; }
+.inb-top { display: flex; gap: var(--t-sp-3, 12px); flex-wrap: wrap; align-items: baseline; }
+.inb-when { font-family: var(--t-font-data, var(--mono)); font-size: var(--t-fs-xs, 12px);
+  color: var(--t-text-faint, var(--dim)); min-width: 72px; }
+.inb-from { color: var(--t-text-dim, var(--dim)); }
+.inb-subj { color: var(--t-text, var(--text)); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.inb-note { font-size: var(--t-fs-xs, 12px); color: var(--t-warn, var(--dim)); margin: 2px 0 0 84px; }
+.inb-note.inb-notpdf { color: var(--t-text-faint, var(--dim)); }
+.inb-files { list-style: none; margin: 4px 0 0 84px; padding: 0; }
+.inb-file { padding: 2px 0; overflow-wrap: anywhere; }
+.inb-open, .inb-page { background: none; border: 0; padding: 0; cursor: pointer; font: inherit;
+  color: var(--t-accent, var(--accent)); text-decoration: underline; }
+.inb-open { font-weight: 600; }
+.inb-open:focus-visible, .inb-page:focus-visible { outline: 2px solid var(--t-accent, var(--accent)); outline-offset: 2px; }
+.inb-name { font-weight: 600; color: var(--t-text, var(--text)); }
+.inb-what { color: var(--t-text-dim, var(--dim)); margin-left: var(--t-sp-2, 8px); }
+.inb-ok .inb-what { color: var(--t-ok, var(--accent)); }
+.inb-held .inb-what { color: var(--t-warn, var(--dim)); }
+.inb-wait { color: var(--t-text-faint, var(--dim)); }
+.inb-anyway { margin-left: var(--t-sp-2, 8px); }
+.inb-entry > .inb-anyway { margin: 4px 0 0 84px; }
+.inb-auto, .inb-found { font-size: var(--t-fs-xs, 12px); color: var(--t-text-dim, var(--dim)); }
+.inb-found b { color: var(--t-text, var(--text)); }
+.inb-notext { color: var(--t-warn, var(--dim)); }
+.inb-more { margin-top: var(--t-sp-2, 8px); }
+/* the card's e-mail note keeps the bid note's shape */
+.pv-from-mail { -webkit-line-clamp: 4; }
+/* Settings -> Bid address */
+#svInbAddr { font-family: var(--t-font-data, var(--mono)); min-width: 320px; }
+#svInbState.ok, #svInbRulesState.ok { color: var(--t-ok, var(--accent)); }
+#svInbState.err, #svInbRulesState.err { color: var(--t-stop, var(--t-warn)); }
+.sv-fld textarea { width: 100%; max-width: 520px; font: inherit; font-family: var(--t-font-data, var(--mono));
+  font-size: var(--t-fs-sm, 13px); background: var(--t-surface-2, var(--panel)); color: var(--t-text, var(--text));
+  border: 1px solid var(--t-border, var(--line)); border-radius: var(--t-r-1, 4px); padding: 6px 8px; resize: vertical; }
+.sv-fld textarea:focus { border-color: var(--t-accent, var(--accent)); outline: none; }
+.sv-inb-confirm { border-top: 1px solid var(--t-border, var(--line)); padding-top: var(--t-sp-3, 12px); }
+.sv-inb-confirm .sv-note { margin-left: 0; }
+.sv-inb-code { display: flex; gap: var(--t-sp-4, 16px); align-items: center; flex-wrap: wrap;
+  font-size: var(--t-fs-sm, 13px); margin-bottom: var(--t-sp-2, 8px); }
+.sv-inb-code span { font-family: var(--t-font-data, var(--mono)); user-select: all; color: var(--t-text, var(--text)); }
+.sv-inb-code a { color: var(--t-accent, var(--accent)); }

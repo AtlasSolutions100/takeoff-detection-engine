@@ -65,6 +65,11 @@ JOB = "colortestjob"
 PAGE = 0
 RESULT = {
     "page": {"width_pt": 1224.0, "height_pt": 792.0},
+    # a scale in force: since scale verdict S4 an approve that exports lengths needs one (the elements checked here
+    # do not depend on it)
+    "scale": {"text": "1\" = 20'", "ft_per_paper_inch": 20.0, "source": "text", "near_scale_keyword": True,
+              "count": 1, "candidates": [{"text": "1\" = 20'", "ft_per_paper_inch": 20.0}],
+              "bar_ft_per_paper_inch": None, "agrees": None, "delta_pct": None, "pick": {"why": "single"}},
     "styles": [
         {"style_id": 3, "class": "solid", "color": [0.0, 0.0, 0.0],
          "width": 0.5, "signature": "solid", "suggested_label": "solid solid",
@@ -89,6 +94,9 @@ _d = server._job_dir(JOB)
 # tests/test_orphan_job.py), exactly as the service would
 server.JOBS[JOB] = {"path": str(_d.with_suffix(".pdf")), "pages": 1,
                     "owner": "tester", "status": {}}
+# both families are ADDED to the page's takeoff first, as the page does: the takeoff starts empty, and the server holds
+# an approve to its record of it (the record's version, and every line style exported: critic empty-1, MAJOR-4)
+server.ticks_post(JOB, PAGE, server.TicksBody(version=0, styles=[3, 7]))
 
 
 def approve(**over):
@@ -97,6 +105,7 @@ def approve(**over):
                 image_dpi=300)
     body.update(over)
     body.setdefault("scale_seen", server._scale_stamp(JOB, PAGE))   # the page loaded the record just now
+    body.setdefault("ticks_version", server.ticks_get(JOB, PAGE)["version"])   # ...and holds the takeoff record's version
     server.approve(JOB, PAGE, server.ApproveBody(**body))
     return json.loads((_d / f"p{PAGE}_elements.json").read_text())
 
@@ -210,10 +219,14 @@ ghost = approve(operator_created_style_ids=[7, 99])
 eq(ghost["operator_created_style_ids"], [7],
    "a created family with nothing in the export is not listed")
 
-# ...and the same holds when the family is excluded from this approve
+# ...and the same holds when the family is excluded from this approve. It is taken out of the takeoff first, as the
+# page does: the export is exactly the takeoff record, so an approve that leaves out a style the record holds is
+# refused (critic empty-2, MINOR-2)
+server.ticks_post(JOB, PAGE, server.TicksBody(version=server.ticks_get(JOB, PAGE)["version"], styles=[3]))
 gone = approve(labels={3: "FIBER OPTIC"}, operator_created_style_ids=[7])
 eq(gone["operator_created_style_ids"], [],
    "an unlabelled (unticked) created family exports nothing and is not claimed")
+server.ticks_post(JOB, PAGE, server.TicksBody(version=server.ticks_get(JOB, PAGE)["version"], styles=[3, 7]))
 
 # ======================================== 5. THE NOTE IS STILL THERE TOO
 # The typed field REPLACES nothing: a person reading the report PDF deserves

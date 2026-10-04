@@ -355,6 +355,11 @@ html.shell-on .mc-acts .rb-btn:hover:not(:disabled) { background: var(--t-surfac
 html.shell-on .mc-acts .rb-btn[aria-pressed="true"] { background: var(--t-accent); border-color: var(--t-accent);
   color: var(--t-accent-ink); }
 html.shell-on .mc-acts .rb-btn[aria-pressed="true"] svg { color: var(--t-accent-ink); }
+/* ...and it stays the accent under the pointer. The hover rule above out-weighs the pressed one, so a pressed tool
+   under the pointer - every tool, the moment it is pressed, and for as long as a phone holds its tap - took the dark
+   hover ground under its dark ink: "Wall panels" could not be read on its own button (live, 2026-10-04). */
+html.shell-on .mc-acts .rb-btn[aria-pressed="true"]:hover:not(:disabled) { background: var(--t-accent);
+  border-color: var(--t-accent); filter: brightness(1.07); }
 html.shell-on .sheets-body { overflow-y: auto; padding: 4px 6px 8px; scrollbar-width: thin;
   scrollbar-color: var(--t-border-strong) transparent; }
 html.shell-on .sh-group { display: flex; align-items: center; justify-content: space-between;
@@ -557,9 +562,18 @@ html.shell-on #railFoot { flex: none; margin-top: var(--t-gap); background: var(
   border: 1px solid var(--t-border); border-radius: var(--t-r-3); overflow: hidden; }
 html.shell-on #railFoot .approve-bar { position: static; background: transparent; border-top: 0; padding: 12px 14px; }
 html.shell-on #railFoot .links-bar { border-top: 1px solid var(--t-border); padding: 8px 14px; display: flex; gap: 12px; flex-wrap: wrap; }
-html.shell-on #railFoot .links-bar:not(:has(> a:not([hidden]))) { display: none; }
+/* (a BUTTON counts too - the takeoff starts empty, merged 2026-10-04: app.js's "Withdraw approval" and "Put back
+   earlier approval" live in this bar, and Put back can stand with no link shown - an approval withdrawn here and
+   nothing else approved. With the bar hidden for want of a link it could not be reached.) */
+html.shell-on #railFoot .links-bar:not(:has(> :is(a, button):not([hidden]))) { display: none; }
 html.shell-on #railFoot .links-bar a { font-size: var(--t-fs-xs); color: var(--t-accent-hi); text-decoration: none; }
 html.shell-on #railFoot .links-bar a:hover { text-decoration: underline; }
+html.shell-on #railFoot .links-bar { align-items: center; }
+/* THE APPROVE BAR'S TWO NOTES (app.js #tkEarlierSlot "Approved on an earlier version ..." and #tkUnsaved "Your
+   takeoff change was not saved ..."): above the tally, where Approve is pressed. They take the rail's width and wrap;
+   a long one scrolls inside itself, so Approve & export is never pushed out of the rail's foot. */
+html.shell-on #railFoot .approve-bar :is(.tk-earlier-slot, .tk-unsaved) { max-width: 100% !important; max-height: 30vh;
+  overflow-y: auto; overflow-wrap: anywhere; }
 html.shell-on .tally-big { font-family: var(--t-font-data); color: var(--t-text); }
 html.shell-on .tally-cap { color: var(--t-text-faint); }
 
@@ -572,6 +586,11 @@ html.shell-on .sh-chip { border-radius: var(--t-r-1); font-family: var(--t-font-
 html.shell-on .sh-chip.ok { background: var(--t-ok-bg); color: var(--t-ok); border-color: transparent; }
 html.shell-on .sh-chip.warn { background: var(--t-warn-bg); color: var(--t-warn); border-color: transparent; }
 html.shell-on .sh-chip.bad { background: var(--t-stop-bg); color: var(--t-stop); border-color: transparent; }
+/* the scale verdict's chips (merge 2026-10-02): amber = not confirmed / checking words, grey = waiting for the
+   verdict, an amber OUTLINE = accepted without measuring (never green) */
+html.shell-on .sh-chip.amber { background: var(--t-warn-bg); color: var(--t-warn); border-color: transparent; }
+html.shell-on .sh-chip.wait { background: var(--chip); color: var(--dim); border-color: transparent; font-style: italic; }
+html.shell-on .sh-chip.accepted { background: transparent; color: var(--t-warn); border: 1px solid var(--t-warn); }
 html.shell-on .sh-chip.run { color: var(--t-accent-ink); }
 
 /* TAKEOFF: app.js's editing table, as the mockup's accordion by trade */
@@ -838,6 +857,12 @@ html.shell-on .sm-acts .btn { height: 32px; padding: 0 12px; font-size: var(--t-
 html.shell-on .sm-notes { padding: 0 12px 12px; }
 html.shell-on .sm-notes .rd-verdict { margin-top: 8px; }
 html.shell-on .pl-tiles > .sm-notes { grid-column: 1 / -1; }
+/* an earlier version's approvals (shell.js earlierNotesEl): INFORMATION, in the info colour - never the stop red of a
+   note that costs the bid money, and never the accent. The line is a <summary>; what the approval holds opens under it. */
+html.shell-on .rd-verdict.info { border-color: color-mix(in srgb, var(--t-info) 45%, transparent); color: var(--t-text); }
+html.shell-on details.rd-verdict > summary { cursor: pointer; }
+html.shell-on details.rd-verdict > summary::marker { color: var(--t-text-faint); }
+html.shell-on .sm-earlier-d { margin-top: 6px; color: var(--t-text-dim); font-size: var(--t-fs-xs); line-height: 1.5; }
 
 /* ---------------------------------------------------------------- 3D */
 html.shell-on .v3-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px;
@@ -855,7 +880,7 @@ html.shell-on .v3-ico { width: 30px; height: 30px; fill: none; stroke: var(--t-a
    and sort over the cards, cards with the thumbnail beside the facts. */
 html.shell-on .projects-view { display: grid; column-gap: 28px; align-content: start;
   grid-template-columns: 220px minmax(0, 1fr);
-  grid-template-areas: "head head" "tabs controls" "filters reach" "filters selbar" "filters grid" "filters empty";
+  grid-template-areas: "head head" "tabs controls" "filters reach" "filters inbox" "filters selbar" "filters grid" "filters empty";
   padding: 22px 28px 40px; background: var(--t-surface-1); overflow-y: auto; }
 html.shell-on .projects-view > .pv-head { grid-area: head; max-width: none; margin: 0 0 18px; align-items: center; }
 html.shell-on .projects-view > .pv-tabs { grid-area: tabs; align-self: start; position: sticky; top: 0;
@@ -912,6 +937,25 @@ html.shell-on .pv-card:focus-visible .pv-name {
 html.shell-on .pv-meta, html.shell-on .pv-when { padding: 0; color: var(--t-text-dim); }
 html.shell-on .pv-when { color: var(--t-text-faint); margin-top: 4px; }
 html.shell-on .pv-badge { background: var(--t-surface-3); border-color: var(--t-border-strong); border-radius: var(--t-r-1); }
+/* FROM E-MAIL (bids by e-mail, merged 2026-10-04; app.js inbRender fills #pvInbox). One card over the project cards,
+   in the cards' own column (the grid's "inbox" row, between the reach line and the selection bar). The file names and
+   the keyword pages are buttons that read as links: the frame's button box (padding, ground, border) is taken off
+   them. Status colours are the frame's: opened = the supplied teal (never the accent), held = amber. */
+html.shell-on .projects-view > .pv-inbox { grid-area: inbox; max-width: none; margin: 0 0 14px; padding: 12px 16px;
+  background: var(--t-surface-2); border: 1px solid var(--t-border); border-radius: var(--t-r-3); }
+html.shell-on .inb-headline h2 { font-size: var(--t-title-size); font-weight: var(--t-title-weight);
+  text-transform: var(--t-title-case); letter-spacing: var(--t-title-track); color: var(--t-text); }
+html.shell-on .inb-sub { color: var(--t-text-dim); }
+html.shell-on .inb-entry { border-top-color: var(--t-border); }
+html.shell-on .inb-open, html.shell-on .inb-page { padding: 0; border: 0; border-radius: 0; background: none;
+  color: var(--t-accent-hi); text-decoration: underline; text-underline-offset: 2px; font-size: inherit; text-align: left; }
+html.shell-on .inb-open:hover:not(:disabled), html.shell-on .inb-page:hover:not(:disabled) { background: none; border: 0;
+  color: var(--t-text); }
+html.shell-on .inb-open { font-weight: 600; overflow-wrap: anywhere; }
+html.shell-on .inb-ok .inb-what { color: var(--t-ok); }
+html.shell-on .inb-held .inb-what, html.shell-on .inb-note, html.shell-on .inb-notext { color: var(--t-warn); }
+html.shell-on .inb-note.inb-notpdf, html.shell-on .inb-wait { color: var(--t-text-faint); }
+html.shell-on .inb-more { margin-top: 10px; }
 
 /* ---------------------------------------------------------- SETTINGS
    Section nav on the left, the groups in one readable column. Rows are
@@ -955,6 +999,16 @@ html.shell-on .sw-accent-yellow { background: #f5c400; }
 html.shell-on .sw-palette-steel { background: #0f1922; }
 html.shell-on .sw-palette-nightcrew { background: #1e2224; }
 html.shell-on .sv-book-table th { background: var(--t-surface-3); color: var(--t-text-faint); }
+/* SETTINGS -> BID ADDRESS (bids by e-mail, merged 2026-10-04; app.js renderSvInbound). The address is one long word
+   (82 characters) in a read-only box: at the small data size it shows whole on a desk (610px); Copy, New address and
+   the line's note wrap under it when the row is short of that, and the box never makes the card wider than its
+   column (the fork's 320px floor is given up). The two word lists are typed data, so they keep the data font. */
+html.shell-on #svInboundSection .sv-addrow { flex-wrap: wrap; }
+html.shell-on #svInbAddr { flex: 1 1 610px; min-width: 0; max-width: 100%; font-family: var(--t-font-data);
+  font-size: var(--t-fs-xs); }
+html.shell-on .sv-fld textarea { font-family: var(--t-font-data); line-height: 1.5; padding: 6px 9px; }
+html.shell-on .sv-inb-confirm { border-top-color: var(--t-border); }
+html.shell-on .sv-inb-code span { color: var(--t-text); }
 
 /* ================================================================ MODALS */
 html.shell-on .gz-modal { position: fixed; inset: 0; z-index: 80; background: rgba(2, 6, 10, .6);

@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .project import OUT, Project, crew_map, grade_at, limit_candidates_for, pick_limit, takeoff_preview, walls_for
 from . import placement as _placement
-from .placement import ACTIVE_ROLES, HANDED, display_for, foreign_scale, inputs_sig, review_scales, scale_refusals, stale_result
+from .placement import ACTIVE_ROLES, HANDED, display_for, foreign_scale, inputs_sig, review_conflicts, review_scales, review_stamps, scale_refusals, stale_result
 from .takeoff import ZONE_ROW_SEP
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -76,6 +76,9 @@ def _summary(p: Project) -> dict:
     with p._lock:
         out["scale_refused"] = scale_refusals(p)
         out["review_scales"] = review_scales(p)
+        # the stamp of each sheet's review record: the Scale card sends it back with a write (scale verdict S4)
+        out["review_stamps"] = review_stamps(p)
+        out["review_conflicts"] = review_conflicts(p)
     return out
 
 
@@ -190,7 +193,16 @@ async def patch_settings(pid: str, req: Request):
                 raise HTTPException(409, f"{w[:1].upper() + w[1:]} takes no part in the cut / fill, so its scale is not set "
                                          f"here: set it in its own review, or mark the sheet existing / proposed first. "
                                          f"Nothing was changed.")
-            got = _placement.REVIEW_SET(p, k_on, ft_on, text_on)
+            # a printed reading chosen in the card is not a typed number: the review records how (CRITIC-scale-1 M2)
+            _tok = _placement.REVIEW_SET_CHOSEN.set(bool(src_on) and src_on != "typed")
+            # the stamp of the review record this card saw (scale verdict S4): a stale card writes nothing
+            # (an HTTP write with no stamp sends "" - refused like a stale one, CRITIC-scale-3 MINOR 4; None is in-process)
+            _tok2 = _placement.REVIEW_SET_SEEN.set(str(body["scale_seen"]) if body.get("scale_seen") else "")
+            try:
+                got = _placement.REVIEW_SET(p, k_on, ft_on, text_on)
+            finally:
+                _placement.REVIEW_SET_SEEN.reset(_tok2)
+                _placement.REVIEW_SET_CHOSEN.reset(_tok)
             if got is False:
                 raise HTTPException(503, "the scale could not be recorded in the review: type it again")
             if not got and k_on != shown_after:

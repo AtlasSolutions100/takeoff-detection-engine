@@ -105,14 +105,16 @@ check(TR.trIsRowOf("6\" storm 0-6 ft deep (STM-1)", "STM-1") && TR.trIsRowOf("ST
     { label: "Old row", qty: 3, unit: "EA" },
     { label: "derived", qty: 1, unit: "SF", _area: true }],
     areaRows: [], areaInc: new Map(), areaLabels: new Map() };
-  const C = new Function("state", "store", "calcKey", "calcKey2", "areaSelKey",
+  const C = new Function("state", "store", "calcKey", "calcKey2", "calcKey3", "areaSelKey",
     js.slice(js.indexOf("const EW_OLD_CY_RE = "), js.indexOf("\n", js.indexOf("const EW_OLD_CY_RE = "))) + "\n" + fnSrc("ewOldRow") + "\n"
-    + fnSrc("calcSave") + "\n" + fnSrc("calcRestore") + "\nreturn { calcSave, calcRestore };")(st, store, () => "calc", () => "calc2", () => "areasel");
+    + fnSrc("calcEarlierHadOldEw") + "\n"
+    + fnSrc("calcSave") + "\n" + fnSrc("calcRestore") + "\nreturn { calcSave, calcRestore };")(st, store, () => "calc", () => "calc2", () => "calc3", () => "areasel");
   C.calcSave();
-  // this app stores {core: 2, rows} under its OWN key (G6: v1.8.5's key is never written)
-  const stored = JSON.parse(mem.get("calc2"));
+  // this build stores {core: 3, rows} under its OWN key (G6: an earlier version's keys are never written - v1.8.5's
+  // "calc", 2.0's "calc2"; critic empty-2: nor is any row restored from them)
+  const stored = JSON.parse(mem.get("calc3"));
   const saved = stored.rows;
-  check(stored.core === 2 && !mem.has("calc") && saved.length === 3 && saved[0].run === 172 && saved[0].runOf === "SE-P-UT-SS" && saved[0].kind === "trench_run" && saved[0].utility === "sewer"
+  check(stored.core === 3 && !mem.has("calc") && !mem.has("calc2") && saved.length === 3 && saved[0].run === 172 && saved[0].runOf === "SE-P-UT-SS" && saved[0].kind === "trench_run" && saved[0].utility === "sewer"
         && saved[1].kind === "net" && !("run" in saved[1]) && Object.keys(saved[2]).join(",") === "label,qty,unit",
     "calcSave keeps run / runOf / kind / utility only where a row has them; a derived row is not stored");
   st.extraItems = [];

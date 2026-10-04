@@ -44,6 +44,10 @@ def ok(cond, msg, got=None):
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 STAFF = {s.lower() for s in provision_demo.STAFF}
 ALLOWED_DOMAINS = ("example.com", "example.test", "company.com")
+# Not a customer's and not a person's: the address a mail provider sends its own "confirm this forwarding address"
+# message FROM, which is how that one message is recognised (takeoff_engine/inbound.py _CONFIRM_SENDERS, 2026-10-03).
+# Allowed by exact file and exact address; any other address in that file still fails this test.
+PROVIDER_SENDERS = {"takeoff_engine/inbound.py": {"forwarding-noreply@google.com"}}
 
 # ---- 1. what the image carries -----------------------------------------------
 docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
@@ -72,6 +76,8 @@ for f in files:
     for a in EMAIL.findall(text):
         a = a.lower().rstrip(".")
         if a in STAFF or a.endswith(ALLOWED_DOMAINS):
+            continue
+        if a in PROVIDER_SENDERS.get(f.relative_to(ROOT).as_posix(), ()):
             continue
         foreign.setdefault(f.relative_to(ROOT).as_posix(), set()).add(a)
 ok(not foreign, "no file in the image carries an e-mail address but staff / example ones",

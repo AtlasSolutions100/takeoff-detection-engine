@@ -42,175 +42,59 @@ function grabConst(name) {
   return m ? m[1] : null;
 }
 
-console.log("pure");
-const names = ["flDeductSf", "flNetSf", "flDeductText", "flWallLf", "flCeiling", "flWallSf", "flTotals", "flTransitions", "flItems", "flRoomLine", "flRoomScaleNote"];
-const bodies = names.map(grab);
-check(bodies.every(Boolean), "helpers exist: " + names.join(", "));
-const P = new Function(
-  "const FL_UNASSIGNED = " + grabConst("FL_UNASSIGNED") + ";\n"
-  + "const FL_DOOR_HT_FT = " + grabConst("FL_DOOR_HT_FT") + ";\n"
-  + "const flFmt = " + grabConst("flFmt") + ";\n"
-  + "const flFtIn = (ft) => { const f = Math.floor(ft), i = Math.round((ft - f) * 12 * 8) / 8; return f + \"'-\" + i + '\"'; };\n"
-  + bodies.join("\n") + "\nreturn { " + names.join(", ") + " };")();
-
-const types = [{ name: "Carpet", color: "#4e9af1", sf_price: 3.25, lf_price: 1.8 },
-               { name: "Tile", color: "#4fc27a", sf_price: 0, lf_price: 0 }];
-const rooms = [
-  { name: "OFFICE", area_sf: 100, perim_lf: 40, openings_lf: 3, holes_sf: 0, doors: 1, type: 0 },
-  { name: "HALL", area_sf: 200, perim_lf: 60, openings_lf: 9, holes_sf: 4, doors: 3, type: 0 },
-  { name: "BATH", area_sf: 50, perim_lf: 30, openings_lf: 3, holes_sf: 0, doors: 1, type: 1 },
-  { name: "closet", area_sf: 12, perim_lf: 14, openings_lf: 0, holes_sf: 0, doors: 0, type: null },
-];
-check(P.flWallLf(rooms[0]) === 37, "base = ring less openings (40 - 3)");
-check(P.flWallLf({ perim_lf: null }) === null, "no scale: base is null, not 0");
-check(P.flWallLf({ perim_lf: 2, openings_lf: 9 }) === 0, "openings cannot make the base negative");
-const tot = P.flTotals(types, rooms);
-check(tot.length === 3 && tot[2].i === -1 && tot[2].rooms === 1 && tot[2].sf === 12,
-      "an untyped room is its own 'unassigned' row, never dropped");
-check(tot[0].sf === 300 && tot[0].lf === 88 && tot[0].rooms === 2, "Carpet: 300 SF, 88 LF, 2 rooms");
-check(tot[1].sf === 50 && tot[1].lf === 27, "Tile: 50 SF, 27 LF");
-check(P.flTotals(types, []).length === 2, "no rooms: no unassigned row");
-const items = P.flItems(types, rooms);
-check(items.length === 4, "one SF row and one LF row per type with rooms (4)");
-check(items[0].label === "Flooring — Carpet" && items[0].qty === 300 && items[0].unit === "SF" && items[0].unit_price === 3.25,
-      "Flooring — Carpet 300 SF @ 3.25");
-check(items[1].label === "Base/molding — Carpet" && items[1].qty === 88 && items[1].unit === "LF" && items[1].unit_price === 1.8,
-      "Base/molding — Carpet 88 LF @ 1.80");
-check(!("unit_price" in items[2]) && !("unit_price" in items[3]), "no price typed = no unit_price on the row");
-check(!items.some(it => /unassigned/i.test(it.label)), "the unassigned row never reaches the takeoff");
-check(P.flItems([{ name: "Carpet", sf_price: 0, lf_price: 0 }], [{ area_sf: 0, perim_lf: 0, type: 0 }]).length === 0,
-      "a type whose rooms measure nothing adds no rows");
-const line = P.flRoomLine(rooms[1]);
-check(line.startsWith("200 SF · walls 51 LF (3 doors, −9 LF)"), "room line: SF, base, doors and their footage: " + line);
+console.log("pure: the panel shows the server's figures");
+// (2026-10-02, ruling P: the base, totals, rows and transitions are computed on the server - their cases are
+// tests/test_fl_rooms.py; the panel reads them off each room's r.c and the sheet's totals and rows)
+const H = require("./_fl_harness.js");
+const P = H.fresh();
+check(["flTotals", "flItems", "flBase", "flRoomLine", "flTransitions", "flMirror", "flRoomView", "flAct"].every(n => typeof P[n] === "function"), "helpers exist");
+const C = (o) => Object.assign({ area_sf: 200, net_sf: 200, deduct_sf: 0, deduct_text: "", perim_lf: 60, base_lf: 51,
+  base: { lf: 51, ring_lf: 60, openings: [{ w_lf: 3, on_edge: true }, { w_lf: 3, on_edge: true }, { w_lf: 3, on_edge: true }], openings_lf: 9, out_lf: 9, off_runs: 0, off_lf: 0, legacy: false, unplaced: 0 },
+  wall: null, objects_sf: [], objects_wh: [], deductions_sf: [] }, o || {});
+const hall = { name: "HALL", uid: "h", area_sf: 200, perim_lf: 60, holes_sf: 4, doors: 3, type: 0, openings: [{}, {}, {}], c: C() };
+check(P.flWallLf(hall) === 51 && P.flNetSf(hall) === 200 && P.flBase(hall).ring_lf === 60, "base, net and the base's parts are the server's (r.c)");
+check(P.flWallLf({ c: { base_lf: null } }) === null && P.flNetSf({}) === null, "no figure from the server: null, never 0");
+const line = P.flRoomLine(hall);
+check(line.startsWith("200 SF · walls 51 LF (perimeter 60 − openings 9 (3) = base 51 LF)"), "room line: SF, base, doors and their footage: " + line);
 check(line.includes("4 SF inside it not counted"), "room line: holes are said, not hidden");
-check(P.flRoomLine({ area_sf: 26.4, perim_lf: 27.1, openings_lf: 1.5, doors: 1, closures: 2 }).includes("2 gaps closed by hand"),
-      "room line: hand-closed gaps are said");
-check(P.flRoomLine({ area_sf: 80, perim_lf: 36, source: "drawn" }).includes("outline drawn by hand"), "room line: a drawn outline says so");
-check(P.flRoomLine({ area_sf: null, area_pt2: 1234 }).startsWith("no scale set"), "room line: no scale = pt only");
-
-console.log("ceiling height -> wall area");
-const flx = { default_ceiling_ft: null, result: { scale: { ft_per_paper_inch: 4 } } };
-const rm = { name: "BED #2", area_sf: 135.5, perim_lf: 48, openings_lf: 2.67, doors: 1, ceiling_ft: 9.094, ceiling_by: "sheet", type: 0 };
-check(P.flCeiling(rm, flx).ft === 9.094 && P.flCeiling(rm, flx).by === "sheet", "a room's own note is the height, marked from the sheet");
-check(P.flCeiling({ perim_lf: 40 }, flx) === null, "no note and no default: no height");
-check(P.flCeiling({ perim_lf: 40 }, { default_ceiling_ft: 9 }).by === "default", "the panel default fills a room with no note, marked default");
-check(P.flCeiling({ perim_lf: 40, ceiling_ft: 10, ceiling_by: "typed" }, { default_ceiling_ft: 9 }).ft === 10, "a typed height wins over the default");
-const wa = P.flWallSf(rm, flx);
-check(wa && Math.abs(wa.gross - 48 * 9.094) < 0.01, "wall area gross = perimeter x height (48 x 9'-1 1/8\")");
-check(wa && Math.abs(wa.doors - 2.67 * 6.667) < 0.01 && Math.abs(wa.net - (wa.gross - wa.doors)) < 1e-9,
-      "door openings come out at door height (6'-8\"), not floor to ceiling - the wall over the door is wall");
-check(P.flWallSf({ perim_lf: 40 }, flx) === null && P.flWallSf({ perim_lf: null, ceiling_ft: 9 }, flx) === null,
-      "no height or no scale: no wall area, never 0");
-check(P.flWallSf({ perim_lf: 40, openings_lf: 3, ceiling_ft: 6 }, flx).doors === 18, "a ceiling lower than a door: the opening is capped at the ceiling");
-const lineC = P.flRoomLine(rm, flx);
-check(/wall area 419 SF at 9'-1/.test(lineC) && /from the sheet/.test(lineC), "room line says the wall area, the height and its source: " + lineC);
-check(/no height read, type one/.test(P.flRoomLine({ area_sf: 100, perim_lf: 40, ceiling_text: "VAULTED CEILING" }, flx)),
+check(P.flRoomLine({ area_sf: 26.4, perim_lf: 27.1, closures: 2, c: C({ base_lf: 25.6 }) }).includes("2 gaps closed by hand"), "room line: hand-closed gaps are said");
+check(P.flRoomLine({ area_sf: 80, perim_lf: 36, source: "drawn", c: C({ base_lf: 36 }) }).includes("outline drawn by hand"), "room line: a drawn outline says so");
+check(P.flRoomLine({ area_sf: null, area_pt2: 1234, c: {} }).startsWith("no scale set"), "room line: no scale = pt only");
+const bath = { name: "MAIN BATH", area_sf: 53.1, perim_lf: 30, type: 1, openings: [{}],
+               c: C({ area_sf: 53.1, net_sf: 42.4, deduct_sf: 10.7, deduct_text: "tub 9.2 SF, clicked out 1.5 SF", base_lf: 27.3,
+                      base: { lf: 27.3, ring_lf: 30, openings: [{ w_lf: 2.7, on_edge: true }], openings_lf: 2.7, out_lf: 2.7, off_runs: 0, off_lf: 0, legacy: false, unplaced: 0 } }) };
+check(/^53 SF − tub 9\.2 SF, clicked out 1\.5 SF = 42 SF · walls/.test(P.flRoomLine(bath)), "room line: gross − deductions = net: " + P.flRoomLine(bath));
+const rm = { name: "BED #2", area_sf: 135.5, perim_lf: 48, ceiling_ft: 9.094, ceiling_by: "sheet", type: 0, openings: [{}],
+             c: C({ area_sf: 135.5, net_sf: 135.5, base_lf: 45.3, wall: { gross: 436.5, net: 418.7, doors: 17.8, ft: 9.094, by: "sheet" } }) };
+check(/wall area 419 SF at 9'-1/.test(P.flRoomLine(rm)) && /from the sheet/.test(P.flRoomLine(rm)), "room line says the wall area, the height and its source: " + P.flRoomLine(rm));
+check(/no height read, type one/.test(P.flRoomLine({ area_sf: 100, perim_lf: 40, ceiling_text: "VAULTED CEILING", c: C({ base_lf: 40 }) })),
       "a vaulted note with no height asks for one instead of guessing");
-
-console.log("waste, transitions, details");
-const types2 = [{ name: "Carpet", color: "#4e9af1", sf_price: 3.25, lf_price: 0, waste_pct: 10 },
-                { name: "Tile", color: "#4fc27a", sf_price: 0, lf_price: 0, waste_pct: 0 }];
-const B1 = { x0: 100, y0: 200, x1: 100, y1: 254, r: 54 };       // a 3'-0" door at 1/4"
-const B2 = { x0: 300, y0: 200, x1: 300, y1: 236, r: 36 };       // a 2'-0" door
-const rooms2 = [
-  { name: "HALL", area_sf: 200, perim_lf: 60, openings_lf: 5, doors: 2, type: 0, bridges: [B1, B2], ceiling_ft: 9, ceiling_by: "sheet" },
-  { name: "BATH", area_sf: 50, perim_lf: 30, openings_lf: 3, doors: 1, type: 1, bridges: [{ x0: 100, y0: 254, x1: 100, y1: 200, r: 54 }] },
-  { name: "BED", area_sf: 150, perim_lf: 50, openings_lf: 2, doors: 1, type: 0, bridges: [B2] },
-];
-const tr = P.flTransitions(rooms2, types2);
-check(tr.transitions.length === 1 && tr.transitions[0].ta === 0 && tr.transitions[0].tb === 1 && tr.transitions[0].width_pt === 54,
-      "HALL/BATH share one door and differ in type: ONE transition, the door's width (bridge matched end-for-end)");
-check(tr.open === 0, "HALL/BED share the other door but are both Carpet: no transition, no open doorway");
-const tr2 = P.flTransitions([rooms2[0]], types2);
-check(tr2.transitions.length === 0 && tr2.open === 2, "a picked room's doorways to unpicked rooms are counted as open, not as transitions");
-check(P.flTransitions([{ type: null, bridges: [B1] }, { type: 1, bridges: [B1] }], types2).transitions.length === 0,
-      "an untyped room makes no transition");
-// GEOMETRY (2026-09-26, audit D27): a bridge is drawn as wall for every fill,
-// so both rooms' outlines run along it, but a fill lists it only when its
-// raster contour passes within 5 px of the midpoint - Seer Stone A2.1's
-// PRIMARY BATH bedroom door sat in one room's list. The room on the other
-// side is found by its OUTLINE now: within a wall's thickness of the opening.
-const gSq = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-const Bx = { x0: 200, y0: 100, x1: 200, y1: 136, r: 36 };        // a door on the wall x = 200, y 100..136
-const gBedroom = { name: "BEDROOM", type: 0, pts: gSq(0, 0, 200, 300), bridges: [Bx] };          // lists the bridge
-const gBath = { name: "BATH", type: 1, pts: gSq(200, 0, 400, 300), bridges: [] };                // does not - its outline runs on x = 200
-const trG = P.flTransitions([gBedroom, gBath], types2);
-check(trG.transitions.length === 1 && trG.open === 0 && trG.transitions[0].width_pt === 36,
-      "a one-sided bridge still makes a transition when the other room's outline runs along it: " + JSON.stringify(trG));
-const far = { name: "BED2", type: 1, pts: gSq(600, 0, 800, 300), bridges: [] };                 // nowhere near the door
-const trF = P.flTransitions([gBedroom, far], types2);
-check(trF.transitions.length === 0 && trF.open === 1, "a room whose outline is nowhere near the opening is not on its side");
-// a hand-drawn closure across a cased opening between two types is a strip too
-const wic = { name: "W.I.C.", type: 0, pts: gSq(0, 300, 200, 500), bridges: [] };
-const bath2 = { name: "BATH", type: 1, pts: gSq(200, 300, 400, 500), bridges: [] };
-const trC = P.flTransitions([wic, bath2], types2, [[200, 380, 200, 420]]);
-check(trC.transitions.length === 1 && trC.transitions[0].src === "closure" && Math.abs(trC.transitions[0].width_pt - 40) < 1e-9,
-      "a closure between two rooms of different types counts as a transition, the closure's length wide: " + JSON.stringify(trC));
-check(P.flTransitions([wic, { name: "HALL", type: 0, pts: gSq(200, 300, 400, 500), bridges: [] }], types2, [[200, 380, 200, 420]]).transitions.length === 0,
-      "a closure between two rooms of the SAME type is not a transition");
-const items2 = P.flItems(types2, rooms2, flx);
-const lab = items2.map(it => it.label);
-check(lab[0] === "Flooring — Carpet" && items2[0].qty === 350 && items2[0].details.length === 2
-      && items2[0].details[0].name === "HALL" && items2[0].details[0].qty === 200 && items2[0].details[0].unit === "SF",
-      "the flooring row carries its rooms as details: " + JSON.stringify(items2[0].details));
-check(lab[1] === "Waste — Carpet (10%)" && items2[1].qty === 35 && items2[1].unit_price === 3.25,
-      "10% waste is its own row at the type's $/SF, the measured row untouched: " + lab[1] + " " + items2[1].qty);
-check(lab[2] === "Base/molding — Carpet" && items2[2].qty === 103 && items2[2].details[0].note === "2 doors out",
-      "base row details name the doors taken out: " + JSON.stringify(items2[2].details[0]));
-check(!lab.some(l => /Waste — Tile/.test(l)), "no waste row for a type with 0%");
-const wallRow = items2.find(it => /^Wall area/.test(it.label));
-check(wallRow && Math.abs(wallRow.qty - (60 * 9 - 5 * 6.667)) < 0.06 && wallRow.details.length === 1 && /from the sheet/.test(wallRow.details[0].note),
-      "one wall-area row for the rooms that have a height, with each room's basis: " + JSON.stringify(wallRow && wallRow.details));
-const trRow = items2.find(it => /^Transition strips/.test(it.label));
-check(trRow && trRow.label === "Transition strips — Carpet / Tile" && trRow.qty === 1 && trRow.unit === "EA"
-      && /HALL ↔ BATH/.test(trRow.details[0].name) && /3'-0"/.test(trRow.details[0].note),
-      "transition strips: one EA row per type pair, each door named with its width: " + JSON.stringify(trRow && trRow.details));
-check(lab.join("|") === "Flooring — Carpet|Waste — Carpet (10%)|Base/molding — Carpet|Flooring — Tile|Base/molding — Tile|Wall area — perimeter × ceiling|Transition strips — Carpet / Tile",
-      "row order: per type (floor, waste, base), then wall area, then transitions: " + lab.join("|"));
+P.state.fl = { types: [P.flNewType("Carpet", 0, { id: "tC" }), P.flNewType("Tile", 1, { id: "tT" })],
+               page: { totals: [{ i: 0, id: "tC", name: "Carpet", sf: 300, lf: 88, rooms: 2 }, { i: -1, name: "unassigned", color: null, sf: 12, rooms: 1 }],
+                       items: [{ label: "Flooring — Carpet", qty: 300, unit: "SF", src: "flooring" }], transitions: { transitions: [{ a: 0, b: 1 }], open: 2 } } };
+const tot = P.flTotals();
+check(tot.length === 3 && tot[0].sf === 300 && tot[1].name === "Tile" && tot[1].rooms === 0 && tot[2].i === -1 && tot[2].color === P.FL_UNASSIGNED,
+      "the type rows are the server's, one per type in the estimate's order (a type with no rooms shows empty); the unassigned row is grey");
+check(P.flTotals(null, null, { types: P.state.fl.types, page: { totals: [] } }).length === 2
+      && P.flTotals(null, null, { types: P.state.fl.types, page: { totals: [] } }).every(t => t.rooms === 0 && t.sf === 0),
+      "a sheet with no rooms on the server still lists every type (empty) - the panel renders (it threw on an empty sheet)");
+check(P.flItems()[0].src === "flooring" && P.flItems() !== P.state.fl.page.items, "the takeoff rows are copies of the server's");
+check(P.flTransitions().open === 2, "the transitions are the server's");
 const LRX = new Function("return " + grabConst("FL_LABEL_RX") + ";")();
-check(lab.every(l => LRX.test(l)) && LRX.test("Walls — interior (centreline)") && !LRX.test("Mass Excavation"),
-      "FL_LABEL_RX owns every row kind the panel writes, so re-apply replaces them all");
-
-console.log("what the flooring stops at: objects and deductions");
-const namesD = ["flDeductSf", "flNetSf", "flDeductText"];
-const D = new Function("const flFmt = " + grabConst("flFmt") + ";\n" + namesD.map(grab).join("\n") + "\nreturn { " + namesD.join(", ") + " };")();
-const bath = { name: "MAIN BATH", area_sf: 53.1, perim_lf: 30, openings_lf: 2.7, doors: 1, type: 1,
-               objects: [{ kind: "tub", area_sf: 9.2, deduct: true }, { kind: "cabinet", area_sf: 2.2, deduct: false }, { kind: "toilet", area_sf: 1.9, deduct: false }],
-               deductions: [{ name: "clicked out", area_sf: 1.5 }] };
-check(Math.abs(D.flDeductSf(bath) - 10.7) < 1e-9, "deducted = ticked objects + clicked-out shapes (9.2 + 1.5)");
-check(Math.abs(D.flNetSf(bath) - 42.4) < 1e-9, "net flooring = area less the deductions (53.1 - 10.7)");
-check(D.flNetSf({ area_sf: null }) === null, "no scale: net is null, not 0");
-check(D.flNetSf({ area_sf: 5, objects: [{ kind: "tub", area_sf: 9, deduct: true }] }) === 0, "a deduction cannot make a room negative");
-check(D.flDeductText(bath) === "tub 9.2 SF, clicked out 1.5 SF", "the deductions in words: " + D.flDeductText(bath));
-const totD = P.flTotals(types2, [bath], flx);
-check(Math.abs(totD[1].sf - 42.4) < 1e-9, "the type total uses the NET area");
-const itD = P.flItems(types2, [bath], flx);
-const flRow = itD.find(it => it.label === "Flooring — Tile");
-check(flRow && flRow.qty === 42.4 && flRow.details[0].qty === 42.4 && /53\.1 SF less tub 9\.2 SF, clicked out 1\.5 SF/.test(flRow.details[0].note),
-      "the flooring row and its room line carry the net figure and say what came out: " + JSON.stringify(flRow && flRow.details[0]));
-check(/^53 SF − tub 9\.2 SF, clicked out 1\.5 SF = 42 SF · walls/.test(P.flRoomLine(bath, flx)), "room line: gross − deductions = net: " + P.flRoomLine(bath, flx));
-check(/base = ring/.test("base = ring") && P.flWallLf(bath) === 27.3, "base footage is untouched by a deduction");
+check(["Flooring — x", "Base/molding — x", "Integral base — x", "Waste — x", "Wall area — x", "Transition strips — x", "Walls — interior (centreline)"].every(l => LRX.test(l))
+      && !LRX.test("Mass Excavation"), "FL_LABEL_RX owns every row kind the flooring makes, so a repaint replaces them all");
 const DD = new Function("return " + grabConst("FL_DEDUCT_DEFAULTS") + ";")();
 check(DD.tub === true && DD.shower === true && DD.cabinet === false && DD.appliance === false && DD.toilet === false && DD.furniture === false && DD.shape === false,
       "defaults: tubs and showers out, cabinets IN (Koby: not cabinets), everything else floored under");
-const of = grab("flObjFrom");
-check(of && /deduct: !!dflt\[kind\] && !o\.guessed, manual: false/.test(of), "a new object takes the panel default for its kind; a guessed kind is never deducted on its own");
 const dc = grab("flDeductClick");
-check(dc && /flPointIn\(o\.pts, px, py\)/.test(dc) && /o\.deduct = !o\.deduct; o\.manual = true;/.test(dc), "deduct click: a listed object under the click toggles, and is marked manual");
-check(dc && /styles: all, closures: fl\.closures/.test(dc) && /j\.area_sf >= 0\.5 \* \(r\.area_sf \|\| 0\)/.test(dc),
-      "...else the cell under the click is asked of the engine with EVERY line type as wall, and a cell that is most of the room is refused");
-const ad = grab("flApplyDeductDefaults");
-check(ad && /if \(!o\.manual\) o\.deduct = !!fl\.deductDefaults\[o\.kind\] && !o\.guessed;/.test(ad), "a changed default reaches every object nobody ticked by hand");
-check(/"fl-close", "fl-deduct",/.test(SRC) && /const FL_TOOLS = \["fl-pick", "fl-draw", "fl-close", "fl-deduct"(, "fl-edit")?\]/.test(SRC), "the deduct tool is a POINT_TOOL and a flooring tool");
+check(dc && /kind: "deduct_at", page: state\.page, uid: fl\.rooms\[ri\]\.uid, x: px, y: py/.test(dc),
+      "deduct click: one act; the server toggles a listed object, puts a clicked-out shape back, or measures the cell (refused when most of the room)");
+check(/"fl-close", "fl-deduct",/.test(SRC) && /const FL_TOOLS = \["fl-pick", "fl-draw", "fl-close", "fl-deduct"(, "fl-edit")?(, "fl-base")?(, "fl-open")?(, "fl-wall")?(, "fl-stroke")?\]/.test(SRC), "the deduct tool is a POINT_TOOL and a flooring tool");
 const dr2 = grab("drawFlooring");
 check(dr2 && /if \(o\.deduct\) hatch\(o\.pts\);/.test(dr2) && /for \(const d of \(r\.deductions \|\| \[\]\)\) hatch\(d\.pts\);/.test(dr2), "deducted objects and clicked-out shapes are hatched on the sheet");
 const rf3 = grab("renderFl");
 check(rf3 && /take out of the flooring by default:/.test(rf3) && /FL_KIND_GROUPS/.test(rf3) && /fl-objs/.test(rf3) && /mode\("Deduct", "fl-deduct"/.test(rf3),
       "the panel has the per-kind defaults, a per-room object list with ticks, and the Deduct button");
-const sp2 = grab("flSavePayload");
-check(sp2 && /objects: \(r\.objects \|\| \[\]\)/.test(sp2) && /deductions: \(r\.deductions \|\| \[\]\)/.test(sp2) && /deductDefaults: Object\.assign/.test(sp2), "objects, deductions and the defaults persist");
-const sv2 = grab("flApplySaved");
-check(sv2 && /r\.objects/.test(sv2) && /r\.deductions/.test(sv2) && /sv\.deductDefaults/.test(sv2), "...and restore");
 
 console.log("walls by type, from source");
 const wc = grab("flWallClassOf");
@@ -235,24 +119,24 @@ check(ap2 && /if \(fl\.wallRows\) for \(const it of flWallRows\(fl\)\)/.test(ap2
 const rf2 = grab("renderFl");
 check(rf2 && /"Walls by type"/.test(rf2) && /"Label wall lines by type"/.test(rf2) && /add centreline wall LF rows/.test(rf2),
       "the panel has the walls block, the relabel button and the centreline checkbox");
-check(rf2 && /classify the \$\{flWallStyles\(fl\)\.length\} wall line types/.test(rf2) && /fl\.wallClass\[s\.style_id\] = sel\.value/.test(rf2),
+check(rf2 && /classify the \$\{flWallStyles\(fl\)\.length\} wall line types/.test(rf2) && /key: "wallClass", value: Object\.assign\(\{\}, fl\.wallClass, \{ \[s\.style_id\]: sel\.value \}\)/.test(rf2),
       "one class select per wall line type, folded under the table");
-check(rf2 && /waste %/.test(rf2) && /num\("waste_pct"\)/.test(rf2), "the types table has a waste % column");
+// (2026-10-02: the waste input is its own: blank = not set, never a silent 0)
+check(rf2 && /waste %/.test(rf2) && /fl-num fl-waste/.test(rf2) && /wi\.placeholder = "not set"/.test(rf2)
+      && /field: "waste", value: wi\.value\.trim\(\)/.test(rf2),
+      "the types table has a waste % column; a blank one is NOT SET (null), not 0");
 check(rf2 && /ceiling height for rooms with no note/.test(rf2) && /fl-clg/.test(rf2), "a default ceiling input, and a per-room height box");
 check(rf2 && /transition/.test(rf2) && /doorway.*to rooms not picked yet/.test(rf2), "the result line counts transitions and open doorways");
 const lw = grab("flLabelWalls");
 check(lw && /state\.labels\.set\(s\.style_id, name\)/.test(lw) && /memSave\(s\)/.test(lw), "relabelling goes through the label map and memSave, the style row's own path");
 
-console.log("persistence of the new fields");
-const sp = grab("flSavePayload");
-check(sp && /waste_pct/.test(sp) && /ceiling_ft/.test(sp) && /ceiling_by/.test(sp) && /bridges/.test(sp)
-      && /default_ceiling_ft/.test(sp) && /wallClass/.test(sp) && /wallFaces/.test(sp) && /wallRows/.test(sp),
-      "the sidecar carries waste, ceilings, bridges, the default height and the wall classing");
-const sv = grab("flApplySaved");
-check(sv && /sv\.default_ceiling_ft/.test(sv) && /sv\.wallClass/.test(sv) && /r\.bridges/.test(sv) && /ceiling_by === "typed"/.test(sv),
-      "...and restores them, a typed height staying typed");
-const pk = grab("flPickAt");
-check(pk && /j\.ceiling/.test(pk) && /bridges: \(j\.bridges_used \|\| \[\]\)/.test(pk), "a pick keeps the ceiling note and the door bridges the server used");
+console.log("the room's fields come from the job document");
+const view = grab("flRoomView");
+check(view && /scale_ft_per_in: \+sc\.ft > 0 \? \+sc\.ft : null/.test(view) && /objects_sf/.test(view) && /deductions_sf/.test(view),
+      "each room on screen is the stored room with the server's figures (its scale, its fixtures' areas)");
+const mir = grab("flMirror");
+check(mir && /fl\.default_ceiling_ft = a\.default_ceiling_ft/.test(mir) && /fl\.wallClass = a\.wallClass/.test(mir) && /fl\.closures = a\.closures/.test(mir),
+      "the sheet's aids (default height, wall classes, gaps closed, walls drawn) are the document's");
 console.log("details reach the panel, the CSV and the payload");
 check(/details: Array\.isArray\(it\.details\) \? it\.details : null/.test(SRC), "computeTakeoffRows carries details on calculator rows");
 check(!!grab("detailNote") && /box\.appendChild\(detailNote\(it\)\)/.test(SRC), "the itemized panel prints a detail note under the row");
@@ -260,28 +144,27 @@ check(/`  part: \$\{dt\.name\}`/.test(SRC) && /`part of \$\{it\.label\}`/.test(S
 
 console.log("panel, from source");
 const pick = grab("flPickAt");
-check(pick && /styles: flVisibleStyles\(\), closures: fl\.closures/.test(pick), "the pick sends visible styles and closures");
-check(pick && /setStatus\(j\.why, "err"\)/.test(pick), "a failed pick prints the server's own sentence");
+check(pick && /kind: "room_pick", page: state\.page, x: px, y: py, styles: flVisibleStyles\(\)/.test(pick), "the pick sends the visible styles (the server adds the sheet's gaps and walls by hand)");
+check(/if \(d\.ok === false\) setStatus\(d\.why \|\| "refused", "err"\)/.test(grab("flAct")), "a failed pick prints the server's own sentence");
 check(pick && /if \(fl\.busy\) return;/.test(pick), "no double pick while one is in flight");
 const vis = grab("flVisibleStyles");
 check(vis && /famShown\(id\)/.test(vis), "visible = famShown, the canvas's own answer");
 const close = grab("flCloseClick");
-check(close && /fl\.closures\.push\(seg\)/.test(close) && /state\.tool = "fl-pick"/.test(close),
+check(close && /kind: "aids_add", page: state.page, key: "closures", value: seg/.test(close) && /state\.tool = "fl-pick"/.test(close),
       "close a gap: two clicks make a closure and hand the tool back to Pick");
 const fin = grab("flFinishDraw");
-check(fin && /source: "drawn"/.test(fin) && /stPolyArea\(pts\)/.test(fin), "draw outline: shoelace area, marked drawn");
+check(fin && /kind: "room_draw"/.test(fin), "draw outline: one act, the server measures it (shoelace, marked drawn)");
 const apply = grab("flApplyItems");
-check(apply && /filter\(it => !FL_LABEL_RX\.test\(it\.label\)\)/.test(apply), "re-apply replaces only its own rows");
-check(apply && /store\.setItem\(priceKey\(it\.label\), String\(it\.unit_price\)\)/.test(apply),
-      "a typed $/SF or $/LF is written to the price book, which is what the export prices from");
-check(apply && /calcStateDirty\(\)/.test(apply), "...and marks the sidecar dirty");
-const saved = grab("flApplySaved");
-check(saved && /if \(state\.calcFlApplied \|\| !state\.calcSavedLoaded\) return;/.test(saved), "restore runs once, after the sidecar answered");
-check(saved && /sv\.closures/.test(saved) && /sv\.types/.test(saved) && /sv\.rooms/.test(saved), "restore brings back types, rooms and closures");
-check(/out\.fl = flSavePayload\(fl\);/.test(SRC) && /else if \(saved\.fl\) out\.fl = saved\.fl;/.test(SRC),
-      "calcstate carries fl, and keeps a saved fl when the panel was never opened");
-check(/state\.calcStApplied = false;\n  state\.calcFlApplied = false;/.test(SRC), "calcFlApplied resets where calcStApplied does");
-check(/stApplySaved\(\);\n  flApplySaved\(\);/.test(SRC), "flApplySaved runs where stApplySaved runs");
+check(apply && /filter\(it => !FL_LABEL_RX\.test\(it\.label\) && it\.src !== "flooring"\)/.test(apply), "re-apply replaces only its own rows");
+// (2026-10-02, ruling H: no price book and no name memory for flooring - the job estimate on the server is
+// the one home of every rate; the takeoff rows carry none)
+check(apply && !/priceKey\(it\.label\)/.test(apply) && !/price_key|unit_price/.test(grab("flItems"))
+      && !/flCarryPrices|flmem/.test(SRC),
+      "no price book, no name memory: the rows carry no price and nothing re-fills one by name");
+check(apply && !/calcStateDirty\(\)/.test(apply), "...and marks nothing dirty: the rows are the server's (ruling Q)");
+check(!/out\.fl = /.test(SRC), "the page record never carries a flooring part from this page (the job document holds it)");
+check(/stApplySaved\(\);\n  \/\/ THE JOB'S FLOORING is read \(never written\) as the page loads/.test(SRC) && /if \(!flJobFor\(\)\) flJobLoad\(\); else flSync\(\);/.test(SRC),
+      "as a page loads the job's flooring is READ (one GET) where the other panels restore");
 check(/"fl-pick", "fl-draw", "fl-close",/.test(SRC), "the three tools are POINT_TOOLS");
 check(/POLY_DRAW_TOOLS = new Set\(\[.*"fl-draw"\]\)/.test(SRC), "fl-draw is a polygon tool (close-snap)");
 check(/\["flBtn", "flPanel"\],\n  \["stBtn", "stPanel"\]/.test(SRC), "Flooring sits in the Tools menu before Structure");
@@ -350,30 +233,26 @@ check(ed && ed.i === 1 && Math.abs(ed.at[0] - 10) < 1e-9 && Math.abs(ed.at[1] - 
 check(edgeAt(sq, 5, 5, 1.5) === null, "the middle of the room is on no edge");
 check(edgeAt(sq, 0.5, 9.5, 1.5) && edgeAt(sq, 0.5, 9.5, 1.5).i === 3 || edgeAt(sq, 0.5, 9.5, 1.5).i === 2, "a corner-adjacent press still finds an edge");
 check(vertAt(sq, 9.6, 10.3, 1.5) === 2 && vertAt(sq, 5, 5, 1.5) === -1, "the nearest corner within tolerance, or -1");
-const recompute = new Function(grab("stPolyArea") + ";" + grab("stPolyPerim") + ";" + grab("flEditRecompute") + "; return flEditRecompute;")();
-const rr = recompute({ pts: [[0, 0], [10, 0], [10, 10], [0, 10]], openings_lf: 3, ceiling_ft: 9, objects: [{ deduct: true, area_sf: 1 }] }, 0.5);
-check(rr.area_pt2 === 100 && rr.perim_pt === 40 && rr.area_sf === 25 && rr.perim_lf === 20, "recompute: area and perimeter from the polygon at the scale (100 pt² → 25 SF, 40 pt → 20 LF)");
-check(rr.source === "edited" && rr.openings_lf === 3 && rr.ceiling_ft === 9 && rr.objects.length === 1, "the source becomes 'edited'; door openings, ceiling and objects stay as picked");
-check(recompute({ pts: sq }, null).area_sf === null, "no scale: area_sf stays null, never 0");
 const md = /addEventListener\("mousedown", \(e\) => \{\n  if \(state\.tool !== "fl-edit" \|\| e\.target !== cv \|\| e\.button !== 0\) return;[\s\S]*?\n\}, true\);/.exec(SRC);
 check(!!md, "the editor's mousedown runs in the CAPTURE phase on the window");
 check(md && /r\.pts\.splice\(ed\.i \+ 1, 0, ed\.at\)/.test(md[0]), "a press on an edge inserts a corner at the projection, right after the edge's first point");
 check(md && /e\.preventDefault\(\); e\.stopImmediatePropagation\(\);/.test(md[0]), "and stops the sheet's own pan / vertex-drag from seeing it");
 check(md && /if \(!ed\) return;/.test(md[0]), "a press off the outline is left to the pan (and the click that selects another room)");
 const mu = /addEventListener\("mouseup", \(e\) => \{\n  if \(state\.tool !== "fl-edit"\) return;[\s\S]*?\n\}, true\);/.exec(SRC);
-check(mu && /flEditRecompute\(r, flRoomFpp\(r\)\)/.test(mu[0]) && /flApplyItems\(\); renderFl\(\); draw\(\);/.test(mu[0]), "mouseup recomputes the room at ITS OWN scale (an inset room stays at the inset caption) and re-applies the takeoff rows");
+check(mu && /flEditAfter\(r, r\.pts\.slice\(\), d\.moved \? "corner moved" : "corner set"\)/.test(mu[0]) && /kind: "room_edit"/.test(grab("flEditAfter")),
+      "mouseup sends the new outline as one act: the server measures it at the room's own scale");
 const rmv = grab("flEditRemoveVertex");
 check(rmv && /if \(r\.pts\.length <= 3\) return setStatus\("a room keeps at least 3 corners"/.test(rmv), "a corner cannot be removed below 3");
 check(/if \(\(e\.key === "Delete" \|\| e\.key === "Backspace"\) && state\.tool === "fl-edit"\)/.test(SRC), "Delete / Backspace removes the hovered corner while editing");
 check(/if \(state\.tool !== "fl-edit"\) return;\n  const r = flEditRoom\(\);[\s\S]{0,200}flEditRemoveVertex\(vi\)/.test(SRC), "double-click on a corner removes it");
 const rl = grab("flRoomLine");
 check(rl && /r\.source === "edited"\) s \+= " \\u00b7 shape edited by hand"/.test(rl), "the room line says 'shape edited by hand'");
-const asv = grab("flApplySaved");
-check(asv && /r\.source === "drawn" \|\| r\.source === "edited" \? r\.source : "click"/.test(asv), "a restored room keeps 'edited'");
+check(/"source": r\.get\("source"\) if r\.get\("source"\) in \("click", "drawn", "edited"\) else "click"/.test(require("fs").readFileSync(require("path").join(__dirname, "..", "takeoff_engine", "fl_job.py"), "utf8")),
+      "a stored room keeps 'edited' (the server's room record)");
 const rfe = grab("renderFl");
 check(rfe && /mode\("Edit shape", "fl-edit"/.test(rfe), "the panel has the Edit shape mode");
 check(rfe && /mk\("button", "mini", "edit"\)/.test(rfe) && /flEditSelect\(k\)/.test(rfe), "each room row has its own edit button that selects that room");
-check(rfe && /top\.append\(dot, nm, sel, clg, ed, rm\)/.test(rfe), "placed before the remove button");
+check(rfe && /top\.append\(dot, nm, sel, exb, clg, ed, rm\)/.test(rfe), "placed before the remove button (an untyped room's exclude button beside its type)");
 const dis = grab("flDisarm");
 check(dis && /fl\.edit = null/.test(dis), "disarming forgets the edited room");
 const dfe = grab("drawFlooring");

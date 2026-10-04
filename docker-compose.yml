@@ -41,6 +41,16 @@ services:
       CUTFILL_OCR_TIMEOUT_S: ${CUTFILL_OCR_TIMEOUT_S:-300}
       # the cut / fill store: on the jobs volume, never in the container layer
       CUTFILL_OUT: ${CUTFILL_OUT:-/data/jobs/cutfill}
+      # Bids by e-mail (CORE 2.1). All three empty = the feature is OFF: the door answers 404 and the page
+      # shows nothing. Set all three in .env to turn it on.
+      # The name the mail service sends with every POST to /api/inbound/postmark (the "user" of the
+      # webhook URL). No colon in it.
+      INBOUND_HOOK_USER: ${INBOUND_HOOK_USER:-}
+      # The password it sends with that name (the "password" of the webhook URL). Letters and digits only.
+      INBOUND_HOOK_PASS: ${INBOUND_HOOK_PASS:-}
+      # The mail service's inbound address (<hash>@inbound.postmarkapp.com). Each account's own address is
+      # this one with +<its tag> before the @.
+      INBOUND_ADDRESS: ${INBOUND_ADDRESS:-}
     volumes:
       # The detection cache IS the demo experience. Named volume, never a
       # bind into the image, and never anonymous - an anonymous volume is

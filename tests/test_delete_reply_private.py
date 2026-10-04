@@ -69,7 +69,7 @@ def check(ok, msg, got=None):
 
 
 async def _asgi(method, path, cookie):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"), (b"content-length", b"0"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3"), (b"content-length", b"0"),
                (b"cookie", f"{server.SESSION_COOKIE}={cookie}".encode())]
     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
              "method": method, "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",

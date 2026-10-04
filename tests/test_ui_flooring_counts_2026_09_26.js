@@ -82,44 +82,42 @@ const runDrop = new Function("state", "updateMeasureInfo", "setStatus", "draw",
 
 console.log("rename reaches the export");
 const renderFl = grab("renderFl");
-// (the hover text follows the name too: check 5B, 2026-09-27 - a long name is cut by its box)
-check(renderFl && /nm\.oninput = \(\) => \{ r\.name = nm\.value; (nm\.title = nm\.value; )?flApplyItems\(\); \};/.test(renderFl),
-      "a room rename rebuilds the takeoff rows (flApplyItems), not just the dirty flag");
+// (2026-10-02, ruling P: a rename is an act; the server rebuilds the rows and the reply repaints them)
+check(renderFl && /nm\.onchange = \(\) => flAct\(\{ kind: "room_name", page: state\.page, uid: r\.uid, name: nm\.value \}\);/.test(renderFl),
+      "a room rename is an act (room_name): the server's rows carry the new name");
 const applyItems = grab("flApplyItems");
-check(applyItems && /calcStateDirty\(\)/.test(applyItems) && /renderItemized\(\)/.test(applyItems),
-      "...and flApplyItems marks the record dirty and repaints the itemized rows");
+check(applyItems && /renderItemized\(\)/.test(applyItems) && !/calcStateDirty\(\)/.test(applyItems) && /flItems\(\)/.test(applyItems),
+      "flApplyItems puts the server's rows in the takeoff and repaints them - and writes nothing (ruling Q)");
+const act = grab("flAct");
+check(act && /flJobSet\(j2\.job, d\)/.test(act) && /flMirror\(\)/.test(act) && /version: j2\.version/.test(act),
+      "every act carries the version this tab read and its reply replaces the panel's state");
 
 console.log("walls-only view after a reload");
 const pick = grab("flPickAt");
-check(pick && /fl\.wallStyles = flVisibleStyles\(\);/.test(pick), "a successful pick records the line types it was made with");
-const save = grab("flSavePayload");
-check(save && /wallStyles: Array\.isArray\(fl\.wallStyles\) && fl\.wallStyles\.length \? fl\.wallStyles\.slice\(\) : null/.test(save),
-      "the record carries them");
-const restore = grab("flApplySaved");
-check(restore && /sv\.wallStyles/.test(restore) && /setFamVis\(s\.style_id, keep\.has\(s\.style_id\)\)/.test(restore)
-      && /renderStyles\(\)/.test(restore),
-      "a reload puts them back through the same style ticks the pick reads");
-check(restore && restore.indexOf("sv.wallStyles") > restore.indexOf("fl.wallRows = !!sv.wallRows"),
-      "...after the rest of the record, so nothing later overrides them");
+check(pick && /kind: "room_pick"/.test(pick) && /styles: flVisibleStyles\(\)/.test(pick),
+      "a pick sends the line types showing (the server keeps them with the sheet)");
+const mirror = grab("flMirror");
+check(mirror && /fl\.wallStyles = a\.wallStyles/.test(mirror) && /setFamVis\(s2\.style_id, keep\.has\(s2\.style_id\)\)/.test(mirror)
+      && /renderStyles\(\)/.test(mirror) && /first && !fl\.mirrored/.test(mirror),
+      "the first read of the sheet puts them back on screen through the same style ticks the pick reads (a display, nothing written)");
 
 console.log("the scale a room was measured at");
 check(pick && /scale_ft_per_in: flScreenScale\(\)/.test(pick), "the pick sends the scale on screen");
-check(pick && /scale_ft_per_in: \+j\.scale_ft_per_in > 0 \? \+j\.scale_ft_per_in : null/.test(pick) && /scale_by: j\.scale_by \|\| null/.test(pick),
-      "the room keeps the scale the server used and who set it");
+check(/scale_ft_per_in: \+sc\.ft > 0 \? \+sc\.ft : null/.test(grab("flRoomView")),
+      "the room keeps the scale the server measured it at (its scale record)");
 const fpp = grab("flRoomFpp");
 const runFpp = new Function("stFtPerPt", fpp + "; return flRoomFpp;")(() => 4 / 72);
 check(Math.abs(runFpp({ scale_ft_per_in: 8 }) - 8 / 72) < 1e-12 && Math.abs(runFpp({}) - 4 / 72) < 1e-12,
       "flRoomFpp: the room's own scale when it has one, else the sheet's");
-const note = grab("flRoomScaleNote");
-const runNote = new Function(note + "; return flRoomScaleNote;")();
-check(/inset's own scale/.test(runNote({ scale_ft_per_in: 8, scale_by: "inset caption SCALE: 1/8\" = 1'-0\"" }))
-      && runNote({ scale_ft_per_in: 8, scale_by: "on screen" }) === "",
-      "the room line names an inset measurement and says nothing for the sheet's own scale");
-check((SRC.match(/flEditRecompute\(r, flRoomFpp\(r\)\)/g) || []).length === 2 && !/flEditRecompute\(r, stFtPerPt\(\)\)/.test(SRC),
-      "Edit shape re-measures at the room's own scale everywhere");
+const runNote = new Function("flJobFor", grab("flRoomScaleText") + ";\n" + grab("flRoomScaleNote") + "; return flRoomScaleNote;")(() => null);
+check(/measured at SCALE: 1\/8/.test(runNote({ uid: "a", scale: { multi: true, how: "view" }, c: { scale_words: "SCALE: 1/8\" = 1'-0\" - the view title nearest it (an inference)" } }))
+      && runNote({ uid: "b", scale: { how: "sheet", multi: false }, c: {} }) === "",
+      "the room line names a view's scale (as the server words it) and says nothing for the sheet's own scale");
+check(/kind: "room_edit"/.test(grab("flEditAfter")) && !/flEditRecompute/.test(SRC),
+      "Edit shape is an act: the server measures the new outline at the room's own scale");
 const draw2 = grab("flFinishDraw");
-check(draw2 && /flInsetRemeasure\(room\)/.test(draw2) && /scale\/at\?/.test(grab("flInsetRemeasure")),
-      "a drawn outline asks the server which caption governs its centre");
+check(draw2 && /kind: "room_draw"/.test(draw2) && /scale_ft_per_in: flScreenScale\(\)/.test(draw2),
+      "a drawn outline is measured by the server, which decides which printed scale governs it");
 
 console.log("upload sniff");
 const head = grab("pdfHeadOk");

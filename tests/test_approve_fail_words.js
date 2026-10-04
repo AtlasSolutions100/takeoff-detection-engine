@@ -10,6 +10,7 @@
 const fs = require("fs");
 const path = require("path");
 const js = fs.readFileSync(path.join(__dirname, "..", "webui", "app.js"), "utf8");
+const srvPy = fs.readFileSync(path.join(__dirname, "..", "server.py"), "utf8");
 let fails = 0;
 const check = (ok, msg) => { if (ok) console.log("ok: " + msg); else { fails++; console.error("FAIL: " + msg); } };
 
@@ -28,6 +29,13 @@ check(!/approveBtn"\)\.disabled = true/.test(js.slice(s, e)), "approveRun never 
 
 const GLOBALS = new Set(["JSON", "Object", "Number", "Array", "String", "Set", "Map", "Promise", "Math", "parseFloat",
   "Boolean", "Error", "TypeError", "undefined", "Infinity", "NaN", "isFinite", "console", "Symbol"]);
+// the page's own sentences about a takeoff that is not the server's record; "" on the tree before the repair
+const pageConst = (name) => {
+  const i = js.indexOf("const " + name + " = ");
+  return i < 0 ? "" : JSON.parse(js.slice(js.indexOf('"', i), js.indexOf("\n", i) - 1));
+};
+const TK_STALE_APPROVE = pageConst("TK_STALE_APPROVE");
+const TK_STALE_SERVER = pageConst("TK_STALE_SERVER"), TK_STALE_NOTE = pageConst("TK_STALE_NOTE");
 function harness(fetchImpl, o = {}) {
   const out = { status: [], els: {} };
   const env = {
@@ -46,6 +54,14 @@ function harness(fetchImpl, o = {}) {
     approveScaleRecorded() {}, approvalOutdated: () => Promise.resolve(), approveNotesDropped: () => 0, APPROVE_NOTES_MAX: 6,
     cfSentence: x => String(x), cfEngineState: async () => null, cfApplyItems() {}, cfState: {}, cfRows: () => [],
     cfAdded: () => false, cfDropItems() {}, cfBackThenApprove: () => "", cfLeftNote() {},
+    // the takeoff starts empty (2026-10-03): the ticks are sent first; the empty-takeoff words
+    tkFlush: async () => true, TK_EMPTY_APPROVE: "Nothing is in the takeoff. Tick the styles you want first.",
+    // ...and the approve names the version of the takeoff record this page holds (critic empty-1, MAJOR-4). `o.tkVer`
+    // null = the page holds none: its tick was refused as stale (tkFlush still answers true: nothing waits to be sent)
+    tk: { ver: new Map(o.tkVer === null ? [] : [["j1:0", o.tkVer === undefined ? 0 : o.tkVer]]) },
+    tkKey: (j, p) => j + ":" + p, TK_STALE_APPROVE: TK_STALE_APPROVE, TK_EMPTY_APPROVED: "To take this page out of the bid, use Withdraw approval.",
+    TK_STALE_SERVER: TK_STALE_SERVER, TK_STALE_NOTE: TK_STALE_NOTE,
+    renderItemized() { out.painted = (out.painted || 0) + 1; },
     $: id => (out.els[id] = out.els[id] || { hidden: true, href: "" }), url: u => u, bsReportUrl: () => "r", bsCsvUrl: () => "c",
   };
   const proxy = new Proxy(env, { has: (t, k) => !GLOBALS.has(k) && typeof k === "string",
@@ -98,6 +114,38 @@ const resp = (status, text) => ({ ok: status >= 200 && status < 300, status,
     check(/exported 12 elements/.test(last[0]) && last[1] === undefined && h.out.els.reportLink && h.out.els.reportLink.hidden === false,
       "a good approve still says what it exported and shows the report link");
     check(h.out.status[0][0] === "approving…", "while it waits, the status says approving…");
+  }
+  // THE APPROVE IS OF THE SERVER'S RECORD (critic empty-1, MAJOR-4): it names the version of the takeoff record this
+  // page holds; a page that holds none (its tick was refused as stale) sends no approve at all, and says why
+  {
+    let sent = null;
+    const h = harness(async (u, opt) => { sent = JSON.parse(opt.body); return resp(200, JSON.stringify({ exported: 1, items: [] })); }, { tkVer: 7 });
+    await h.F.approveClick(h.F.approveRun, h.env.setStatus);
+    check(!!sent && sent.ticks_version === 7, "the approve names the takeoff it is of: ticks_version 7 (got " + JSON.stringify(sent && sent.ticks_version) + ")");
+  }
+  {
+    let n = 0;
+    const h = harness(async () => { n++; return resp(200, JSON.stringify({ exported: 1, items: [] })); }, { tkVer: null });
+    await h.F.approveClick(h.F.approveRun, h.env.setStatus);
+    const last = h.out.status[h.out.status.length - 1] || ["", ""];
+    check(n === 0 && last[1] === "err" && /^Approve did not go through: this page's takeoff is not the one kept on the server/.test(last[0])
+      && /Reload this page/.test(last[0]),
+      "a tab whose ticks the server did not keep sends NO approve (requests: " + n + ") and says why: " + JSON.stringify(last[0]));
+  }
+  // ...and a tab that made no tick but whose record changed elsewhere learns it from the server's refusal: it shows
+  // the server's sentence, keeps a note above the rows, and from then on holds no version (no tick, no approve)
+  {
+    const STALE = "This page's takeoff was changed in another tab or on another computer. Reload to see it.";
+    const h = harness(async () => resp(409, JSON.stringify({ detail: STALE })), { tkVer: 3 });
+    await h.F.approveClick(h.F.approveRun, h.env.setStatus);
+    const last = h.out.status[h.out.status.length - 1] || ["", ""];
+    check(TK_STALE_SERVER === STALE && srvPy.includes('TICKS_STALE = "' + STALE + '"'),
+      "the page knows the server's stale sentence, word for word (server.py TICKS_STALE)");
+    check(last[0] === STALE && last[1] === "err" && !h.env.tk.ver.has("j1:0")
+      && h.env.state.tkNote === STALE + " Until you reload, ticks made in this tab are not kept and Approve is refused."
+      && h.out.painted === 1,
+      "an approve the server refuses as stale: said, noted above the rows, and the tab holds no version after it: "
+      + JSON.stringify(h.env.state.tkNote));
   }
   if (fails) { console.error(fails + " failure(s)"); process.exit(1); }
   console.log("all approve-failure checks passed");

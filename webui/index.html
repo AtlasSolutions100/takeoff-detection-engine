@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<script src="/client.js?v=2"></script>
+<script src="/client.js?v=3"></script>
 <title>CORE — Takeoff · Work Optional</title>
 <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
 <link rel="alternate icon" href="/favicon.ico?v=1" sizes="16x16 32x32 48x48">
@@ -15,9 +15,9 @@
      never flashes the wrong colours; shell-boot keeps the old layout from
      showing for the moment before shell.js runs (released after 4 s no
      matter what, so a failed shell.js leaves the old, working layout). -->
-<link rel="stylesheet" href="shell.css?v=13">
+<link rel="stylesheet" href="shell.css?v=15">
 <link rel="stylesheet" href="team.css?v=3">
-<link rel="stylesheet" href="responsive.css?v=7">
+<link rel="stylesheet" href="responsive.css?v=8">
 <link rel="stylesheet" href="dock.css?v=4">
 <script>
 try {
@@ -29,7 +29,8 @@ try {
   setTimeout(function () { d.classList.remove("shell-boot"); }, 4000);
 } catch (e) { /* storage blocked: steel, dark, no boot veil */ }
 </script>
-<link rel="stylesheet" href="style.css?v=116">
+<link rel="stylesheet" href="style.css?v=122">
+<link rel="stylesheet" href="wallpanels.css?v=2">
 </head>
 <body>
 <!-- THE MASTHEAD, after CRITIQUE fix 4.
@@ -93,6 +94,7 @@ try {
       <div class="tm-group" aria-hidden="true">Calculators</div>
       <button id="cfBtn" hidden title="Cut &amp; fill volumes: the cut / fill engine reads this set&rsquo;s contours and spot grades on its own page and hands the totals back here"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16c4-3 6 1 10-2s5-6 8-7"/><path d="M3 20h18"/></svg><span class="tm-txt"><span class="tm-nm">Cut / fill</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <button id="flBtn" hidden title="Rooms by floor type: click inside a room, the engine fills to the walls and bridges the doors; colour each room by its flooring; square feet per type and base footage into the takeoff"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 12h18M12 4v16M7.5 4v8M16.5 12v8"/></svg><span class="tm-txt"><span class="tm-nm">Flooring</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
+      <button id="wpBtn" hidden title="Wall panel estimate and proposal: each room&rsquo;s wall lengths (typed, or picked on the sheet), the sheets and their prices, labor and the other costs from your own rates, and the customer&rsquo;s proposal"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M9 4v16M15 4v16"/></svg><span class="tm-txt"><span class="tm-nm">Wall panels</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <button id="trBtn" hidden title="Trench excavation + bedding volumes for a pipe run"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5v10l4 4M20 5v10l-4 4M8 19h8"/><path d="M9 9h6" stroke-dasharray="2 2"/></svg><span class="tm-txt"><span class="tm-nm">Trench</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <button id="stBtn" hidden title="Building footprint: mass excavation, perimeter layback dig + backfill, slab prep"><svg class="tm-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="9" width="14" height="10"/><path d="M3 9 12 3l9 6M9 19v-5h6v5"/></svg><span class="tm-txt"><span class="tm-nm">Structure</span><span class="tm-ds"></span></span><span class="tm-dot" aria-hidden="true"></span></button>
       <div class="tm-sep" aria-hidden="true"></div>
@@ -213,6 +215,12 @@ try {
       </label>
     </div>
     <div id="pvReach" class="pv-reach"></div>
+    <!-- FROM E-MAIL. Invitations to bid the signed-in account forwarded to its own bid address (Settings ->
+         Bid address): newest first - when, the sender, the subject, and each file with a link to its project or
+         the reason it was not opened. Built by inbRender() in app.js from GET /api/inbound, the account's OWN
+         messages only. Hidden while the server's e-mail feature is off (that route answers 404), on the Demo tab,
+         and for an account with no address and no messages. -->
+    <section id="pvInbox" class="pv-inbox" aria-label="From e-mail" hidden></section>
     <!-- THE SELECTION BAR. Empty and hidden until a card is picked with
          Ctrl/Cmd+click; built by pvRenderSelBar() in app.js. It sits in the
          flow above the grid rather than floating over it, so it can never
@@ -265,6 +273,8 @@ try {
       <a href="#scope">Scope</a>
       <a href="#pricing">Pricing</a>
       <a href="#bidsheet">Bid sheet</a>
+      <a href="#wallpanels">Wall panels</a>
+      <a href="#bidaddress" id="svNavInbound" hidden>Bid address</a>
       <a href="#account">Account</a>
       <a href="#accounts" id="svNavAccounts" hidden>Accounts</a>
       <a href="#machine" id="svNavMachine">This machine</a>
@@ -383,6 +393,62 @@ try {
         view&rsquo;s <b>in bid-sheet order</b> mode all follow this list; rows
         nothing matches are listed under &ldquo;not on the bid sheet&rdquo;,
         never dropped.</div>
+    </section>
+
+    <!-- WALL PANELS: this account's own rates for the wall-panel estimate (takeoff_engine/wp_settings.py).
+         THE SERVER (wallpanels.json, per account). Nothing here has a starting value. Built by
+         webui/wallpanels.js; staff may choose another account and load its record from a JSON file. -->
+    <h2 class="sv-grouptitle" id="svGroupWallpanels">Wall panels</h2>
+    <section class="sv-section" id="svWpSection">
+      <h2>Wall panel rates</h2>
+      <div class="sv-note" id="svWpNote">Loading&hellip;</div>
+      <div id="svWpBody" class="wp-sv"></div>
+      <div class="sv-addrow">
+        <button id="svWpSave" class="mini">Save</button>
+        <button id="svWpLoad" class="mini" hidden>Load from a JSON file</button>
+        <input id="svWpFile" type="file" accept=".json,application/json" hidden>
+        <span class="sv-note" id="svWpState"></span>
+      </div>
+      <div class="sv-note sv-note-b">Stored on the server for this account only; no other account sees or uses
+        them. A wall panel job takes these rates when it is first written and keeps them: when you change a rate
+        later, a job already priced does not move &mdash; it says what differs and offers the rates as they are
+        now. A rate you had not set when a job was started is followed by that job, and becomes its own at its next
+        change. A price item is taken into a sheet row when you pick it there; when the item changes later the row
+        keeps its price and says so.</div>
+    </section>
+
+    <!-- BID ADDRESS. The account's own address for invitations to bid, and its keyword rules. All of it is the
+         SERVER's (GET /api/inbound): the address exists only once the account asks for one, New address replaces
+         it and the old one stops working at once, and the two word lists are saved per account. The whole group
+         and its nav link stay hidden while the server's e-mail feature is off, and for a view-only account
+         (renderSvInbound() in app.js). -->
+    <h2 class="sv-grouptitle" id="svGroupInbound" hidden>Bid address</h2>
+    <section class="sv-section" id="svInboundSection" hidden>
+      <h2>Your bid address</h2>
+      <div class="sv-note" id="svInbNote">Asking the server&hellip;</div>
+      <div class="sv-addrow">
+        <input id="svInbAddr" type="text" readonly spellcheck="false" aria-label="Your bid address" hidden>
+        <button id="svInbCopy" class="mini" hidden>Copy</button>
+        <button id="svInbNew" class="mini">Get my address</button>
+        <span class="sv-note" id="svInbState"></span>
+      </div>
+      <div class="sv-note sv-note-b" id="svInbHow"></div>
+      <div id="svInbConfirm" class="sv-preview sv-inb-confirm" hidden></div>
+    </section>
+    <section class="sv-section" id="svInbRulesSection" hidden>
+      <h2>Keywords</h2>
+      <div class="sv-note" id="svInbRulesNote"></div>
+      <div class="sv-form">
+        <label class="sv-fld"><span>Open a plan only when one of these is found in it <em>(one per line; leave empty to open every plan)</em></span>
+          <textarea id="svInbKeywords" rows="5" spellcheck="false"></textarea></label>
+        <label class="sv-fld"><span>Skip a message when its subject or sender has one of these <em>(one per line)</em></span>
+          <textarea id="svInbExclude" rows="3" spellcheck="false"></textarea></label>
+      </div>
+      <div class="sv-addrow">
+        <button id="svInbRulesSave" class="mini">Save</button>
+        <span class="sv-note" id="svInbRulesState"></span>
+      </div>
+      <div class="sv-note sv-note-b" id="svInbRulesFoot"></div>
     </section>
 
     <h2 class="sv-grouptitle" id="svGroupAccount">Account</h2>
@@ -611,9 +677,13 @@ try {
         line types you have <i>showing</i> (hide dimension strings and fixtures first; keep the walls) and bridges the
         doors the engine found. If a room runs into the next one as drawn, <b>Close a gap</b> with two clicks across
         the opening, or <b>Draw outline</b> yourself. Give each room a floor type; its colour paints the room on the
-        sheet. Each type becomes one square-foot row and one base/molding row (walls less the door openings), with
-        the rooms behind each row listed under it in the takeoff, the CSV and the report. A <b>waste %</b> on a type adds
-        its own row; a ceiling height read in the room (or typed) gives a <b>wall area</b> row (perimeter &times; height,
+        sheet. Each type becomes one flooring row and one base/molding row (walls less each door opening as drawn,
+        jamb to jamb), with the rooms behind each row listed under it in the takeoff, the CSV and the report. A type's
+        <b>kind</b> sets its unit (roll goods and sheet vinyl in square yards, SF / 9) and its default waste (square
+        goods / carpet tile 7%, ceramic tile 15%; any other kind starts with waste <i>not set</i>); <b>integral base</b>
+        gives its base its own row; manufacturer, colour and style travel with its rows. <b>Base: leave out an edge</b>
+        takes a wall with no base out of the footage. A <b>waste %</b> on a type adds
+        its own row and the row shows net and with waste; a ceiling height read in the room (or typed) gives a <b>wall area</b> row (perimeter &times; height,
         door openings out); a doorway shared by two rooms of different types counts a <b>transition strip</b>; and
         <b>Walls by type</b> classes the wall line types by their CAD layer or legend name. Every fixture the lines
         enclose inside a room is listed under it, named from its layer and size: <b>tubs and showers come out of the
@@ -624,8 +694,25 @@ try {
       <div id="flTypes" class="fl-types"></div>
       <div id="flBody" class="tr-body"></div>
       <div id="flRows" class="ew-rows"></div>
+      <div id="flEst" class="fl-est-box"></div>
       <div class="ew-actions" id="flActions">
         <span id="flResult" class="ew-result"></span>
+      </div>
+    </div>
+    <!-- WALL PANELS (2026-10-03): the job's wall-panel estimate and proposal for this account. Built by
+         webui/wallpanels.js from GET /api/job/<id>/wallpanels; every figure in it is the server's. -->
+    <div id="wpPanel" class="ew-panel" hidden>
+      <div class="side-head" id="wpHead"><h2>Wall panels &mdash; estimate and proposal</h2>
+        <button id="wpClose" class="mini">close</button></div>
+      <div class="ew-hint" id="wpHint">One estimate for the job, kept on the server for your account. <b>Rooms</b>: type each
+        room&rsquo;s wall lengths, or pick its walls on a detected sheet. <b>Sheets</b>: a row per size with its count and
+        price; each room offers a suggested count from its wall length and panel height (geometry only: no waste, no
+        openings) &mdash; type it in the row or not. <b>Costs</b> use your own Wall panel rates (Settings). The
+        <b>proposal</b> prints your company block, the scope sentence, the price in figures and in words, and your notes;
+        it is held while a rate, a quantity or a blank of the sentence is not set.</div>
+      <div id="wpBody" class="tr-body wp-body"></div>
+      <div class="ew-actions" id="wpActions">
+        <span id="wpResult" class="ew-result"></span>
       </div>
     </div>
     <div id="stPanel" class="ew-panel" hidden>
@@ -695,8 +782,8 @@ try {
         <section class="card" id="cardAreas">
     <div class="side-head" id="arHead" hidden><h2>Areas &mdash; square feet <span class="card-n" id="areasCount"></span></h2>
       <div class="side-actions">
-        <button id="arAllBtn" class="mini">all</button>
-        <button id="arNoneBtn" class="mini">none</button>
+        <button id="arAllBtn" class="mini" title="Add every area to the takeoff (sheet furniture stays out).">all</button>
+        <button id="arNoneBtn" class="mini" title="Take every area out of the takeoff.">none</button>
       </div>
     </div>
     <div id="arScale" class="ar-scale" hidden></div>
@@ -740,13 +827,14 @@ try {
              O(n^2) work that belongs on a foundation plan only. -->
         <button id="onceAskBtn" class="mini" hidden
                 title="Check this sheet for walls and footings drawn as two parallel lines, so each can be counted as one run. For foundation plans; a civil sheet answers why it is not offered.">walls once</button>
-        <button id="allBtn" class="mini">all</button>
-        <button id="noneBtn" class="mini">none</button>
+        <!-- The takeoff starts empty (TICKS in app.js): these ADD to it and take out of it -->
+        <button id="allBtn" class="mini" title="Add every line style on this sheet to the takeoff.">all</button>
+        <button id="noneBtn" class="mini" title="Take every line style out of the takeoff: it is empty again.">none</button>
         <!-- ways back from all / none (INC-BULK in app.js) -->
         <button id="incUndoBtn" class="mini" hidden
-                title="Put the ticks back the way they were before you clicked.">undo</button>
+                title="Put the takeoff back the way it was before you clicked.">undo</button>
         <button id="incSeedBtn" class="mini" hidden
-                title="Put back the keep / drop ticks the engine picked. Names and colors stay.">engine's picks</button>
+                title="Add the styles the engine picks to the takeoff. Nothing you added is taken out; names and colors stay.">Engine's picks</button>
       </div>
     </div>
     <div id="colorChips" class="color-chips"></div>
@@ -763,6 +851,10 @@ try {
         </section>
       </div>
     <div class="approve-bar">
+      <!-- APPROVED ON AN EARLIER VERSION (app.js tkEarlierShow): the page's one line, where Approve is pressed -->
+      <div id="tkEarlierSlot" class="tk-earlier-slot" hidden></div>
+      <!-- A TAKEOFF CHANGE THE SERVER DID NOT KEEP (app.js tkUnsavedShow): why, and that it is sent again; shown while it waits -->
+      <div id="tkUnsaved" class="item-scale-note stop tk-unsaved" hidden></div>
       <span id="tallyBar" class="tally"></span>
       <button id="csvBtn" class="mini" disabled title="Download the itemized takeoff as CSV (label, trade, count, feet, $/ft, ext $)">CSV</button>
       <button id="approveBtn" disabled>Approve &amp; export</button>
@@ -771,6 +863,10 @@ try {
       <a id="dlLink" hidden download>elements.json</a>
       <a id="reportLink" hidden>Report PDF (all approved pages)</a>
       <a id="bidsheetLink" hidden title="Every approved page filed onto your bid sheet's lines, in its order and units; rows no line names are listed at the end">Bid sheet CSV</a>
+      <!-- WITHDRAW (app.js wdClick): this page's approval taken out of the bid sheet and the report; shown only on an approved page -->
+      <button id="withdrawBtn" class="mini" hidden title="Take this page's approval back: the bid sheet and the report stop counting this page. The takeoff on screen stays; approve again to put the page back in the bid.">Withdraw approval</button>
+      <!-- PUT BACK (app.js pbClick): an approval made on an earlier version, replaced or withdrawn here and kept by the server; shown only while one is kept for this page -->
+      <button id="putBackBtn" class="mini" hidden title="Put the approval made on an earlier version back in the bid as it was. It was kept when it was replaced or withdrawn here. The takeoff on screen stays as it is.">Put back earlier approval</button>
     </div>
     </div>
     <!-- The resize grip: the column's inner edge is draggable, and the
@@ -1118,10 +1214,11 @@ try {
   </div>
 </div>
 <datalist id="legendVocab"></datalist>
-<script src="app.js?v=298"></script>
-<script src="shell.js?v=17"></script>
-<script src="team.js?v=6"></script>
+<script src="app.js?v=313"></script>
+<script src="shell.js?v=20"></script>
+<script src="team.js?v=7"></script>
 <script src="responsive.js?v=2"></script>
 <script src="dock.js?v=5"></script>
+<script src="wallpanels.js?v=2"></script>
 </body>
 </html>

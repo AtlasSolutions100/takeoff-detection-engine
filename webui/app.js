@@ -47,6 +47,12 @@ const state = window.state = {
   img: null, result: null,
   include: new Map(), labels: new Map(), isolate: null,
   incUndo: null,            // the ticks before the last all / none / engine's picks (one step; incSnapshot)
+  // THE TAKEOFF STARTS EMPTY (TICKS block): the styles the person ADDED on this page - the server's record, never
+  // "everything minus what was dropped"; the engine's picks per style (the eye's default); the page's one-line note
+  // (a re-detect dropped a tick, the server could not be read); and, when this page's approval was made on an earlier
+  // version, what the server said about it (tkEarlierWords); and, when the server keeps an earlier version's approval
+  // of this page that can be put back, what it holds (tkKept: GET /approved `kept`)
+  tkSet: new Set(), tkSeed: new Map(), tkNote: "", tkEarlier: null, tkKept: null,
   // FAMILY HOVER. null, or a Set of style_ids to light up on the canvas.
   // It was a single style_id (state.hot) and one caller already needed more:
   // a Bid view row pools several styles under one bid line and could only
@@ -55,9 +61,6 @@ const state = window.state = {
   // A Set is the generalisation; every writer goes through hotFam/hotFamOff.
   // Pure display - never read by an edit, a quantity or the undo stack.
   hotStyle: null,
-  inheritedInc: new Map(),  // style_id -> tick that came from ANOTHER sheet's
-                            // hand decision (set-level inherit); drives the
-                            // one-line disclosure in renderStyles()
   selected: null, excluded: new Set(),
   chainLabels: new Map(),   // chain_id -> label override (separate-from-group)
   // OPERATOR LINE COLOUR - an OVERRIDE LAYER, never a rewrite. The engine's
@@ -156,7 +159,7 @@ const state = window.state = {
 // tool; every tool in this set has the same problem, so they all get it.
 const POINT_TOOLS = new Set([
   "measure", "extend", "cutspan", "flatten", "drawline", "merge", "reclass",
-  "st-pick", "st-draw", "wz-draw", "fl-pick", "fl-draw", "fl-close", "fl-deduct", "fl-edit",
+  "st-pick", "st-draw", "wz-draw", "fl-pick", "fl-draw", "fl-close", "fl-deduct", "fl-edit", "fl-base", "fl-open", "fl-wall", "fl-stroke",
 ]);
 
 // The three polygons the operator draws corner by corner. One set, so the
@@ -495,6 +498,8 @@ addEventListener("drop", (e) => {
 // section and its nav entry go with them: an empty group under a heading
 // that says "This machine" reads as a broken page, not as a hidden feature.
 fetch("/api/config").then(r => r.ok ? r.json() : null).then(cfg => {
+  // does this server take bids by e-mail? Known before any page asks for the e-mail list (inbAsk)
+  if (cfg && typeof cfg.inbound === "boolean" && inbOn === undefined) inbOn = cfg.inbound;
   if (!cfg || !cfg.hosted) return;
   for (const id of ["pathInput", "openBtn", "sampleSel",
                     "svGroupMachine", "svMachineSection", "svNavMachine"]) {
@@ -698,10 +703,47 @@ async function selectPage(p) {
   if (gen !== state.gen) return;
   if (st.status === "done") loadResult(gen);
   else if (st.stale) setStatus("this sheet was detected with an older engine — press Detect to refresh it", "busy");
+  else if (st.status === "running" && st.email) emailLineWait(gen, st);
   // the page's lasting note (its old Earthwork calculator work was removed, or its approval is out of date) as soon as
   // the page is open, result or not: a v1.8.5 page opens "detected with an older engine", and the note came only after
   // a Detect (critic legacy-5, WRONG-1). loadResult asks again once a result is back
   if (st.status !== "done") approvalOutdated(gen).catch(() => {});
+}
+
+// A SHEET OF AN E-MAILED SET THAT DETECT HAS NOT REACHED YET. A set that came
+// in by e-mail detects by itself, one sheet at a time and behind every sheet a
+// person asked for (server.py, the e-mail line). Opening such a sheet says so,
+// says how to do it now, and loads the result when it lands by itself. The
+// wait ends the moment a person presses Detect: the sheet is theirs then, and
+// the Detect button's own poll takes over.
+async function emailLineWait(gen, st) {
+  // the server's word, every look: waiting reads as not detected (inbPageShown), detecting as detecting
+  const paint = (j) => {
+    setPageStatus(state.page, inbPageShown(j));
+    setStatus(inbLineSays(j), "busy");
+  };
+  paint(st);
+  while (gen === state.gen) {
+    await new Promise(res => setTimeout(res, 2500));
+    if (gen !== state.gen) return;
+    let j;
+    try {
+      j = await (await fetch(`/api/job/${state.job}/page/${state.page}/status`)).json();
+    } catch (e) { continue; }
+    if (gen !== state.gen) return;
+    if (j.status === "done") {
+      setPageStatus(state.page, "done");
+      if (!state.result) loadResult(gen);
+      return;
+    }
+    if (!j.email) {
+      // a person pressed Detect meanwhile: the sheet is theirs and that press's own poll reports it. A look that
+      // was already on its way may have painted "waiting" over the press, so say what is true before leaving.
+      if (j.status === "running") { setPageStatus(state.page, "running"); setStatus("detecting…", "busy"); }
+      return;
+    }
+    paint(j);
+  }
 }
 
 // RUN-STATE-BEGIN ------------------------------------------------------------
@@ -910,8 +952,8 @@ async function refreshPageStatuses() {
     fetch(`/api/job/${job}/page/${p}/status`)
       .then(r => r.json()).catch(() => ({ status: "idle" }))));
   if (job !== state.job) return;   // another document won the race
-  res.forEach((j, p) => setPageStatus(p,
-    j.status === "done" ? "done" : j.status === "running" ? "running" : "idle"));
+  // a sheet waiting its turn in the e-mail line is not being detected: its badge says so (inbPageShown)
+  res.forEach((j, p) => setPageStatus(p, inbPageShown(j)));
 }
 // ---------- sheet triage: which pages LOOK like excavation work ----------
 // Attention paint only. The tiers come from GET /triage - a text-layer
@@ -1127,8 +1169,9 @@ function pageReset() {
   state.incUndo = null;
   // eye overrides are per PAGE, like the ticks they shadow (FAM-VIS)
   state.vis = new Map();
+  // what this page's takeoff holds comes back from the server (tkLoad); nothing of the previous sheet's
+  state.tkSet = new Set(); state.tkSeed = new Map(); state.tkNote = ""; state.tkEarlier = null;
   state.seedLabels = new Map(); state.chainLabels = new Map();
-  state.inheritedInc = new Map();
   state.excluded = new Set();
   state.nextChainId = 1;
   // the selection, and the click that made it
@@ -1152,6 +1195,11 @@ function pageReset() {
   state.tool = null; state.measurePts = []; state.vScale = null;
   $("measureBtn").classList.remove("active"); $("measureInfo").hidden = true;
   $("restoreBtn").hidden = true;
+  if ($("withdrawBtn")) $("withdrawBtn").hidden = true;    // shown again by approvalOutdated when THIS page is approved
+  // ...and so is the offer to put an earlier approval back, with what the server keeps for the page
+  state.tkKept = null;
+  if ($("putBackBtn")) $("putBackBtn").hidden = true;
+  if ($("tkUnsaved")) $("tkUnsaved").hidden = true;        // the previous page's "change not saved" note (tkUnsavedShow)
   // the analyzer
   state.ai = null; state.aiWhy = new Map(); state.aiUndo = null;
   state.aiAuto = false; state.aiHidden = false;
@@ -1246,7 +1294,11 @@ async function loadResult(gen = state.gen) {
   state.result = parsed;
   state.nextChainId = 1 + Math.max(0, ...state.result.chains.map(c => c.chain_id));
   for (const s of state.result.styles) {
-    // the seed is includeSeed(s) - "engine's picks" puts these back (UI verify 2026-10-02 #7):
+    // THE TAKEOFF STARTS EMPTY (2026-10-03, the owner): nothing is in it until the person adds it. What the person
+    // added on this page comes back from the server below (tkLoad); nothing is brought over from an earlier version.
+    // includeSeed(s) is still the engine's own pick - "Engine's picks" ADDS those, and the eye shows them - and the
+    // reasons it gives are the ones below.
+    // The seed (includeSeed) - "engine's picks" (UI verify 2026-10-02 #7):
     // white-over-wash linework is real but faint existing-conditions data;
     // it starts OFF so it never surprises the takeoff - one click turns a
     // family on when the estimator wants it
@@ -1262,7 +1314,7 @@ async function loadResult(gen = state.gen) {
     // disagreement spelled out on every row. 63 of 116 cached sheets (54%)
     // have at least one - flipping that much quietly would make an engine
     // judgement invisible, which is the same sin as silently counting it.
-    state.include.set(s.style_id, includeSeed(s));
+    state.include.set(s.style_id, false);
     state.labels.set(s.style_id, s.suggested_label);
     state.seedLabels.set(s.style_id, s.suggested_label || "");
   }
@@ -1281,7 +1333,17 @@ async function loadResult(gen = state.gen) {
   // other seat get them back too. Awaited BEFORE the first render of the
   // calculator panels: an opened panel must start from the saved record,
   // not from defaults that a slower fetch corrects behind the operator.
+  // the sheet's scale record and verdict, asked for beside the calculator sidecar (CRITIC-scale-3 M3): a page whose
+  // dimension check ran with its detection paints its final chip first time, with no "checking" phase
+  const _scaleP = typeof scalePrefetch === "function" ? scalePrefetch() : null;
+  // ...and what this page's takeoff holds (the server's record), asked for beside them
+  const _tkP = tkFetch(state.job, state.page);
   await calcStateLoad(gen);
+  if (gen !== state.gen) return;
+  if (_scaleP && state.result) state.result._scalePre = await _scaleP;
+  if (gen !== state.gen) return;
+  // the ticks before the first paint (and before the scope pass, which sets rows aside from them)
+  await tkLoad(gen, await _tkP);
   if (gen !== state.gen) return;
   // The remembered scale pick has to be back in state.result BEFORE anything
   // paints. renderSheetHead draws the scale chip, the picker's ON highlight
@@ -1294,6 +1356,8 @@ async function loadResult(gen = state.gen) {
   // priced at 1.33 (6x on length, 36x on area). Making the first paint true
   // is not a repaint's job.
   scaleMemApply();
+  // the engine's scale waits for its verdict (svHold, CRITIC-scale-2 BLOCKER): nothing in feet before it is heard
+  if (typeof svHold === "function") svHold();
   // ...and the rows the job holds stand on THIS seat's scale in force from the first paint
   // (rowsFollowScale): they may have been saved by a seat whose scale was another
   rowsFollowScale(true);
@@ -1349,6 +1413,11 @@ async function approvalOutdated(gen) {
   let j = null;
   try { const r = await fetch(`/api/job/${job}/approved`); if (r.ok) j = await r.json(); } catch (e) { return; }
   if (!j || seq !== state.outdatedSeq || gen !== state.gen || job !== state.job || page !== state.page) return;
+  // this page approved: its approval can be withdrawn (wdClick)
+  if ($("withdrawBtn")) $("withdrawBtn").hidden = !(Array.isArray(j.pages) && j.pages.includes(page));
+  // ...and an approval made on an earlier version that the server keeps for this page can be put back (pbClick)
+  state.tkKept = (j.kept && j.kept[String(page)]) || null;
+  if ($("putBackBtn")) $("putBackBtn").hidden = !state.tkKept;
   // OUT OF DATE first; else the page's own note - its old Earthwork calculator work was removed (server.py _ew_removed_pages)
   const why = (j.outdated && j.outdated[String(page)]) || (j.notes && j.notes[String(page)]) || "";
   if (!why) {
@@ -1663,6 +1732,7 @@ function renderMiniLegend() {
     .sort((a, b) => b.length_pt - a.length_pt);
   const sc = state.result.scale;
   const ftPerIn = sc ? sc.ft_per_paper_inch : null;
+  let nOut = 0;                 // rows drawn here that are not in the takeoff
   for (const st of vis.slice(0, 8)) {
     const row = document.createElement("div");
     row.className = "ml-row" + (state.isolate === st.style_id ? " iso" : "");
@@ -1699,8 +1769,11 @@ function renderMiniLegend() {
     const ft = document.createElement("span");
     ft.className = "ml-ft" + (counted ? "" : " not-counted");
     const q = ftPerIn ? styleLenPt(st) / 72 * ftPerIn : styleLenPt(st);
+    // the length alone: since the takeoff starts empty (2026-10-03) most rows drawn after Detect are not counted, and a
+    // " · not counted" on every row pushed the names out of the box; the row is dimmed and the line below says it once
     ft.textContent = (q >= 1000 ? (q/1000).toFixed(1) + "k" : q.toFixed(0))
-      + (ftPerIn ? " ft" : " pt") + (counted ? "" : " · not counted");
+      + (ftPerIn ? " ft" : " pt");
+    if (!counted) nOut++;
     if (!counted)
       ft.title = "Drawn on the sheet, but this family is out of the takeoff, "
         + "so this footage is NOT in the tally or the export. The takeoff "
@@ -1722,6 +1795,15 @@ function renderMiniLegend() {
       renderMiniLegend(); draw();
     };
     rows.appendChild(row);
+  }
+  if (nOut) {
+    const nt = document.createElement("div");
+    nt.className = "ml-more ml-out";
+    nt.textContent = nOut === rows.querySelectorAll(".ml-row").length
+      ? "shown, not in takeoff" : "dimmed: shown, not in takeoff";
+    nt.title = "These families are shown on the sheet, drawn faint, but are not in the takeoff, so their footage is NOT in "
+      + "the tally or the export. The takeoff mark in the line-styles list adds them; added families draw in full colour.";
+    rows.appendChild(nt);
   }
   if (vis.length > 8) {
     const more = document.createElement("div");
@@ -1776,6 +1858,622 @@ function scaleSaid(sc) {
   if (!/^graphic bar /.test(t)) return t;
   return t.replace(/(1" = )(\d+(?:\.\d+)?)'/, (m, a, v) => a + cfScaleTxt(v) + "'");
 }
+
+// SCALE-VERDICT-UI-BEGIN
+// THE SCALE VERDICT, SAID IN PLAIN WORDS (scale verdict S3, 2026-10-02; DESIGN.md out/verify/2026-10-02/scale-verdict/).
+// The SERVER decides the page's state from its witnesses and the review record (takeoff_engine/scale_verdict.py, served
+// as `verdict` by GET .../scale and completed by GET .../scale/dimensions); this block only says it. The state names
+// (CONFIRMED / UNCHECKED / CONFLICT / NONE) never reach the screen. PURE: no DOM, no state.*, no fetch -
+// tests/test_scale_verdict_ui.js evaluates this block standalone. Every field it reads is optional, so a verdict from
+// another build (or none at all) degrades to "checking" or to the old chip, never to an error.
+//
+// CRITIC-scale-2 (2026-10-02):
+//  - WHILE THE VERDICT WAITS (nothing heard yet, or the printed dimensions still being checked, and no person's record)
+//    NOTHING says matches / confirmed / corroborated or shows green, and no scale is in force on screen (svHold, below
+//    the block): a page whose readings turn out to disagree never shows a length in feet before a person chooses.
+//  - `confirmed` is a person's MEASURE that agreed (green, "checked by measuring on <date>"); `accepted` is the button
+//    pressed without one (amber outline, "accepted without measuring", Measure to check still offered). Typed /
+//    calibrated / picked stay green "set by hand". "Corroborated" belongs to two kinds of reading agreeing, never to a
+//    person's word (svBannerLine's `corr`).
+//  - A dimension check that could not be made says so ("the printed dimensions could not be checked") with a retry.
+const SV_KIND = { caption: "caption", bar: "drawn bar", dimensions: "printed dimensions", profile_axis: "profile" };
+const SV_RANK = ["caption", "bar", "dimensions", "profile_axis"];
+const SV_HOW = { typed: "typed", calibrated: "measured on the sheet", picked: "chosen",
+                 confirmed: "checked by measuring", accepted: "accepted without measuring" };
+const SV_HELP = "Check it first: measure the scale bar or a length you know. If your measure agrees, confirm it there.";
+const SV_WAIT = "Checking the scale's readings…";
+const SV_SLOW = "Still checking the printed dimensions";
+const SV_FAILED = "the printed dimensions could not be checked";
+// two readings agree when within 2 % of the smaller (the server's rule, scale_verdict.agree)
+function svAgree(a, b) {
+  a = +a; b = +b;
+  if (!(a > 0) || !(b > 0)) return false;
+  return Math.abs(a - b) / Math.min(a, b) <= 0.02 + 1e-9;
+}
+// a reading as measured, two decimals at most, never snapped to a "standard" scale: 3.965 -> 3.96, 7.93 -> 7.93
+function svNum(v) {
+  const n = +v;
+  if (!isFinite(n)) return "?";
+  return n.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+function svScale(v) { return `1" = ${svNum(v)}'`; }
+function svKindWord(k) { return SV_KIND[k] || String(k || "reading"); }
+function svList(words) {
+  const w = words.filter((x, i) => x && words.indexOf(x) === i);
+  return w.length <= 1 ? (w[0] || "") : w.slice(0, -1).join(", ") + " and " + w[w.length - 1];
+}
+// Readings that agree, grouped: sorted by value and walked, a reading joining the group while it agrees with the
+// group's first member (a gap walk, not a bucket). Each group is ONE choice, shown at the value of its best-ranked
+// kind (a printed caption before a measured bar), labelled with every kind that reads it.
+function svGroups(ws) {
+  const list = (ws || []).filter(w => w && +w.value > 0).slice().sort((a, b) => +a.value - +b.value);
+  const groups = [];
+  for (const w of list) {
+    const g = groups[groups.length - 1];
+    if (g && svAgree(g.members[0].value, w.value)) g.members.push(w);
+    else groups.push({ members: [w] });
+  }
+  return groups.map(g => {
+    const best = g.members.slice().sort((a, b) =>
+      (SV_RANK.indexOf(a.kind) + 1 || 9) - (SV_RANK.indexOf(b.kind) + 1 || 9))[0];
+    const kinds = g.members.slice().sort((a, b) => (SV_RANK.indexOf(a.kind) + 1 || 9) - (SV_RANK.indexOf(b.kind) + 1 || 9))
+      .map(m => svKindWord(m.kind)).filter((x, i, a) => a.indexOf(x) === i);
+    return { value: +best.value, kinds, note: best.note || "", label: `${svScale(best.value)} (${kinds.join(", ")})`,
+             // what a choice records as its text: the caption's own printed words, else the reading as measured
+             text: best.kind === "caption" && best.note ? best.note : svScale(best.value) };
+  });
+}
+function svDate(when) {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(when || ""));
+  return m ? m[1] : "";
+}
+function svPerson(v) { return !!(v && v.person && +v.person.value > 0); }
+// the person's own measure recorded with their record, when it DISAGREES with the value kept: {ft, at} or null
+function svMeasureOff(p) {
+  if (!p) return null;
+  if (p.measure_agrees === false && p.measure && +p.measure.ft > 0) return p.measure;
+  const md = p.measure_disagreed;
+  return md && +md.ft > 0 && p.measure_agrees !== true ? md : null;
+}
+// Has every witness been heard? No: nothing from the server yet, or the printed dimensions still pending - unless a
+// person's record stands (it is in force whatever the readings say). A verdict the server could not work out (state
+// null) and a dimension check that FAILED are answers, not waiting.
+function svWaiting(v) {
+  if (!v) return true;
+  if (svPerson(v) || !v.state) return false;
+  return v.dimensions === "pending";
+}
+// the kinds of reading the verdict rests on, in words ("caption", "caption and drawn bar")
+function svKinds(v) { return svList(((v && v.agree) || []).map(w => svKindWord(w.kind))); }
+// The dimension-only page (CRITIC-scale-2 MINOR 6): chip, banner and queue say this one sentence.
+function svDimOnlyWords(v) {
+  const g = svGroups(((v && v.offered) || []).filter(w => w.kind === "dimensions"))[0];
+  return g ? `No scale. The printed dimensions suggest 1 in = ${svNum(g.value)} ft: choose it, type one, or measure.`
+           : null;
+}
+// The chip, as data: {look: ok | warn | bad | wait | accepted, text, subs: [{look, text}], buttons: [{act, value,
+// label, title}], help}. `v` is the server's verdict (or null while it has not answered); `sc` the scale in force on
+// screen (or null). `opt`: {slow: the dimension check has not answered in 15 s; measure: {ft, at} this session's own
+// measure on the sheet that DISAGREED with the scale in force}. Returns null when the verdict says nothing usable
+// (state null: a record the server could not read) - the caller then draws the chip it always drew.
+function svChipModel(v, sc, opt) {
+  opt = opt || {};
+  if (svWaiting(v)) {
+    return opt.slow
+      ? { look: "wait", text: SV_SLOW, subs: [], help: "",
+          buttons: [{ act: "retry", label: "Try again", title: "Ask the server for the sheet's scale readings again." }] }
+      : { look: "wait", text: SV_WAIT, subs: [], buttons: [], help: "" };
+  }
+  if (!v.state) return null;
+  const failedSub = v.dimensions === "failed" && !svPerson(v)
+    ? [{ look: "warn", text: SV_FAILED }] : [];
+  const retry = v.dimensions === "failed" && !svPerson(v)
+    ? [{ act: "retry", label: "Check the dimensions again", title: "Ask the server to check the printed dimensions again." }]
+    : [];
+  // this session's measure disagreed with the number now in force: said under the chip, with the two ways out
+  const disagreeing = (value) => {
+    const mz = opt.measure;
+    if (!mz || !(+mz.ft > 0) || !(+value > 0) || svAgree(mz.ft, value)) return null;
+    return {
+      sub: { look: "bad", text: `Your measure says 1 in = ${svNum(mz.ft)} ft; the sheet reads ${svNum(value)}.` },
+      buttons: [{ act: "usemeasured", value: +mz.ft, label: `Use ${svNum(mz.ft)} (measured)`,
+                  title: "Set this sheet's scale from your measure." },
+                { act: "keep", value: +value, label: `Keep ${svNum(value)}`,
+                  title: "Keep the sheet's reading. Your measure is recorded beside it." }],
+    };
+  };
+  const p = v.person;
+  if (svPerson(v)) {
+    const date = svDate(p.when);
+    const dis = svGroups(v.disagree);
+    const disSub = dis.length ? [{ look: "warn", text: `the sheet reads ${dis.map(g => g.label).join(", ")}` }] : [];
+    if (p.how === "accepted" && svMeasureOff(p)) {
+      // KEPT OVER THE PERSON'S OWN DISAGREEING MEASURE (CRITIC-scale-3 M1): that measure outweighs every reading -
+      // amber, never green, whatever the caption and the bar say, the measure named on the chip itself
+      const md = svMeasureOff(p);
+      const subs = [{ look: "accepted", text: "accepted" + (date ? ` on ${date}` : "") + (p.who ? ` by ${p.who}` : "") }];
+      const dz = disagreeing(p.value);
+      if (dz) subs.push(dz.sub);
+      return { look: "accepted",
+               text: `${svScale(p.value)} · accepted; a measure on ${svDate(md.at) || date} said 1 in = ${svNum(md.ft)} ft`,
+               subs: subs,
+               buttons: [{ act: "measure", label: "Measure to check", title: SV_HELP }].concat(dz ? dz.buttons : []),
+               help: SV_HELP };
+    }
+    if (p.how === "accepted" && p.measure_agrees === true) {
+      return { look: "ok", text: `${svScale(p.value)} ✓ checked by measuring`,
+               subs: [{ look: "ok", text: "accepted, and a measure agrees" + (date ? ` (${date})` : "") }],
+               buttons: [], help: "" };
+    }
+    if (p.how === "accepted" && v.state !== "CONFIRMED") {
+      // a click, not a check: amber outline, never green, the measure still offered
+      const subs = [{ look: "accepted", text: "accepted" + (date ? ` on ${date}` : "") + (p.who ? ` by ${p.who}` : "") }];
+      const dz = disagreeing(p.value);
+      if (dz) subs.push(dz.sub);
+      return { look: "accepted",
+               text: `${svScale(p.value)} · accepted without measuring (one reading: the ${svKinds(v) || "reading"})`,
+               subs: subs.concat(disSub),
+               buttons: [{ act: "measure", label: "Measure to check", title: SV_HELP }].concat(dz ? dz.buttons : []),
+               help: SV_HELP };
+    }
+    if (p.how === "confirmed") {
+      return { look: "ok", text: `${svScale(p.value)} ✓ checked by measuring`,
+               subs: [{ look: "ok", text: "checked by measuring" + (date ? ` on ${date}` : "")
+                 + (p.who ? ` by ${p.who}` : "") }].concat(disSub), buttons: [], help: "" };
+    }
+    if (p.how === "accepted") {
+      // accepted, and two kinds of reading agree with it: the readings confirm it, the person accepted it
+      return { look: "ok", text: `${svScale(v.value)} ✓ ${svKinds(v)} agree`,
+               subs: [{ look: "ok", text: "accepted" + (date ? ` on ${date}` : "") + (p.who ? ` by ${p.who}` : "") }],
+               buttons: [], help: "" };
+    }
+    const how = SV_HOW[p.how] || "set";
+    const subs = [{ look: "ok", text: how + (date ? ` on ${date}` : "") + (p.who ? ` by ${p.who}` : "") }];
+    return { look: "ok", text: `${svScale(p.value)} ✓ set by hand`, subs: subs.concat(disSub), buttons: [], help: "" };
+  }
+  if (v.state === "CONFIRMED") {
+    // a measure this session that disagrees outweighs the readings that agree (CRITIC-scale-3 M1): not green, the line
+    // and its two ways out
+    const dz = disagreeing(v.value);
+    if (dz)
+      return { look: "warn", text: `${svScale(v.value)} · the ${svKinds(v)} agree, but your measure does not`,
+               subs: [dz.sub], buttons: dz.buttons, help: SV_HELP };
+    return { look: "ok", text: `${svScale(v.value)} ✓ ${svKinds(v)} agree`, subs: [], buttons: [], help: "" };
+  }
+  if (v.state === "UNCHECKED") {
+    const value = +v.value;
+    // the sheet's other printed scales, folded in as choices (CRITIC-scale-2 MINOR 7: the old picker row is gone)
+    const others = svGroups(v.other_printed || []).filter(g => !svAgree(g.value, value));
+    const dz = disagreeing(value);
+    const subs = failedSub.concat(dz ? [dz.sub] : []);
+    if (others.length) subs.push({ look: "warn", text: `the sheet also prints ${others.map(g => svScale(g.value)).join(", ")}` });
+    return {
+      look: "warn",
+      text: `${svScale(value)} · not confirmed (` + (v.dimensions === "failed" && (v.agree || []).length > 1
+        ? `${svKinds(v)} agree; ${SV_FAILED})` : `one reading: the ${svKinds(v) || "reading"})`),
+      subs,
+      // Measure first: a Confirm is offered only where a measure agrees (the Measure readout)
+      buttons: (dz ? dz.buttons : [])
+        .concat([{ act: "measure", label: "Measure to check", title: SV_HELP },
+                 { act: "accept", value: value, label: "Accept as read",
+                   title: "Use the sheet's reading without measuring. It stays marked as not checked." }])
+        .concat(others.map(g => ({ act: "pick", value: g.value, label: `Use ${g.label}`, text: g.text,
+          title: `Use ${svScale(g.value)} for this sheet instead (${g.kinds.join(", ")}).` })))
+        .concat(retry),
+      help: SV_HELP,
+    };
+  }
+  if (v.state === "CONFLICT") {
+    const buttons = svGroups(v.choices).map(g => ({ act: "pick", value: g.value, label: g.label, text: g.text,
+      title: `Use ${svScale(g.value)} for this sheet (${g.kinds.join(", ")}). Check it against the drawing first.` }));
+    buttons.push({ act: "measure", label: "Measure something you know", title: SV_HELP });
+    return { look: "bad", text: "Scale readings disagree", subs: failedSub, buttons: buttons.concat(retry), help: SV_HELP };
+  }
+  // NONE: the offered readings that are not printed captions (the printed-dimension offer) as buttons; captions the
+  // engine would not promote keep their own panel below the chip (renderScaleSuggest)
+  const offered = svGroups((v.offered || []).filter(w => w.kind !== "caption"));
+  const buttons = offered.map(g => ({ act: "pick", value: g.value, label: `Use ${g.label}`, text: g.text,
+    title: `Use ${svScale(g.value)} for this sheet (${g.kinds.join(", ")}): nothing else on the page checks it.` }));
+  buttons.push({ act: "measure", label: "Measure something you know", title: SV_HELP });
+  return { look: "warn", text: svDimOnlyWords(v) || "No scale. Type it, or measure something you know.", subs: failedSub,
+           buttons: buttons.concat(retry), help: "" };
+}
+// One sentence per surface, read off the same verdict. null = no verdict: the caller says what it always said.
+function svStatusWords(v, opt) {
+  if (svWaiting(v)) return opt && opt.slow ? SV_SLOW.toLowerCase() : SV_WAIT.replace(/^C/, "c");
+  if (!v.state) return null;
+  if (svPerson(v)) {
+    const how = v.person.how;
+    if (how === "confirmed") return "checked by measuring";
+    if (how === "accepted" && svMeasureOff(v.person))
+      return `accepted; a measure said 1 in = ${svNum(svMeasureOff(v.person).ft)} ft`;
+    if (how === "accepted" && v.person.measure_agrees === true) return "checked by measuring";
+    if (how === "accepted") return v.state === "CONFIRMED" ? `confirmed: ${svKinds(v)} agree` : "accepted without measuring";
+    return "set by hand";
+  }
+  if (v.state === "CONFIRMED") return `confirmed: ${svKinds(v)} agree`;
+  if (v.state === "UNCHECKED") return v.dimensions === "failed" ? `not confirmed: ${SV_FAILED}` : "not confirmed";
+  if (v.state === "CONFLICT") return "scale readings disagree - none in force until you choose one";
+  if (svDimOnlyWords(v)) return svDimOnlyWords(v);
+  return null;
+}
+// The banner's scale line: {level: ok | warn | stop, html, corr}. `corr` is true ONLY when two different kinds of
+// reading agree - the one thing the banner's "corroborated" badge may stand on (a person's word never is).
+function svBannerLine(v, opt) {
+  if (svWaiting(v))
+    return { level: "warn", corr: false, html: `<b>${opt && opt.slow ? SV_SLOW : SV_WAIT}</b> No length is shown in feet `
+      + `until every reading of the scale has been heard.` };
+  if (!v.state) return null;
+  const p = v.person;
+  if (svPerson(v)) {
+    const dis = svGroups(v.disagree);
+    const tail = dis.length ? ` The sheet reads ${dis.map(g => g.label).join(", ")}.` : "";
+    const d = svDate(p.when);
+    const md = svMeasureOff(p);
+    if (p.how === "accepted" && md)
+      return { level: "warn", corr: false,
+               html: `<b>Scale accepted: ${svScale(p.value)}; a measure on ${svDate(md.at) || d} said `
+                 + `${svScale(md.ft)}.</b> Your own measure disagrees with it, so it is not confirmed, whatever the `
+                 + `sheet's readings say. Measure again, or set the scale.` + tail };
+    if (p.how === "accepted" && p.measure_agrees === true)
+      return { level: "ok", corr: false, html: `<b>Scale checked by measuring: ${svScale(p.value)}</b>${d ? " (" + d + ")" : ""}.` };
+    if (p.how === "accepted" && v.state !== "CONFIRMED") {
+      return { level: "warn", corr: false,
+               html: `<b>Scale accepted without measuring: ${svScale(p.value)}</b> (one reading: the `
+                 + `${svKinds(v) || "reading"}${d ? ", " + d : ""}).`
+                 + ` Nothing has checked it: measure the scale bar or a length you know.` + tail };
+    }
+    if (p.how === "accepted")
+      return { level: "ok", corr: true, html: `<b>Scale confirmed: ${svScale(v.value)}.</b> The ${svKinds(v)} agree.` };
+    if (p.how === "confirmed")
+      return { level: dis.length ? "warn" : "ok", corr: false,
+               html: `<b>Scale checked by measuring: ${svScale(p.value)}</b>${d ? " (" + d + ")" : ""}.` + tail };
+    return { level: dis.length ? "warn" : "ok", corr: false,
+             html: `<b>Scale set by hand: ${svScale(p.value)}</b> (${SV_HOW[p.how] || "set"}`
+               + `${d ? ", " + d : ""}).` + tail };
+  }
+  if (v.state === "CONFIRMED")
+    return { level: "ok", corr: true, html: `<b>Scale confirmed: ${svScale(v.value)}.</b> The ${svKinds(v)} agree.` };
+  if (v.state === "UNCHECKED") {
+    const kinds = svKinds(v) || "reading";
+    return { level: "warn", corr: false, html: v.dimensions === "failed"
+      ? `<b>Scale not confirmed: ${svScale(v.value)}</b> (${(v.agree || []).length > 1 ? kinds + " agree" : "the " + kinds}`
+        + `), and ${SV_FAILED}. ${SV_HELP}`
+      : `<b>Scale not confirmed: ${svScale(v.value)}</b>, one reading (the ${kinds}). ${SV_HELP}` };
+  }
+  if (v.state === "CONFLICT")
+    return { level: "stop", corr: false, html: `<b>Scale readings disagree:</b> `
+      + `${svGroups(v.choices).map(g => g.label).join(" or ")}. No scale is in force until you choose one in the sheet `
+      + `header, or measure something you know.` };
+  if (svDimOnlyWords(v)) return { level: "stop", corr: false, html: `<b>${svDimOnlyWords(v)}</b>` };
+  return null;                           // NONE: the no-scale sentences below say it
+}
+// The scale and how it stands, in plain words, for the takeoff CSV (scale verdict S5) - the same words the server
+// writes into the bid sheet, the report and the export (server.py _scale_plain_words). Never "confirmed" unless a
+// measure agreed or two kinds of witness agree.
+const SV_HOW_PLAIN = { typed: "typed by the reviewer", calibrated: "set by measuring a known length",
+                       picked: "chosen by the reviewer from the sheet's readings",
+                       confirmed: "checked by the reviewer by measuring a known length",
+                       accepted: "accepted by the reviewer without measuring" };
+function svPlainWords(v, sc) {
+  const inch = (x) => `1 in = ${svNum(x)} ft`;
+  if (!v || !v.state) {
+    const f = sc && +sc.ft_per_paper_inch > 0 ? +sc.ft_per_paper_inch : null;
+    return f ? `${inch(f)}, not yet checked` : "no scale set: the engine read none";
+  }
+  if (svWaiting(v)) return "no scale in force yet: the sheet's scale readings are still being checked";
+  const p = v.person;
+  if (svPerson(v)) {
+    const d = svDate(p.when);
+    const md = svMeasureOff(p);
+    return `${inch(p.value)}, ${p.how === "accepted" && md ? "accepted by the reviewer"
+                                 : SV_HOW_PLAIN[p.how] || "set by the reviewer"}` + (d ? ` on ${d}` : "")
+      + (md ? `; a measure on ${svDate(md.at) || d} said ${inch(md.ft)}` : "");
+  }
+  const kinds = svKinds(v);
+  if (v.state === "CONFIRMED") return `${inch(v.value)}, ${kinds} agree`;
+  if (v.state === "UNCHECKED")
+    return v.dimensions === "failed"
+      ? `${inch(v.value)}, not confirmed (${SV_FAILED})`
+      : `${inch(v.value)}, not confirmed (one reading: the ${kinds || "reading"})`;
+  if (v.state === "CONFLICT")
+    return "no scale in force: the sheet's scale readings disagree ("
+      + svGroups(v.choices).map(g => `${inch(g.value)} (${g.kinds.join(", ")})`).join(" or ") + ")";
+  return "no scale set: the engine read none";
+}
+// SCALE-VERDICT-UI-END
+
+// ---------- the scale verdict on this page (S3): heard, applied, acted on ------------------------------------------------
+// `state.result._verdict` is the server's verdict for the page on screen: GET .../scale's `verdict` (scaleRestore ->
+// svTake), completed by GET .../scale/dimensions's `scale_verdict` (svDimsLoad), replaced by every answer of
+// POST .../scale/confirm (svRecord). Absent on a result nobody asked about yet: every reader treats that as "checking".
+function svVerdict() { return (state.result && state.result._verdict) || null; }
+function svOpt() {
+  const r = state.result;
+  return { slow: !!(r && r._verdictSlow), measure: (r && r._svMeasure) || null };
+}
+
+// THE SCALE WAITS FOR ITS VERDICT (CRITIC-scale-2 BLOCKER). Called as a result loads, before its first paint: the
+// engine's scale is set aside (`_heldScale`) and nothing is in force on screen until the server's FULL verdict has
+// answered (svApply releases it) - so a sheet whose readings turn out to disagree never shows a length in feet, and
+// nothing says "matches" or "confirmed" while the printed dimensions are still being checked. A scale this browser
+// chose itself (svScreenOwn) is a person's and is not held. After 15 s without an answer the chip says it is still
+// checking and offers a retry; Approve meanwhile is refused here and decided by the server on the full verdict.
+let svSlowTimer = null;     // the 15 s "still checking" timer: one per page load, not per-page state
+function svHold() {
+  const r = state.result;
+  if (!r) return;
+  r._verdictWaiting = true;
+  r._verdictSlow = false;
+  r._svMeasure = null;
+  // the verdict already heard in full with the page (scalePrefetch): applied now, nothing held, no "checking" phase
+  const pre = r._scalePre && r._scalePre.verdict;
+  if (pre && !svWaiting(pre)) {
+    r._verdict = pre;
+    r._verdictAsked = true;
+    r._verdictWaiting = false;
+    if (pre.state === "CONFLICT" && !svPerson(pre) && r.scale && !svScreenOwn(r.scale, pre)) {
+      r._conflictScale = r.scale; r.scale = null;
+    }
+    return;
+  }
+  if (r.scale && !svScreenOwn(r.scale, null)) { r._heldScale = r.scale; r.scale = null; }
+  clearTimeout(svSlowTimer);
+  const gen = state.gen, job = state.job, page = state.page;
+  svSlowTimer = setTimeout(() => {
+    if (gen !== state.gen || job !== state.job || page !== state.page || !state.result) return;
+    if (!state.result._verdictWaiting && !(state.result._verdict && state.result._verdict.dimensions === "pending")) return;
+    state.result._verdictSlow = true;
+    renderSheetHead();
+  }, 15000);
+}
+// "Try again": the scale route and the dimension check asked again (the hold stays until they answer)
+function svRetry() {
+  if (!state.result) return;
+  state.result._verdictSlow = false;
+  setStatus("Asking for the sheet's scale readings again…", "busy");
+  renderSheetHead();
+  scaleRestore(state.gen).catch(() => {});
+}
+
+// GET .../scale answered: take its verdict, and ask for the dimension check on EVERY page - also with no scale in
+// force - so nothing stays "checking" (the old chip asked only when a scale was in force: dimCheckFor). The verdict is
+// applied after scaleRestore has finished its own record work (a microtask: scaleRestore runs on without awaiting).
+function svTake(j, gen, job, page) {
+  if (!state.result) return;
+  state.result._verdictAsked = true;
+  state.result._verdict = (j && j.verdict) || null;
+  svDimsLoad(gen, job, page);
+  Promise.resolve().then(() => {
+    if (gen === state.gen && job === state.job && page === state.page) svApply();
+  });
+}
+async function svDimsLoad(gen, job, page) {
+  let d = null;
+  try {
+    const r = await fetch(`/api/job/${job}/page/${page}/scale/dimensions`);
+    if (r.ok) d = await r.json();
+  } catch (e) { d = null; }
+  if (!d || gen !== state.gen || job !== state.job || page !== state.page || !state.result) return;
+  if (d.scale_verdict) state.result._verdict = d.scale_verdict;
+  svApply();
+}
+
+// Is the scale on screen a person's own choice in THIS browser that the server has no record of (an older session's
+// saved pick)? Then the verdict does not describe it, and the old chip says what it is.
+function svScreenOwn(sc, v) {
+  return !!(sc && (sc.typed_by_reviewer || sc.picked_by_reviewer || sc.from_suggestion)
+            && !(v && v.person && +v.person.value > 0));
+}
+
+// The verdict, applied. Releases the held scale once every witness has spoken (svWaiting false): back in force, or -
+// on a page whose readings DISAGREE with no person's record - set aside (`_conflictScale`, DESIGN section 2) so the page
+// behaves as a no-scale page on every surface: lengths in paper units, the calculators refuse, the banner says choose.
+// A choice puts a scale back.
+function svApply() {
+  const r = state.result;
+  if (!r) return;
+  const v = svVerdict();
+  let moved = false;
+  if (r._verdictWaiting && !svWaiting(v)) {
+    r._verdictWaiting = false;
+    r._verdictSlow = false;
+    if (r._heldScale && !r.scale) { r.scale = r._heldScale; moved = true; }
+    r._heldScale = null;
+  }
+  const sc = r.scale;
+  const conflict = !!(v && v.state === "CONFLICT" && !(v.person && +v.person.value > 0));
+  if (conflict && sc && !svScreenOwn(sc, v)) {
+    r._conflictScale = sc;
+    r.scale = null;
+    scaleRepaint();
+    return;
+  }
+  if (moved) { scaleRepaint(); return; }
+  renderSheetHead();
+  renderItemized();
+}
+
+// A person's scale decision, recorded on the server NOW (POST .../scale/confirm, scale verdict S2): how = confirmed |
+// accepted | picked | typed | calibrated, the value, the stamp of the record this page last loaded, and - for confirmed,
+// or an acceptance kept over a disagreeing measure - the person's own measure (CRITIC-scale-2 M1). Nothing changes on
+// screen unless the server recorded it; a refusal is said in the server's own words. Returns true when recorded.
+async function svRecord(how, ft, text, measure) {
+  const job = state.job, page = state.page, gen = state.gen;
+  if (!state.result) return false;
+  let r = null, d = null;
+  try {
+    r = await fetch(`/api/job/${job}/page/${page}/scale/confirm`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ft_per_paper_inch: +ft, how: how, text: text || null,
+                             scale_seen: state.result._scaleSeen || null,
+                             // the measure itself: the points picked and the length typed (CRITIC-scale-3 MINOR 5)
+                             measure: measure && Array.isArray(measure.points) && +measure.true_ft > 0
+                               ? { points: measure.points, true_ft: +measure.true_ft } : null }) });
+    d = await r.json().catch(() => null);
+  } catch (e) {
+    setStatus("Nothing was saved: the server did not answer. Check your connection and try again.", "err");
+    return false;
+  }
+  if (gen !== state.gen || job !== state.job || page !== state.page || !state.result) return false;
+  if (!r.ok) {
+    setStatus((d && typeof d.detail === "string") ? d.detail : `Nothing was saved (the server answered ${r.status}).`,
+              "err");
+    return false;
+  }
+  state.result._verdict = (d && d.verdict) || state.result._verdict;
+  // a person's record is in force whatever the readings say: the hold (if any) ends here
+  state.result._verdictWaiting = false;
+  state.result._verdictSlow = false;
+  if (state.result._heldScale && !state.result.scale) state.result.scale = state.result._heldScale;
+  state.result._heldScale = null;
+  approveScaleRecorded(d && d.stamp, +ft);     // the record's new stamp: the next Approve is sent against it
+  return true;
+}
+
+// Back to the engine's own reading, recorded now (server.py scale_back): the Scale card's "put it back".
+async function svBackToEngine(ft) {
+  const job = state.job, page = state.page, gen = state.gen;
+  if (!state.result) return false;
+  let r = null, d = null;
+  try {
+    r = await fetch(`/api/job/${job}/page/${page}/scale/back`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scale_seen: state.result._scaleSeen || null }) });
+    d = await r.json().catch(() => null);
+  } catch (e) {
+    setStatus("Nothing was saved: the server did not answer. Check your connection and try again.", "err");
+    return false;
+  }
+  if (gen !== state.gen || job !== state.job || page !== state.page || !state.result) return false;
+  if (!r.ok) {
+    setStatus((d && typeof d.detail === "string") ? d.detail : `Nothing was saved (the server answered ${r.status}).`, "err");
+    return false;
+  }
+  state.result._verdict = (d && d.verdict) || state.result._verdict;
+  approveScaleRecorded(d && d.stamp, +ft || 0);     // the record now reads the engine's own number
+  return true;
+}
+
+// The typed box and the Measure tool's "set scale": recorded first, then put on screen by the one path that always did.
+async function scalePersonSet(how, ft, text) {
+  if (!(await svRecord(how, ft, text))) return false;
+  if (state.result) state.result._svMeasure = null;
+  applyTypedScale(ft, text);
+  // the status bar prints the scale's source: a length measured on the sheet is not "typed"
+  if (how === "calibrated" && state.result && state.result.scale) {
+    state.result.scale.source = "measured";
+    renderSheetHead();
+  }
+  return true;
+}
+
+// Confirm: offered ONLY in the Measure readout, when the person's own measure agrees (2 %) with the number in force.
+// The measure goes with it and is stored; the server refuses a Confirm without one.
+async function svConfirm(measure) {
+  const sc = state.result && state.result.scale;
+  if (!sc || !(+sc.ft_per_paper_inch > 0) || !measure || !(+measure.ft > 0)) return false;
+  const ft = +sc.ft_per_paper_inch, measured = +measure.ft;
+  if (!(await svRecord("confirmed", ft, sc.text || null, measure))) return false;
+  state.result._svMeasure = null;
+  setStatus(`Scale checked by measuring: your measure (1 in = ${svNum(measured)} ft) agrees with ${svScale(ft)}. `
+    + "Recorded for this sheet.");
+  scaleRepaint();
+  return true;
+}
+// Accept as read: the number in force, without a measure. Not confirmed, and every surface says so. Kept over a
+// measure that disagreed ("Keep 20"), that measure is recorded beside it.
+async function svAccept() {
+  const sc = state.result && state.result.scale;
+  if (!sc || !(+sc.ft_per_paper_inch > 0)) return false;
+  const ft = +sc.ft_per_paper_inch;
+  const mz = state.result._svMeasure;
+  const kept = mz && +mz.ft > 0 && !svAgree(mz.ft, ft) ? mz : null;
+  if (!(await svRecord("accepted", ft, sc.text || null, kept))) return false;
+  state.result._svMeasure = null;
+  setStatus(kept
+    ? `Scale kept at ${svScale(ft)}, with your measure (1 in = ${svNum(kept.ft)} ft) recorded beside it. The page stays `
+      + "marked as not checked until a measure agrees."
+    : `Scale accepted without measuring: ${svScale(ft)}. It stays marked as not checked. Measure to check it.`);
+  scaleRepaint();
+  return true;
+}
+// "Use 30 (measured)": the scale set from the person's measure (calibrated, as the readout's set scale does).
+async function svUseMeasured() {
+  const mz = state.result && state.result._svMeasure;
+  if (!mz || !(+mz.ft > 0)) return false;
+  const done = await scalePersonSet("calibrated", +mz.ft, mz.text || `${svNum(mz.ft)}' per inch over a measured line`);
+  if (done) setStatus(`Scale set from your measure: ${svScale(mz.ft)}. Every quantity on this sheet recalculated.`);
+  return done;
+}
+// The Measure readout heard a length the person knows: a measure that disagrees with the number in force is kept for
+// this page (`_svMeasure`) and said under the chip; one that agrees clears it.
+function svNoteMeasure(ft, text, points, trueFt) {
+  if (!state.result) return;
+  const sc = state.result.scale;
+  const inF = sc && +sc.ft_per_paper_inch > 0 ? +sc.ft_per_paper_inch : null;
+  const was = state.result._svMeasure;
+  // a measure the person already decided on (kept beside the record) is not offered again on a later blur
+  const _rec = state.result._verdict && state.result._verdict.person && state.result._verdict.person.measure;
+  const _decided = !!(_rec && +_rec.ft > 0 && Math.abs(+_rec.ft - +ft) <= 1e-6 * Math.max(1, +ft));
+  state.result._svMeasure = !_decided && inF && +ft > 0 && !svAgree(ft, inF)
+    ? { ft: +ft, text: text || null, at: new Date().toISOString().slice(0, 10),
+        points: Array.isArray(points) ? points.map(q => [+q[0], +q[1]]) : null, true_ft: +trueFt || null } : null;
+  if (JSON.stringify(was || null) !== JSON.stringify(state.result._svMeasure)) renderSheetHead();
+}
+
+// A reading chosen from the ones on offer (readings that disagree, the sheet's other printed scales, or the
+// dimensions' offer on a page with none).
+async function svPick(value, text) {
+  const base = state.result && (state.result._conflictScale || state.result.scale || state.result._heldScale);
+  if (!(await svRecord("picked", value, text))) return false;
+  state.result._svMeasure = null;
+  state.result.scale = Object.assign({}, base || {}, {
+    text: text || svScale(value), ft_per_paper_inch: +value, source: (base && base.source) || "picked",
+    agrees: null, delta_pct: null, picked_by_reviewer: true, typed_by_reviewer: false, from_suggestion: false,
+  });
+  try { store.setItem(scaleKey(), String(+value)); store.removeItem(scaleTypedKey()); }
+  catch (e) { /* private mode: the record holds it */ }
+  setStatus(`Scale set to ${svScale(value)}, chosen by you. Every quantity on this sheet recalculated.`);
+  scaleRepaint();
+  return true;
+}
+
+// "Measure to check": the ruler, armed, with the one instruction it needs.
+function svMeasure() {
+  if (state.tool !== "measure") $("measureBtn").click();
+  setStatus("Measure to check: click the two ends of the scale bar, or of a length you know (the ruler snaps to drawn "
+    + "lines), then type its true length in the readout. It says whether that matches the scale: Confirm it there, or "
+    + "set the scale from it.", "busy");
+}
+
+// The chip, drawn from svChipModel into the sheet head's chip row.
+function svChipRender(meta, m, chip) {
+  const cls = { ok: "ok", warn: "amber", bad: "bad", wait: "wait", accepted: "accepted" };
+  const c = chip(m.text, cls[m.look] || "amber");
+  c.classList.add("sv");
+  if (m.help) c.title = m.help;
+  meta.append(c);
+  for (const s of m.subs || []) meta.append(chip(s.text, cls[s.look] || "amber"));
+  if (!(m.buttons || []).length) return;
+  const row = document.createElement("span");
+  row.className = "sh-sv-btns";
+  for (const b of m.buttons) {
+    const el = document.createElement("button");
+    el.className = "sh-scale-pick sv-" + b.act;
+    el.textContent = b.label;
+    if (b.title) el.title = b.title;
+    el.onclick = () => {
+      if (b.act === "accept" || b.act === "keep") svAccept();
+      else if (b.act === "measure") svMeasure();
+      else if (b.act === "pick") svPick(b.value, b.text);
+      else if (b.act === "usemeasured") svUseMeasured();
+      else if (b.act === "retry") svRetry();
+    };
+    row.appendChild(el);
+  }
+  meta.append(row);
+}
 function renderSheetHead() {
   // The status bar's persistent half is the same set of facts this header
   // draws, so it repaints on exactly the same beats: every detect, every
@@ -1825,7 +2523,19 @@ function renderSheetHead() {
   // chip now says whether the two agree instead of implying certainty it
   // does not have.
   const sc = state.result && state.result.scale;
-  if (state.result) {
+  // THE SCALE VERDICT (S3) draws the chip whenever the server's verdict can say it (svChipModel): plain words, the
+  // state names never shown, the buttons a not-confirmed / disagreeing / missing scale needs. The chips below are kept
+  // for what the verdict cannot describe: a browser's own unrecorded pick (svScreenOwn), or a server that sent none.
+  const _svOn = typeof svChipModel === "function";       // a harness that rebuilds this function alone has no verdict
+  const _sv = state.result && _svOn ? svVerdict() : null;
+  const _svm = state.result && _svOn && !svScreenOwn(sc, _sv) && !(state.result._verdictAsked && !_sv
+                                                                     && !state.result._verdictWaiting)
+    ? svChipModel(_sv, sc, svOpt()) : null;
+  if (_svm) {
+    svChipRender(meta, _svm, chip);
+    const recChip = typeof scaleRecordChip === "function" ? scaleRecordChip() : null;
+    if (recChip) meta.append(chip(recChip, "warn"));
+  } else if (state.result) {
     if (!sc) {
       // "calibrate" used to be the only place that word appeared in this UI
       // and nothing implemented it. The box below does, so the chip points
@@ -1896,7 +2606,8 @@ function renderSheetHead() {
   const rs = runStateNow();
   meta.append(chip(rs.chip, rs.chipCls));
   el.append(meta);
-  renderScalePick(el);
+  // the old picker row only where the verdict does not speak (CRITIC-scale-2 MINOR 7: its choices are the chip's)
+  if (!_svm) renderScalePick(el);
   renderScaleTyped(el);
   // AFTER the type-it-yourself box, deliberately: suggestions are a shortcut
   // past typing and must never sit above the path that always works.
@@ -1962,7 +2673,9 @@ function renderScalePick(host) {
       (Math.abs(c.ft_per_paper_inch - sc.ft_per_paper_inch) < 1e-6 ? " on" : "");
     b.textContent = `${(+c.ft_per_paper_inch).toFixed(2)} ft/in`;
     b.title = c.text + (c.count > 1 ? ` — printed ${c.count}x` : " — printed once");
-    b.onclick = () => {
+    b.onclick = async () => {
+      // recorded on the server first (S3: how=picked); nothing changes if it is refused
+      if (!(await svRecord("picked", +c.ft_per_paper_inch, c.text))) return;
       // keep the reading's own text and provenance; drop the bar
       // corroboration, which was computed against the engine's pick
       state.result.scale = Object.assign({}, sc, {
@@ -2382,7 +3095,7 @@ function scaleRecordChip() {
   if (drop && Math.abs(+sc.ft_per_paper_inch - drop.ft) < 1e-9)
     return `your saved 1" = ${confFt(drop.saved)} ft was dropped: the review changed it after you set it`;
   if (rec && Math.abs(+sc.ft_per_paper_inch - rec) > 1e-9)
-    return `not approved yet: the review says 1" = ${confFt(rec)} ft until you approve`;
+    return `not recorded: the sheet's record says 1" = ${confFt(rec)} ft - set the scale again to record this one`;
   return null;
 }
 function scaleSeenKey() {
@@ -2440,7 +3153,16 @@ function renderScaleTyped(host) {
       const un = document.createElement("button");
       un.className = "sh-scale-pick"; un.textContent = "put it back";
       un.title = `back to ${prevFt} ft/in - ${whose}`;
-      un.onclick = () => {
+      un.onclick = async () => {
+        // RECORDED NOW, on the sheet's scale record (the takeoff starts empty, 2026-10-03: this used to wait for an
+        // Approve, and an approve needs something in the takeoff): a number a person set goes back through the same
+        // route the box uses; the engine's own reading is the retire (POST .../scale/back)
+        const ok = (prev.typed_by_reviewer || prev.picked_by_reviewer)
+          ? await svRecord(prev.typed_by_reviewer
+              ? (/over a measured line$/.test(String(prev.text || "")) ? "calibrated" : "typed") : "picked",
+              +prev.ft_per_paper_inch, prev.text || null)
+          : await svBackToEngine(+prev.ft_per_paper_inch);
+        if (!ok) return;
         state.result.scale = prev;
         try {
           if (prev.typed_by_reviewer)
@@ -2451,8 +3173,7 @@ function renderScaleTyped(host) {
         scaleMarkSeen();
         scaleUndo.key = null; scaleUndo.scale = undefined;
         scaleTypedOpen = false;
-        setStatus(`back to ${prevFt} ft per inch — ${whose}. Approve to make `
-          + `that this page's record.`);
+        setStatus(`back to ${prevFt} ft per inch — ${whose}; recorded for this sheet.`);
         scaleRepaint();
       };
       row.appendChild(un);
@@ -2466,9 +3187,12 @@ function renderScaleTyped(host) {
     // operator not to bother looking at the suggestions right below. On a
     // page with none, the engine read nothing; the sheet may still print a
     // caption the reader missed (CLAUDE.md §5, fourth shape).
+    // readings that disagree (scale verdict S3): the engine DID read the sheet, so "read no scale here" would be false
+    const _vc = state.result._verdict;
     lab.textContent = sc
       ? "the reading above is wrong?"
-      : scaleSuggestions().length
+      : state.result._verdictWaiting ? "checking the scale's readings — or type it yourself:"
+      : (_vc && (_vc.state === "CONFLICT" || (_vc.offered || []).length)) || scaleSuggestions().length
         ? "no scale is set — you can type it yourself:"
         : "the engine read no scale here — you can type it yourself:";
     const b = document.createElement("button");
@@ -2532,11 +3256,14 @@ function renderScaleTyped(host) {
     use.onclick = () => {
       const p = reread();
       if (p.err || p.err === "") { inp.focus(); return; }
-      applyTypedScale(p.ft, p.text);
-      scaleTypedOpen = false; scaleTypedDraft = "";
-      setStatus(`scale set BY HAND to ${p.ft.toFixed(2)} ft per inch — every `
-        + `quantity on this sheet recalculated from a number you typed, not `
-        + `one the sheet states`);
+      // recorded on the server first (S3: POST .../scale/confirm, how=typed); nothing changes if it is refused
+      scalePersonSet("typed", p.ft, p.text).then((done) => {
+        if (!done) return;
+        scaleTypedOpen = false; scaleTypedDraft = "";
+        setStatus(`scale set BY HAND to ${p.ft.toFixed(2)} ft per inch — every `
+          + `quantity on this sheet recalculated from a number you typed, not `
+          + `one the sheet states`);
+      });
     };
     reread();
     setTimeout(() => { try { inp.focus(); inp.select(); } catch (e) {} }, 0);
@@ -2736,11 +3463,13 @@ function renderScaleSuggest(host) {
     const where = sugWhere(c);
     b.title = `${c.text}${where ? ` — read near ${where}` : ""}. `
       + `Nothing on this sheet has been checked against it.`;
-    b.onclick = () => {
+    b.onclick = async () => {
+      // recorded on the server first (S3: how=picked); nothing changes if it is refused
+      if (!(await svRecord("picked", +c.ft_per_paper_inch, c.text))) return;
       applySuggestedScale(c);
       setStatus(`scale set to ${(+c.ft_per_paper_inch).toFixed(2)} ft per inch `
         + `from a reading the engine did not trust — every quantity on this `
-        + `sheet recalculated. Approve to record it.`);
+        + `sheet recalculated, and recorded for this sheet.`);
     };
     row.appendChild(b);
   }
@@ -2810,8 +3539,8 @@ function rowsFollowScale(loaded) {
   const n = typeof flRescale === "function" ? flRescale() : 0;
   if (loaded && n) {
     const sc = state.result && state.result.scale;
-    setStatus(`${n} flooring room${n === 1 ? " was" : "s were"} measured at another scale in another session - `
-      + `shown at the scale in force here (${sc && sc.text ? sc.text : cfScaleTxt(sc && sc.ft_per_paper_inch) + " ft per inch"})`, "warn");
+    setStatus(`${n} flooring room${n === 1 ? " was" : "s were"} measured at another scale than the one in force here `
+      + `(${sc && sc.text ? sc.text : cfScaleTxt(sc && sc.ft_per_paper_inch) + " ft per inch"}) - the Flooring panel offers to measure them again`, "warn");
   }
   return n;
 }
@@ -2834,16 +3563,27 @@ function scaleRepaint() {
 // (`_scaleSeen`, per page by construction) and goes back with Approve, which the server refuses when the record changed
 // since and the number disagrees (_scale_seen_check). No record on file: no review decision - this browser's own pick
 // of a reading stands until it is approved.
+// GET .../scale for the page now loading, started beside the calculator sidecar (loadResult); null on any failure
+function scalePrefetch() {
+  const job = state.job, page = state.page;
+  return fetch(`/api/job/${job}/page/${page}/scale`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+}
 async function scaleRestore(gen) {
   const job = state.job, page = state.page;
   let j;
-  try {
+  // the answer loadResult already has (taken once), else asked now
+  const pre = state.result && state.result._scalePre;
+  if (pre) state.result._scalePre = null;
+  if (pre) j = pre;
+  else try {
     const r = await fetch(`/api/job/${job}/page/${page}/scale`);
     if (!r.ok) return;
     j = await r.json();
   } catch (e) { return; }
   if (gen !== state.gen || !state.result || job !== state.job || page !== state.page) return;   // page changed under us
   state.result._scaleSeen = (j && typeof j.stamp === "string") ? j.stamp : null;
+  // the scale verdict rides on the same answer (S3): taken, the dimension check asked for, applied after this
+  if (typeof svTake === "function") svTake(j, gen, job, page);
   const rv = j && j.reviewer;
   // the review's number: its pick, else - a record that went back to the engine's reading - the engine's
   let ft = rv && scaleSane(rv.ft_per_paper_inch);
@@ -2851,7 +3591,9 @@ async function scaleRestore(gen) {
   if (backToEngine) ft = scaleSane(j.engine.ft_per_paper_inch);
   state.result._scaleRec = ft || null;        // the review's number, for the chip's "not approved yet"
   if (!ft) return;
-  const sc = state.result.scale;
+  // the scale on screen, or the one waiting for its verdict (svHold)
+  const held = !state.result.scale && !!state.result._heldScale;
+  const sc = state.result.scale || state.result._heldScale;
   if (sc && Math.abs(+sc.ft_per_paper_inch - ft) < 1e-9) return;
   // what this browser had saved for the page, and the record's stamp it was set against (scaleMarkSeen)
   let saved = null, savedSeen = "";
@@ -2879,11 +3621,14 @@ async function scaleRestore(gen) {
     : `scale restored from this sheet's review record: ${(+ft).toFixed(2)} ft per inch, `
       + (backToEngine ? "the engine's reading" : "set by the reviewer");
   if (backToEngine) {
-    // the engine's own reading, as the detection holds it (the saved scale had replaced it on screen)
-    state.result.scale = Object.assign({}, sc || {}, {
+    // the engine's own reading, as the detection holds it (the saved scale had replaced it on screen). Not a person's:
+    // while the verdict waits it waits too (svHold)
+    const eng = Object.assign({}, sc || {}, {
       ft_per_paper_inch: ft, text: j.engine.text || `1" = ${confFt(ft)}'`, source: j.engine.source || (sc && sc.source),
       agrees: null, delta_pct: null, picked_by_reviewer: false, typed_by_reviewer: false, from_suggestion: false,
     });
+    if (state.result._verdictWaiting) { state.result._heldScale = eng; state.result.scale = null; }
+    else state.result.scale = eng;
     setStatus(said, saved ? "warn" : undefined);
     scaleRepaint();
     return;
@@ -2904,6 +3649,12 @@ async function scaleRestore(gen) {
     c => Math.abs(+c.ft_per_paper_inch - ft) < 1e-6);
   const hit = (sc && sc.candidates || []).find(
     c => c && Math.abs(+c.ft_per_paper_inch - ft) < 1e-6);
+  // a reviewer's record is a person's decision: in force now, whatever the verdict still has to hear
+  if (held || state.result._verdictWaiting) {
+    state.result._heldScale = null;
+    state.result._verdictWaiting = false;
+    state.result._verdictSlow = false;
+  }
   if (sug) {
     state.result.scale = suggestedScaleObj(sug);
     try { store.setItem(scaleKey(), String(+sug.ft_per_paper_inch)); } catch (e) {}
@@ -3118,7 +3869,15 @@ function confLines() {
   const sug = scaleSuggestions();
 
   // ---- scale: the number every length, area and volume sits on ----------
-  if (!sc && sug.length) {
+  // The scale verdict's sentence first (S3), when the server has said one that describes this screen; a page with no
+  // witness at all (svBannerLine null) keeps the no-scale sentences below.
+  const _sv = res._verdict || null;
+  const _svl = typeof svBannerLine === "function"
+    && !(typeof svScreenOwn === "function" && svScreenOwn(sc, _sv))
+    && (_sv || res._verdictWaiting) ? svBannerLine(_sv, svOpt()) : null;
+  if (_svl) {
+    out.push({ level: _svl.level, html: _svl.html, corr: _svl.corr === true });
+  } else if (!sc && sug.length) {
     // STILL RED, and it says NO SCALE first. There are readings on offer, but
     // the sheet is unscaled until a person picks one, and the colour rule is
     // "red where there is no scale at all" - offering a suggestion does not
@@ -3256,7 +4015,8 @@ function confLines() {
   // branch, and REFUSES to give one where nothing decided. A fabricated
   // mechanism is at its most expensive inside the sentence whose whole job
   // is to teach the estimator to distrust the pick.
-  if (sc && uniq.length > 1) {
+  // (the verdict's own words name the sheet's other printed scales and offer them: CRITIC-scale-2 MINOR 7)
+  if (sc && uniq.length > 1 && !_svl) {
     const lo = Math.min(...uniq.map(c => +c.ft_per_paper_inch));
     const hi = Math.max(...uniq.map(c => +c.ft_per_paper_inch));
     const used = `<span class="conf-num">`
@@ -3556,9 +4316,14 @@ function renderConfidence() {
   // t=1373 ms - 1.16 s warm, 2.7 s cold - labelling a page whose 104
   // elevations rest on the consensus guess as corroborated. 5 of the 182
   // client pages did that.
-  const waiting = !state.conf && !state.confErr;
+  const waiting = (!state.conf && !state.confErr) || !!(state.result && state.result._verdictWaiting);
+  // "corroborated" ONLY where two different kinds of reading agree (CRITIC-scale-2 M1): the scale verdict's line says
+  // so with `corr`; a person's word (checked by measuring, set by hand) is green without it
+  const _svLine = lines.find(l => Object.prototype.hasOwnProperty.call(l, "corr"));
+  const okWord = _svLine && !_svLine.corr && !lines.some(l => l.level === "ok" && l !== _svLine)
+    ? (/checked by measuring/.test(_svLine.html) ? "checked" : "set by hand") : "corroborated";
   const badge = waiting ? "checking…"
-    : { ok: "corroborated", warn: "check first", stop: "stop" }[worst];
+    : { ok: okWord, warn: "check first", stop: "stop" }[worst];
   box.hidden = false;
   syncAutoCard();
   box.className = "conf " + worst + (waiting ? " checking" : "");
@@ -3754,7 +4519,28 @@ function ckBuild(inp) {
   const sc = inp.scale || { present: false };
 
   // ---- the scale: the one number under every other number ---------------
-  if (!sc.present) {
+  if (sc.waiting) {
+    // the verdict has not been heard (CRITIC-scale-2 BLOCKER): nothing is in feet yet, and nothing is queued as if it were
+    pending.push("The scale's readings are still being checked - no length on this sheet is in feet until they answer.");
+  } else if (sc.accepted) {
+    // accepted without measuring: kept in the queue until a measure confirms it (CRITIC-scale-2 M1)
+    out.push({ id: "scale", sev: "warn", w: totalPt * CK_W_OCR,
+      head: sc.measureOff ? "Scale accepted over your own measure." : "Scale accepted without measuring.",
+      text: (sc.measureOff ? "Your measure said " + sc.measureOff + " and the scale was kept anyway - "
+                           : "The sheet's reading was accepted as read and nothing has checked it - ")
+        + "measure the scale bar or a length you know, and confirm it from the readout.",
+      act: { t: "sheethead" } });
+  } else if (!sc.present && sc.dimOnly) {
+    out.push({ id: "scale", sev: "stop", w: totalPt * CK_W_PAGE, head: sc.dimOnly,
+      text: "Nothing below is real feet until one is set.", act: { t: "sheethead" } });
+  } else if (!sc.present && sc.verdict === "CONFLICT" && !sc.person) {
+    // readings that disagree (scale verdict S3): no scale is in force until one is chosen
+    out.push({ id: "scale", sev: "stop", w: totalPt * CK_W_PAGE,
+      head: "Scale readings disagree.",
+      text: "No scale is in force until you choose one in the sheet header"
+        + ((sc.choices || []).length ? ": " + sc.choices.join(" or ") : "") + ".",
+      act: { t: "sheethead" } });
+  } else if (!sc.present) {
     // The head says what the engine did (noScaleSentence), never what the
     // sheet has; with abstained readings on offer it points at them.
     const nsug = +sc.nsug || 0;
@@ -3777,7 +4563,17 @@ function ckBuild(inp) {
         + ckDec(sc.deltaPct) + "% apart, and every foot on this sheet moves "
         + "with the answer. The caption is in force; settle it in the header.",
       act: { t: "sheethead" } });
-  } else if (!sc.operator && sc.source === "ocr" && sc.corroborated !== true) {
+  } else if (!sc.operator && !sc.person && sc.verdict === "UNCHECKED") {
+    // one reading only (scale verdict S3): checked by nothing, so it is queued - a warn, not a stop
+    out.push({ id: "scale", sev: "warn", w: totalPt * CK_W_OCR,
+      head: "Scale not confirmed.",
+      text: (sc.pending ? "The printed dimensions are still being checked. " : "")
+        + (sc.failed ? "The printed dimensions could not be checked. " : "")
+        + (sc.failed && /and/.test(sc.kinds || "") ? "The " + sc.kinds + " agree" : "One reading only"
+          + (sc.kinds ? " (the " + sc.kinds + ")" : ""))
+        + ": check it - measure the scale bar or a length you know, and confirm it from the readout.",
+      act: { t: "sheethead" } });
+  } else if (!sc.operator && !sc.person && sc.source === "ocr" && sc.corroborated !== true) {
     out.push({ id: "scale", sev: "warn", w: totalPt * CK_W_OCR,
       head: "The scale was read by OCR off a scan.",
       text: "Character recognition is the least trustworthy reading this app "
@@ -3997,7 +4793,14 @@ function ckCollect() {
   });
   // With no scale in force the queue's head is read off how many abstained
   // readings the engine recovered - the same list the header offers.
-  let scale = { present: false, nsug: scaleSuggestions().length };
+  const _v = res._verdict || null;
+  const _vOwn = typeof svScreenOwn === "function" && svScreenOwn(sc, _v);
+  const _vPerson = !!(_v && _v.person && +_v.person.value > 0);
+  let scale = { present: false, nsug: scaleSuggestions().length,
+                // the scale verdict (S3): readings that disagree are a STOP of their own, not "read nothing"
+                verdict: _v && !_vOwn ? _v.state || null : null, person: _vPerson,
+                choices: _v && _v.state === "CONFLICT" && typeof svGroups === "function"
+                  ? svGroups(_v.choices).map(g => g.label) : [] };
   if (sc) {
     const uniq = scaleCandidates();
     const why = (sc.typed_by_reviewer || sc.picked_by_reviewer)
@@ -4012,6 +4815,10 @@ function ckCollect() {
       deltaPct: sc.delta_pct,
       source: sc.source || "text",
       operator: !!(sc.typed_by_reviewer || sc.picked_by_reviewer),
+      verdict: _v && !_vOwn ? _v.state || null : null, person: _vPerson,
+      kinds: _v && typeof svGroups === "function"
+        ? (_v.agree || []).map(w => SV_KIND[w.kind] || w.kind).join(" and ") : "",
+      pending: !!(_v && _v.dimensions === "pending"),
       multi: uniq.length > 1 ? {
         n: uniq.length,
         lo: Math.min(...uniq.map(c => +c.ft_per_paper_inch)),
@@ -4020,6 +4827,16 @@ function ckCollect() {
       } : null,
     };
   }
+  // what the verdict says beyond the state (CRITIC-scale-2): still waiting, accepted without measuring, the dimension
+  // check failed, the dimension-only sentence
+  Object.assign(scale, {
+    waiting: !!res._verdictWaiting,
+    accepted: !!(_vPerson && _v.person.how === "accepted" && _v.state !== "CONFIRMED" && !_vOwn),
+    measureOff: _vPerson && !_vOwn && typeof svMeasureOff === "function" && svMeasureOff(_v.person)
+      ? "1 in = " + svNum(svMeasureOff(_v.person).ft) + " ft" : null,
+    failed: !!(_v && !_vOwn && !_vPerson && _v.dimensions === "failed"),
+    dimOnly: _v && !_vOwn && _v.state === "NONE" && typeof svDimOnlyWords === "function" ? svDimOnlyWords(_v) : null,
+  });
   const tc = confTagCheck();
   const tag = tc ? { agrees: tc.agrees, implied: tc.implied,
                      ratio: tc.ratio, n: tc.tc.n_matched } : null;
@@ -4590,8 +5407,14 @@ function scopeApply() {
   // detector had ticked 165). style_id is unique within a page, and the set
   // lives in page state rather than the document record because ids are
   // page-local - a page switch rebuilds state.include from scratch anyway.
+  //
+  // AN UNTICK IS FINAL (critic empty-1, MAJOR-3). What this step puts back is the PERSON'S OWN SET and nothing else
+  // (scopeMine): a detected style goes back on exactly when the server's record of what they added still holds it, so
+  // a row they took out while it was set aside - its own mark, the group box, none - stays out, on screen and in the
+  // record. Since the takeoff starts empty a set-aside row is no longer one that "had always been in": handing it back
+  // as ticked put 4,205.8 ft the person had just removed into the takeoff.
   for (const s of state.result.styles)
-    if (wasOff.has(s.style_id) && !state.include.get(s.style_id))
+    if (!state.include.get(s.style_id) && scopeMine(s, wasOff))
       setIncludeTransient(s.style_id, true);
   for (const s of state.result.styles)
     if (state.include.get(s.style_id)) state.scopeOwnerOn.add(s.style_id);
@@ -4600,6 +5423,14 @@ function scopeApply() {
     let d = scopeVerdict(scopeEvidenceForStyle(s), rec.trades);
     if (d.v === "out" && keep.has(s.style_id))
       d = { v: "kept", why: "you put this back by hand", src: "you" };
+    // A STYLE THE PERSON ADDED IS NEVER SET ASIDE (critic empty-2, MINOR-2: screen = record = export). The takeoff is
+    // the server's record of what the person added, the same in every browser; a declared trade lives in ONE browser.
+    // It used to untick an added style on screen while the record kept it, so an approve exported a part of the
+    // record (one row, 4,382.6 ft, of two, 8,588.4 ft) and every other browser showed more than the bid on an approved
+    // page, with no note. Now the filter sets aside only what the person has NOT added; what they added stays in the
+    // takeoff - shown as kept - until they take it out themselves.
+    else if (d.v === "out" && !s.operator_created && state.tkSet.has(s.style_id))
+      d = { v: "kept", why: "you added this to the takeoff", src: "you" };
     state.scopeV.set(s.style_id, d);
     // Only rows this filter ACTUALLY unticked are recorded - never ones the
     // detector had already turned off. Recording those too made step 1 hand
@@ -4626,6 +5457,13 @@ function scopeToggleTrade(tr) {
   const t = scopeRec().trades;
   scopeSetTrades(t.includes(tr) ? t.filter(x => x !== tr) : t.concat([tr]));
 }
+// Whether the scope filter may put an unticked row back in the takeoff. A detected style: only while the person's own
+// set holds it (state.tkSet, the server's record of what they added). A family the person made on this page is in no
+// record (session only), so for it the old rule stands: back on when this filter was what took it off (`wasOff`).
+function scopeMine(s, wasOff) {
+  if (!s) return false;
+  return s.operator_created ? !!(wasOff && wasOff.has(s.style_id)) : state.tkSet.has(s.style_id);
+}
 // One click puts a set-aside row back, and it stays back for as long as the
 // sheet is open. This is the "out-of-scope rows stay countable" guarantee -
 // adding one back is ONE action on a row that was never removed, not a
@@ -4634,15 +5472,12 @@ function scopeToggleTrade(tr) {
 function scopeKeepRow(s, on) {
   if (!state.scopeKeep) state.scopeKeep = new Set();
   if (on) state.scopeKeep.add(s.style_id); else state.scopeKeep.delete(s.style_id);
-  // Handing a kept row BACK to the filter has to tick it on first, or the
-  // filter never records that IT is the reason the row is off and "show
-  // everything" leaves it behind. Measured live on a civil sheet C3.0 before
-  // this line existed: put style 209 back (25.0k ft), hand it back to the
-  // filter, then clear the declaration - the sheet returned 153.0k ft where
-  // it started at 178.0k, one row and 25.0k ft short, with nothing on screen
-  // saying so. That is the exact failure this whole feature is not allowed
-  // to have.
-  if (!on) setIncludeTransient(s.style_id, true);
+  // UNTICKING A ROW THE PERSON PUT BACK TAKES IT OUT, AND THAT IS FINAL (critic empty-1, MAJOR-3). It used to be handed
+  // back to the filter ticked ON, so "show everything" would return it - right while a set-aside row had always been in
+  // the takeoff (2.0's picks: a civil sheet C3.0 came back 25.0k ft short without it), wrong now that nothing is in the
+  // takeoff until the person adds it: the row they had just taken out came back when the declaration was cleared, on
+  // screen only, 4,205.8 ft the server's record did not hold. The caller's setInclude(false) already took it out of the
+  // person's set; nothing here puts it back.
   scopeApply();
   renderScopeBar(); renderStyles(); renderChips(); renderItemized();
   renderMiniLegend(); draw();
@@ -4671,8 +5506,11 @@ function scopeTally() {
     const d = (state.scopeV && state.scopeV.get(s.style_id)) || { v: "unknown" };
     t[d.v] = (t[d.v] || 0) + 1;
     if (String(s.layer || "").trim()) t.layered += 1;
-    // the operator's own tick state, before this filter touched anything
-    if (!(state.scopeOwnerOn && state.scopeOwnerOn.has(s.style_id))) continue;
+    // the operator's own tick state, before this filter touched anything - read LIVE (critic empty-1, MINOR-4): it was
+    // the set scopeApply last photographed, so after a tick or a bulk button the sentence kept quoting the takeoff as
+    // it had been ("the 0 in the takeoff (0 pt) stay in it" over two rows and 8.6k ft)
+    if (!(state.include.get(s.style_id)
+          || (state.scopeOffBy && state.scopeOffBy.has(s.style_id) && scopeMine(s, state.scopeOffBy)))) continue;
     t.on += 1;
     const ft = ftPerIn ? styleLenPt(s) / 72 * ftPerIn : styleLenPt(s);
     t["ft" + d.v.charAt(0).toUpperCase() + d.v.slice(1)] += ft;
@@ -4753,8 +5591,8 @@ function renderScopeBar() {
   if (declared) {
     const clr = document.createElement("button");
     clr.className = "mini"; clr.id = "scopeClear"; clr.textContent = "show everything";
-    clr.title = "Clear the declaration. Every row this filter unticked goes "
-      + "back on, and nothing you turned off by hand is touched.";
+    clr.title = "Clear the declaration: every line type is listed again. What "
+      + "you added to the takeoff stays in it, and nothing you took out comes back.";
     clr.onclick = () => scopeSetTrades([]);
     head.appendChild(clr);
   }
@@ -4814,8 +5652,8 @@ function renderScopeBar() {
   if (!declared) {
     note.innerHTML = "<b>Nothing declared, so nothing is filtered.</b> All "
       + `${state.result.styles.length} line types on this sheet are listed, and `
-      + `the <b>${t.on}</b> rows the detector ticked (${fmt(t.ftUnknown)} `
-      + `${t.ftUnit}) are ticked still. `
+      + `the <b>${t.on}</b> in the takeoff (${fmt(t.ftUnknown)} `
+      + `${t.ftUnit}) stay in it. `
       + "Pick one or more trades above and this list narrows "
       + "to what the sheet itself says is yours — it never deletes a row and "
       + "never changes a length, and one click brings everything back.";
@@ -4825,17 +5663,20 @@ function renderScopeBar() {
     note.innerHTML = "<b>Not narrowed — this sheet says nothing that "
       + "separates your work from anybody else&rsquo;s.</b> All "
       + `${state.result.styles.length} line types are still listed and the `
-      + `<b>${t.on}</b> the detector ticked are still ticked. `
+      + `<b>${t.on}</b> in the takeoff are still in it. `
       + (t.layered ? "" : "No row on this sheet carries a CAD layer name, ")
       + "and no legend label names a trade, so there is nothing to filter on. "
       + "Nothing has been hidden.";
   } else {
     note.innerHTML =
       `<b>${t.in}</b> line type${t.in === 1 ? "" : "s"} the sheet says are yours `
+      // "left as they are", not "kept and ticked": a row the sheet says nothing about is in the takeoff only when the
+      // person added it (the takeoff starts empty), and the footage beside each count is what of it is in the takeoff
       + `(${fmt(t.ftIn)} ${t.ftUnit}) · <b>${t.unknown}</b> it does not say, `
-      + `kept and ticked (${fmt(t.ftUnknown)} ${t.ftUnit}) · <b>${t.out}</b> set `
-      + `aside (${fmt(t.ftOut)} ${t.ftUnit} out of the takeoff, still listed)`
-      + (t.kept ? ` · <b>${t.kept}</b> you put back by hand `
+      + `left as they are (${fmt(t.ftUnknown)} ${t.ftUnit}) · <b>${t.out}</b> set `
+      // a row the person added is never set aside (scopeApply): only a family made on this page can still hold footage here
+      + `aside (${t.ftOut > 0 ? fmt(t.ftOut) + " " + t.ftUnit + " out of the takeoff" : "not in the takeoff"}, still listed)`
+      + (t.kept ? ` · <b>${t.kept}</b> of another trade that you added, kept in the takeoff `
         + `(${fmt(t.ftKept)} ${t.ftUnit})` : "");
   }
   box.appendChild(note);
@@ -5417,16 +6258,13 @@ function sgSyncHeads() {
 
 // The whole group's tick, in one write pass and one repaint. A BULK gesture,
 // so - exactly like the card's own `all` / `none` buttons - it writes the
-// page record through setInclude and deliberately does NOT call
-// setIncludeSetWide: speaking for every other sheet in the set is reserved
-// for a hand tick on a single row (see the rule at setIncludeSetWide).
+// page record through setInclude (a tick stays on its own sheet).
 //
 // Scope put-backs are honoured inline rather than through scopeKeepRow,
 // which repaints the entire sidebar per row - 49 full repaints for one click
-// on Annotation. Same two branches, same order (a row handed BACK to the
-// filter is ticked on first, or the filter never records that IT is the
-// reason it is off - see the 25.0k ft measurement at scopeKeepRow), then one
-// scopeApply() and one repaint at the end.
+// on Annotation. Same two branches, same order (a put-back row that is
+// unticked leaves the person's set, like any other: see scopeKeepRow), then
+// one scopeApply() and one repaint at the end.
 // A GROUP TICK MUST BE ABLE TO GIVE BACK WHAT IT TOOK.
 //
 // The header checkbox is three-state, and a real sheet usually starts
@@ -5487,8 +6325,10 @@ function sgTickGroup(key, on) {
       scoped = true; continue;
     }
     if (v === "kept" && !on) {
+      // out of the person's set, like every other row of the group (an untick is final: critic empty-1, MAJOR-3 - it
+      // was handed back to the filter ticked, never left the person's set, and came back with "show everything")
       state.scopeKeep.delete(s.style_id);
-      setIncludeTransient(s.style_id, true);
+      setInclude(s.style_id, false);
       scoped = true; continue;
     }
     setInclude(s.style_id, on);
@@ -5621,8 +6461,11 @@ function sgHeadEl(g) {
   cb.title = "Turn " + (g.tick.state === "all" ? "OFF" : "ON") + " all "
     + g.tick.n + " " + g.name.toLowerCase() + " line type"
     + (g.tick.n === 1 ? "" : "s") + "." + LF + LF
-    + "This is the TAKEOFF, not the scroll. Unticking removes this group's "
-    + "footage from the total and its lines from the sheet. To put the rows "
+    // (it said unticking takes "its lines from the sheet": since the takeoff starts empty a line that is shown but not
+    // in the takeoff stays on the sheet, drawn dimmed - critic empty-2, MINOR-5)
+    + "This is the TAKEOFF, not the scroll. Unticking takes this group's "
+    + "footage out of the total. Its lines stay on the sheet while the eye "
+    + "shows them, drawn dimmed: shown, not in the takeoff. To put the rows "
     + "away without changing a number, use the arrow on the left."
     + (g.filtered ? LF + LF + "Your filter is narrowing this group, so it "
         + "acts on the " + nWord(g.nHit, "row") + " shown, not on all " + g.nAll + "."
@@ -5653,8 +6496,10 @@ function sgHeadEl(g) {
     ? g.tick.on + " of this group's " + g.tick.n + " line types are ticked, "
       + "and this is what they add to the takeoff right now. Closing the "
       + "group does not change it; unticking the group takes it to zero."
-    : "Every line type in this group is unticked, so it adds nothing to the "
-      + "takeoff and draws nothing on the sheet.";
+    // (it said the group "draws nothing on the sheet": with nothing in the takeoff the engine's picks are still drawn,
+    // dimmed - critic empty-2, MINOR-5)
+    : "No line type in this group is in the takeoff, so it adds nothing to "
+      + "the total. Lines the eye shows are still drawn on the sheet, dimmed.";
 
   h.append(fold, cb, nm, n, ft);
 
@@ -5809,9 +6654,9 @@ function styleEyeBtn(s) {
     + "price - the mark to its right is the one that decides what the takeoff "
     + "counts." + LF + LF
     + (famVisOverridden(s.style_id)
-        ? "You have set this by hand, so it no longer follows the takeoff "
-          + "mark. Click it back to match and it follows again."
-        : "It follows the takeoff mark until you set it by hand.");
+        ? "You have set this by hand. Click it back and it follows its default "
+          + "again: shown when it is in the takeoff or the engine picks it."
+        : "Until you set it by hand it is shown when it is in the takeoff or the engine picks it.");
   b.onclick = (e) => {
     e.stopPropagation();
     setFamVis(s.style_id, !famVis(s.style_id));
@@ -5834,11 +6679,12 @@ function styleTakeBtn(s) {
     (on ? "Take out of" : "Add to") + " the takeoff: " + (s.suggested_label || ""));
   b.appendChild(markSvg(on ? TAKE_IN : TAKE_OUT));
   b.title = (on
-      ? "IN THE TAKEOFF: this family's " + fmtQty(styleLenPt(s))
+      ? "IN THE TAKEOFF: you added this family, so its " + fmtQty(styleLenPt(s))
         + " is counted, priced and exported."
       : "NOT IN THE TAKEOFF: this family's " + fmtQty(styleLenPt(s))
-        + " is left out of every number.")
-    + " Click to " + (on ? "take it out." : "add it.");
+        + " is found, but not counted until you add it.")
+    + " Click to " + (on ? "take it out of the takeoff." : "add it to the takeoff.")
+    + LF + LF + TK_HELP;
   return b;
 }
 
@@ -5860,9 +6706,10 @@ function styleMarksKey() {
     return w;
   };
   key.append(seg(EYE_OPEN, "mark-eye", "shown on the drawing"),
-             seg(TAKE_IN, "mark-take", "counted in the takeoff"));
+             seg(TAKE_IN, "mark-take", "in the takeoff (click to add)"));
   key.title = "Two separate things. The eye is the picture; the list-with-a-tick "
-    + "is the money. Hiding a line type does not change a single number.";
+    + "is the money. Hiding a line type does not change a single number. "
+    + TK_HELP;
   return key;
 }
 
@@ -5893,19 +6740,6 @@ function renderStyles() {
     note.textContent = "This PDF carries no CAD layer names. Every name below "
       + "comes from the legend or from the line's own pattern — there is "
       + "nothing the drafter wrote to check them against.";
-    box.appendChild(note);
-  }
-  // Set-level disclosure. Ticks this page INHERITED from hand decisions on
-  // other sheets are announced, never a side effect: one line, with a count,
-  // and the way out stated. memApply() counts them; setInclude() removes a
-  // row from the count the moment the operator overrides it here.
-  const nInh = state.inheritedInc ? state.inheritedInc.size : 0;
-  if (nInh) {
-    const note = document.createElement("div");
-    note.className = "layer-none-note";
-    note.textContent = nInh + (nInh === 1 ? " choice" : " choices")
-      + " carried over from other sheets of this set — page-level changes "
-      + "override.";
     box.appendChild(note);
   }
   const splits = splitItems();
@@ -5955,9 +6789,6 @@ function renderStyles() {
     marks.className = "style-marks";
     marks.appendChild(styleEyeBtn(s));
     const cb = styleTakeBtn(s);
-    if (state.inheritedInc && state.inheritedInc.has(s.style_id))
-      cb.title += LF + LF + "Carried over from another sheet of this set "
-        + "— change it here to override for this page.";
     marks.appendChild(cb);
     cb.onclick = (e) => { e.stopPropagation();
       const on = !state.include.get(s.style_id);
@@ -5968,9 +6799,7 @@ function renderStyles() {
       // operator would watch their own click undo itself.
       if (sv.v === "out" && cbChecked) { scopeKeepRow(s, true); return; }
       if (sv.v === "kept" && !cbChecked) { scopeKeepRow(s, false); return; }
-      // A hand tick on the row itself - and only that - also speaks for the
-      // set (scope put-backs returned above; bulk buttons never come here).
-      setIncludeSetWide(s, cbChecked);
+      // (a hand tick stays on this sheet: the set-level record 2.0 wrote here is gone with the rest of its ticks)
       renderStyles(); renderChips(); renderItemized(); renderMiniLegend(); draw(); };
 
     // a real pattern sample, not a flat chip: estimators match rows to
@@ -6641,9 +7470,17 @@ function renderAreas() {
   // arSf/arLf. sc.tag_check is deliberately NOT read - it froze a verdict
   // about the engine's scale, and arTagged re-derives it at the live one.
   const parts = [];
-  parts.push(sc.ft_per_paper_inch
-    ? `scale used: 1 inch = ${(+sc.ft_per_paper_inch).toFixed(2)} ft`
-      + (sc.text ? ` (read as “${esc(sc.text)}”)` : "")
+  // the scale IN FORCE, which every figure below uses - not the detection's: on a sheet whose readings disagree the
+  // engine's reading is withdrawn, and "scale used: 1 inch = 4 ft" would name a scale nothing here uses (CRITIC-scale-3)
+  const live = state.result && state.result.scale;
+  const _vA = state.result && state.result._verdict;
+  parts.push(live && +live.ft_per_paper_inch > 0
+    ? `scale used: 1 inch = ${(+live.ft_per_paper_inch).toFixed(2)} ft`
+      + (live.text ? ` (read as “${esc(live.text)}”)` : "")
+    : state.result && state.result._verdictWaiting
+    ? `<b>Checking the scale's readings.</b> Areas shown in pt² until they have been heard.`
+    : _vA && _vA.state === "CONFLICT"
+    ? `<b>No scale is in force: the sheet's scale readings disagree.</b> Areas shown in pt², no SF.`
     // what the engine did - read nothing, or read captions it abstained on
     // - never a claim that the sheet lacks one, which this card cannot know
     : `<b>${noScaleSentence(scaleSuggestions().length)}</b> Areas shown in `
@@ -6717,6 +7554,9 @@ function renderAreas() {
     row.className = "ar-row" + (state.areaInc.get(g.group_id) ? "" : " off");
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = !!state.areaInc.get(g.group_id);
+    // the same rule as the line styles: found and listed, counted only once you add it
+    cb.title = cb.checked ? "In the takeoff. Untick to take this area out."
+      : "Found, not in the takeoff. Tick to add this area to the takeoff.";
     cb.onclick = (e) => {
       e.stopPropagation();
       state.areaInc.set(g.group_id, cb.checked);
@@ -6985,45 +7825,53 @@ $("styleSearch").placeholder = "Filter line types… (water, dash, solid, A-WALL
 // INC-BULK-BEGIN -------------------------------------------------------------
 // "all" / "none" overwrote every keep / drop tick the engine chose, and only "Reset this
 // document" (which also deletes names and the detection) brought them back (UI verify
-// 2026-10-02 #7: 44.8k -> 71.0k ft). Two ways back now, beside the buttons:
-//   undo           - one step: the exact ticks (and their saved records) before the last
-//                    all / none / engine's picks;
-//   engine's picks - the keep / drop ticks this detection was seeded with (includeSeed), and
-//                    nothing else: names, colours and the detection stay as they are.
-// The engine's own keep / drop for a style, before any saved decision (loadResult's seed).
+// 2026-10-02 #7: 44.8k -> 71.0k ft). Ways back since then, beside the buttons: undo, and
+// Engine's picks (what they do since the takeoff starts empty is said below).
+// The engine's own pick for a style: what "Engine's picks" adds, and what the eye shows
+// on a page whose takeoff is still empty.
 function includeSeed(s) {
   const white = s.color && Math.min(...s.color) > 0.92;
   return (white || s.texture || s.class === "annotation" || sgSuggested(s)) ? false
     : (s.class !== "solid" ? true : s.length_pt > 500);
 }
+// THE TAKEOFF STARTS EMPTY (2026-10-03). The buttons ADD and TAKE OUT now:
+//   Engine's picks - ADDS the styles the engine picks (includeSeed) to whatever the person already added; it takes
+//                    nothing out. Offered while one of the engine's picks is not in the takeoff;
+//   all            - adds every style;  none - empties the takeoff;
+//   undo           - one step: the exact takeoff before the last all / none / Engine's picks.
+// The snapshot is the takeoff itself (the ticks on screen and the set the person added); putting it back is one more
+// write of that set to the server, like any tick.
 function incSnapshot() {
-  const byId = new Map(((state.result && state.result.styles) || []).map(st => [st.style_id, st]));
   const rows = [];
-  for (const sid of new Set([...state.include.keys(), ...byId.keys()])) {
-    const st = byId.get(sid);
-    let rec = null;
-    try { rec = st ? store.getItem(includeKey(st)) : null; } catch (e) { rec = null; }
-    rows.push([sid, state.include.has(sid) ? state.include.get(sid) : null, rec,
-               state.inheritedInc.has(sid) ? state.inheritedInc.get(sid) : null]);
-  }
-  return { job: state.job, page: state.page, rows };
+  for (const sid of new Set([...state.include.keys(), ...((state.result && state.result.styles) || []).map(st => st.style_id)]))
+    rows.push([sid, state.include.has(sid) ? state.include.get(sid) : null]);
+  return { job: state.job, page: state.page, rows, tk: [...state.tkSet] };
 }
+// UNDO PUTS BACK THE PERSON'S SET, AND THE SCREEN FOLLOWS IT (critic empty-2, MINOR-1). It used to put back the ticks
+// as they stood ON SCREEN at the snapshot (`snap.rows`: under a declared trade, the filtered view) beside the person's
+// whole set (`snap.tk`), and never ran the filter again: tick two styles, declare a trade (one set aside), none, "show
+// everything", undo - the screen showed ONE style, the page's set and the server's record held TWO, and an approve
+// there exported one. Now a detected style is on screen exactly when the set put back holds it; a family made on this
+// page (in no record) goes back to its own tick; and the scope filter's verdicts are worked out again over the result.
 function incRestore(snap) {
-  const byId = new Map(((state.result && state.result.styles) || []).map(st => [st.style_id, st]));
-  for (const [sid, on, rec, inh] of snap.rows) {
-    if (on === null) state.include.delete(sid); else state.include.set(sid, on);
-    if (inh === null) state.inheritedInc.delete(sid); else state.inheritedInc.set(sid, inh);
-    const st = byId.get(sid);
-    try { if (st) { if (rec === null) store.removeItem(includeKey(st)); else store.setItem(includeKey(st), rec); } }
-    catch (e) { /* private mode: the session still shows the ticks put back */ }
+  const mine = new Set(snap.tk || []);
+  const made = new Set(((state.result && state.result.styles) || []).filter(st => st.operator_created).map(st => st.style_id));
+  for (const [sid, on] of snap.rows) {
+    if (on === null) state.include.delete(sid);
+    else state.include.set(sid, made.has(sid) ? on : mine.has(sid));
   }
+  state.tkSet = mine;
+  scopeApply();
+  tkDirty();
+  tkFollow();
 }
 function incUndoUsable() {
   const u = state.incUndo;
   return !!(u && state.result && u.job === state.job && u.page === state.page);
 }
+// one of the engine's picks is not in the takeoff (Engine's picks would add something)
 function incSeedDiffers() {
-  return !!state.result && state.result.styles.some(st => !!state.include.get(st.style_id) !== includeSeed(st));
+  return !!state.result && state.result.styles.some(st => includeSeed(st) && !state.include.get(st.style_id));
 }
 function renderIncBtns() {
   const u = $("incUndoBtn"), s = $("incSeedBtn");
@@ -7037,26 +7885,371 @@ function incBulk(label, pick) {
     const v = pick(k);
     if (v !== undefined) setInclude(k, v);
   }
-  incAfter(label + " - undo puts the ticks back");
+  // the scope filter's verdicts follow the set (a style the person added is kept, one they took out is set aside again)
+  scopeApply();
+  incAfter(label + " - undo puts the takeoff back as it was");
 }
 function incAfter(msg) {
   renderStyles(); renderChips(); renderItemized(); renderMiniLegend(); draw(); renderIncBtns();
   if (msg) setStatus(msg);
 }
-$("allBtn").onclick = () => incBulk("all lines on", () => true);
-$("noneBtn").onclick = () => incBulk("all lines off", () => false);
+$("allBtn").onclick = () => incBulk("every style is in the takeoff", () => true);
+$("noneBtn").onclick = () => incBulk("the takeoff is empty", () => false);
 $("incSeedBtn").onclick = () => {
   if (!state.result) return;
   const seed = new Map(state.result.styles.map(st => [st.style_id, includeSeed(st)]));
-  incBulk("keep / drop back to the engine's picks (names and colors stay)", k => seed.get(k));
+  const n = state.result.styles.filter(st => seed.get(st.style_id) && !state.include.get(st.style_id)).length;
+  // adds only: a pick already in stays, anything the person added stays, nothing is taken out
+  incBulk(`Engine's picks: ${n} style${n === 1 ? "" : "s"} added to the takeoff (names and colors stay)`,
+          k => (seed.get(k) ? true : undefined));
 };
 $("incUndoBtn").onclick = () => {
   if (!incUndoUsable()) { state.incUndo = null; renderIncBtns(); return; }
   incRestore(state.incUndo);
   state.incUndo = null;
-  incAfter("ticks put back as they were");
+  incAfter("the takeoff is back as it was");
 };
 // INC-BULK-END ---------------------------------------------------------------
+
+// TICKS-BEGIN ================================================================
+// THE TAKEOFF STARTS EMPTY (2026-10-03, the owner: "make it where takeoffs are empty and items need to be added to
+// takeoff"). After Detect nothing is in the takeoff: the Line styles list shows everything found, each row with its
+// add mark off, and the Takeoff panel says so (TK_EMPTY_HEAD). A tick ADDS a style; an untick takes it out;
+// Engine's picks / all / none / undo are the one-click versions (INC-BULK above).
+//
+// THE LIST IS THE SERVER'S (server.py, THE TAKEOFF STARTS EMPTY): the page sends the set of styles the person added
+// (POST .../ticks, versioned - a stale tab is refused and told), never "everything minus what was dropped", and reads
+// it back on every open (tkLoad). Nothing about ticks is written to this browser any more.
+//
+// NOTHING IS BROUGHT OVER FROM AN EARLIER VERSION (the owner, 2026-10-03: "don't bring anything over, start empty";
+// the repair after CRITIC-empty-1). A page with no record on the server opens EMPTY, whatever the live build (2.0) held
+// for it: this page never reads the tick records 2.0 left in the browser's storage and never asks the server to take
+// ticks over (the server refuses that). Guessing a 2.0 page's takeoff back - from its export, from one browser, from
+// default picks - put lines in a bid the estimator had left out, three ways.
+// A page 2.0 APPROVED keeps that approval untouched in the bid until it is approved again or withdrawn, and says so in
+// one line where Approve is pressed (tkEarlierWords; the facts are the server's: `earlier`). Approving such a page
+// again asks one question first and keeps the replaced approval, which can be put back (critic empty-2, MAJOR-1).
+// A shared sheet (a demo card) starts empty for every account; nobody sees another's ticks.
+const TK_EMPTY_HEAD = "Nothing in the takeoff yet. Tick the styles you want, or press Engine's picks.";
+const TK_EMPTY_APPROVE = "Nothing is in the takeoff. Tick the styles you want first.";
+// ...on a page that is approved, where an empty approve cannot take it out of the bid (the server's words too)
+const TK_EMPTY_APPROVED = "To take this page out of the bid, use Withdraw approval.";
+const TK_HELP = "Tick a style to add it to the takeoff; untick it to take it out. Nothing is in the takeoff until you add it.";
+// the server's sentence for a write, or an approve, that is not of its record (server.py TICKS_STALE: the same words)
+const TK_STALE_SERVER = "This page's takeoff was changed in another tab or on another computer. Reload to see it.";
+// ...what that means for this tab, said after it in the note above the takeoff's rows
+const TK_STALE_NOTE = "Until you reload, ticks made in this tab are not kept and Approve is refused.";
+// the person answered No to the question an approve asks before it replaces an approval made on an earlier version
+const TK_EARLIER_NO = "Nothing changed: the approval made on an earlier version is still in the bid.";
+// ...and what the status says when the server asked for that yes and the page had not heard (server.py EARLIER_ASK)
+const TK_EARLIER_PRESS = "This page's approval in the bid was made on an earlier version, and approving replaces it. Nothing was approved. Press Approve again: it asks first, and No changes nothing.";
+// a set of this page that could not be saved on an earlier visit, and the record has moved since (tkApply): said above the rows
+const TK_LOST_NOTE = "A change you made to this page's takeoff earlier was not saved, and the takeoff was changed somewhere else since. What you see is what the server holds: check it before you approve.";
+// this page's ticks are not the server's (a write was refused as stale, or the record could not be read): no approve is sent
+const TK_STALE_APPROVE = "Approve did not go through: this page's takeoff is not the one kept on the server (it was changed in another tab or on another computer, or it could not be read). Reload this page, check the takeoff, and approve again.";
+// TICKS-PURE-BEGIN
+// THE ONE LINE of a page whose approval was made on an earlier version (server.py _approved_earlier: `e.head`; what was
+// approved, `e.detail`, is folded behind it). It ends by what the takeoff here holds: line styles the person added
+// (nStyles), only rows of another kind - a count, an area, a calculator row the server kept - (nRows), or nothing yet.
+function tkEarlierWords(e, nStyles, nRows) {
+  const head = String((e && e.head) || "Approved on an earlier version: its numbers are still in the bid.");
+  if (nStyles > 0) return head + " Approve again to replace them with the takeoff here.";
+  if (nRows > 0) return head + " No line style is in the takeoff here. Add what you are bidding and approve again to replace them.";
+  return head + " The takeoff here starts empty. Add what you are bidding and approve again to replace them.";
+}
+// What a re-detect did to this page's ticks (server.py _ticks_view), in one sentence, or "": `dropped` styles the person
+// had added are no longer on the sheet; `redetected` = the record was written on another engine's detection, so the
+// lines and lengths under the styles kept may have changed (critic empty-1, MINOR-7: only the dropped ones were said).
+function tkRedetectWords(dropped, redetected) {
+  const n = +dropped || 0;
+  const gone = n ? `${n} style${n === 1 ? "" : "s"} you had added ${n === 1 ? "is" : "are"} no longer on it, so `
+    + `${n === 1 ? "it is" : "they are"} out of the takeoff. ` : "";
+  if (redetected)
+    return "This sheet was detected again after an engine update" + (n ? ": " + gone + "The others you added are still in, but "
+      : ". The styles you added are still in the takeoff, but ")
+      + "their lines and lengths may have changed: check the rows before you approve.";
+  return n ? "This sheet was detected again: " + gone + "The others you added are still in." : "";
+}
+// REPLACING AN APPROVAL MADE ON AN EARLIER VERSION IS ASKED ONCE, AND IT CAN BE PUT BACK (critic empty-2, MAJOR-1).
+// What the takeoff here holds, in the words the server uses for what an approval holds (server.py _approved_earlier
+// `holds`): the rows billed by length with their lines and feet, and the rows counted or calculated. `groups`: the
+// Takeoff panel's rows (computeTakeoffRows), which are the rows an approve sends.
+function tkHereWords(groups) {
+  let nLen = 0, lines = 0, qty = 0, unit = "ft", other = 0;
+  for (const g of groups || []) for (const it of (g.items || [])) {
+    if (it.isObj || it.isCalc) { other++; continue; }
+    nLen++; lines += parseInt(it.cnt, 10) || 0; qty += +it.qty || 0; unit = it.unit || unit;
+  }
+  const n = (k, w) => k.toLocaleString("en-US") + " " + w + (k === 1 ? "" : "s");
+  const parts = [];
+  if (nLen) parts.push(n(nLen, "row") + " by length (" + n(lines, "line") + ", "
+    + qty.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " " + unit + ")");
+  if (other) parts.push(n(other, "row") + " counted or calculated");
+  return parts.length ? parts.join(" and ") : "no rows";
+}
+// The one question before an approve replaces such an approval: what is in the bid (`e.holds`, the server's), what
+// would replace it (`here`: tkHereWords), what Yes does and that No changes nothing.
+function tkEarlierAskWords(e, page, here) {
+  return "Replace the approval that is in the bid for page " + (page + 1) + "?\n\n"
+    + "In the bid now, approved on an earlier version: " + String((e && e.holds) || "the rows of that approval") + ".\n"
+    + "The takeoff here, which would replace it: " + here + "." + (/by length/.test(here) ? "" : " No row by length is in it.")
+    + "\n\nOK replaces it: the bid sheet and the report then count the takeoff here. The earlier approval is kept and "
+    + "can be put back.\nCancel changes nothing.";
+}
+// ...and the question before it is put back (`k`: what the server keeps, GET /approved `kept`)
+function tkPutBackAskWords(k, page, approvedNow) {
+  return "Put the earlier approval of page " + (page + 1) + " back in the bid?\n\n"
+    + "It holds " + String((k && k.holds) || "the rows it was approved with") + ", as approved on an earlier version.\n"
+    + (approvedNow ? "It takes the place of the approval that is in the bid now; that one is kept in its turn.\n" : "")
+    + "The takeoff on screen stays as it is.\n\nOK puts it back. Cancel changes nothing.";
+}
+// TICKS-PURE-END
+// A SET THE SERVER HAS NOT KEPT WAITS FOR ITS OWN PAGE (critic merge-1, MINOR-1). There was one place for a waiting
+// set (`pending`), so a tick on another page took it: tick three styles on a sheet (the third write fails), go to the
+// next sheet and tick one there - back on the first sheet the third style was gone from the takeoff and from the
+// server, and nothing said so. `waiting`: the sets of OTHER pages the server has not kept yet, by page. A set whose
+// turn is taken by another page's goes there and is sent on ITS page's version as soon as the server keeps a write
+// again, when Approve is pressed, or when its page is opened again (tkApply).
+// `why`: why the last write was not kept, when it was not "stale" (the set waits in `pending` and is sent again)
+const tk = { ver: new Map(), pending: null, waiting: new Map(), timer: null, inflight: null, again: false, why: "" };
+function tkKey(job, page) { return job + ":" + page; }
+async function tkFetch(job, page) {
+  try {
+    const r = await fetch(`/api/job/${job}/page/${page}/ticks`);
+    return r.ok ? await r.json() : null;
+  } catch (e) { return null; }
+}
+// what is in this page's takeoff, from the server's answer (`j`), before the first paint
+async function tkLoad(gen, j) {
+  if (!state.result) return;
+  const key = tkKey(state.job, state.page);
+  state.tkSeed = new Map(state.result.styles.map(s => [s.style_id, includeSeed(s)]));
+  if (!j) {
+    tk.ver.delete(key);
+    state.tkNote = "The server did not say what is in this page's takeoff, so it shows empty. Reload this page before you tick anything: a tick made now is not kept.";
+    return;
+  }
+  // the server's record, or nothing added yet (an empty takeoff): applied as given. Nothing else is read - no tick
+  // record an earlier version left in this browser - and nothing is sent: opening a page writes nothing (but a tick
+  // the person made here earlier in this tab that the server has not kept yet is theirs still: tkApply)
+  tkApply(j);
+}
+function tkApply(j) {
+  const key = tkKey(state.job, state.page), known = tk.ver.get(key), ver = +j.version || 0;
+  // A SET OF THIS PAGE THAT AN EARLIER VISIT COULD NOT GET SAVED IS STILL THE PERSON'S (critic merge-1, MINOR-1). It
+  // was dropped here without a word, so the change was gone from the screen and from the server. While the record has
+  // not moved since this tab last read or wrote it, that set is what the person chose: it goes back on screen and is
+  // sent again, and the approve bar says so until it is kept. If the record HAS moved (another tab, another
+  // computer), the set described a takeoff that is gone: the server's is shown and the page says what happened.
+  let mine = null, lost = "";
+  if (tk.pending && tk.pending.job === state.job && tk.pending.page === state.page) { mine = tk.pending; tk.pending = null; }
+  if (tk.waiting && tk.waiting.has(key)) { mine = mine || tk.waiting.get(key); tk.waiting.delete(key); }
+  if (mine && known !== ver) {
+    // ...unless the server holds exactly that set (the write was kept and only its answer was lost): nothing to say
+    if (JSON.stringify([...(j.styles || [])].sort((a, b) => a - b)) !== JSON.stringify(mine.styles)) lost = TK_LOST_NOTE;
+    mine = null;
+    if (!tk.pending && !(tk.waiting && tk.waiting.size)) tk.why = "";
+  }
+  state.tkSet = new Set((mine ? mine.styles : (j.styles || [])).filter(sid => state.include.has(sid)));
+  for (const sid of state.tkSet) state.include.set(sid, true);
+  tk.ver.set(key, ver);
+  if (mine) {
+    if (tk.pending) tk.waiting.set(tkKey(tk.pending.job, tk.pending.page), tk.pending);    // another page's: it waits
+    tk.pending = mine;
+    tkWrite();
+  }
+  tkUnsavedShow();
+  state.tkEarlier = (j.earlier && typeof j.earlier === "object") ? j.earlier : null;
+  const n = +j.dropped || 0;
+  state.tkNote = [lost, tkRedetectWords(n, !!j.redetected && (state.tkSet.size > 0 || n > 0))].filter(Boolean).join(" ");
+}
+// THE PANELS THAT QUOTE THE TAKEOFF FOLLOW A TICK (critic empty-1, MINOR-4 and MINOR-5). The scope sentence and the
+// "Check these" queue were drawn when the page loaded - with the engine's picks already in the takeoff, as it then was.
+// Now the takeoff starts empty, so both must be drawn again whenever a style goes in or comes out: the sentence said
+// "the 0 in the takeoff (0 pt) stay in it" over two rows, and a per-style doubt (raised only for a style in the
+// takeoff) did not show until a reload. One repaint per task, whatever changed the ticks (a row, a group, a colour
+// chip, all / none / Engine's picks / undo, the analyzer).
+let tkFollowQueued = false;
+function tkFollow() {
+  if (tkFollowQueued) return;
+  tkFollowQueued = true;
+  queueMicrotask(() => {
+    tkFollowQueued = false;
+    if (!state.result) return;
+    renderScopeBar(); renderCheckQueue();
+  });
+}
+// The line of a page approved on an earlier version (state.tkEarlier, the server's facts): one plain sentence; what
+// was approved - rows, lines, feet - is folded behind it (click the line), never deleted. Not a warning of its own and
+// never OUT OF DATE: the old approval stands in the bid, as it was, until this page is approved again (asked first:
+// approveRun) or the approval is withdrawn. Shown in the approve bar (tkEarlierShow).
+let tkEarlierOpen = false;      // the fold, as the person left it (the panel is rebuilt on every tick)
+function tkEarlierEl(groups) {
+  const e = state.tkEarlier;
+  if (!e || !state.result) return null;
+  let nStyles = 0;
+  for (const st of state.result.styles) if (state.include.get(st.style_id)) nStyles++;
+  const nRows = (groups || []).reduce((a, g) => a + g.items.length, 0);
+  const d = document.createElement("details");
+  d.className = "item-scale-note tk-earlier"; d.id = "tkEarlier";
+  d.open = tkEarlierOpen;
+  d.addEventListener("toggle", () => { tkEarlierOpen = d.open; });
+  const s = document.createElement("summary");
+  s.textContent = tkEarlierWords(e, nStyles, nRows);
+  const p = document.createElement("div");
+  p.className = "tk-earlier-detail";
+  p.textContent = String(e.detail || "");
+  d.append(s, p);
+  return d;
+}
+// ...and it is shown WHERE APPROVE IS PRESSED (critic empty-2, MAJOR-1). Among the Takeoff panel's rows it sat 1,949 px
+// down the column, out of view, while "0 ft measured" and Approve were pinned in view - so the one press that replaced
+// the old approval was made without it. Its place is the approve bar, above the tally: in view whenever Approve is.
+function tkEarlierShow(el) {
+  const slot = $("tkEarlierSlot");
+  if (!slot) return;
+  slot.textContent = "";
+  slot.hidden = !el;
+  if (el) slot.appendChild(el);
+  tkBarFit();
+}
+// ...and READABLE there on a narrow window. In this layout the column is wider than a phone's window, so at 390 px a
+// full-width line ran off the right edge ("its number|"). The approve bar's notes are held to the part of the bar that
+// is inside the window; on a window wide enough for the column nothing is set.
+function tkBarFit() {
+  for (const id of ["tkEarlierSlot", "tkUnsaved"]) {
+    const el = $(id);
+    if (!el || el.hidden || !el.getBoundingClientRect) continue;
+    el.style.maxWidth = "";
+    const r = el.getBoundingClientRect();
+    const room = Math.floor(window.innerWidth - r.left - 8);
+    if (r.width > 0 && r.right > window.innerWidth - 8 && room >= 120) el.style.maxWidth = room + "px";
+  }
+}
+window.addEventListener("resize", tkBarFit);
+// a tick changed: send this page's whole set (debounced; one write at a time, each on the version the last returned)
+function tkDirty() {
+  if (!state.result || !state.job) return;
+  const key = tkKey(state.job, state.page);
+  if (!tk.ver.has(key)) {
+    setStatus("This page's takeoff is not being saved: reload the page to keep your ticks.", "err");
+    return;
+  }
+  // a set of ANOTHER page that still waits keeps waiting, for its own page: this page's set takes the turn
+  const was = tk.pending;
+  tk.pending = { job: state.job, page: state.page, styles: [...state.tkSet].sort((a, b) => a - b) };
+  tk.waiting.delete(key);                     // (an older set of THIS page is replaced by the one just made)
+  if (was && (was.job !== state.job || was.page !== state.page)) tk.waiting.set(tkKey(was.job, was.page), was);
+  clearTimeout(tk.timer);
+  tk.timer = setTimeout(() => { tk.timer = null; tkWrite(); }, 250);
+}
+function tkWrite() {
+  if (tk.inflight) { tk.again = true; return tk.inflight; }
+  if (!tk.pending && tk.waiting.size) {       // nothing of this page waits: the set of another page that waited longest
+    const k = tk.waiting.keys().next().value;
+    tk.pending = tk.waiting.get(k);
+    tk.waiting.delete(k);
+  }
+  const p = tk.pending;
+  if (!p) return Promise.resolve(true);
+  tk.pending = null;
+  const key = tkKey(p.job, p.page);
+  const ver = tk.ver.get(key);
+  if (ver === undefined) return Promise.resolve(false);
+  let kept = false;
+  // a set the server did not keep waits: as the next write, or - when another page's set has taken that turn
+  // meanwhile - for its own page (a newer set of the same page stands in its place)
+  const keep = () => {
+    if (!tk.pending) tk.pending = p;
+    else if ((tk.pending.job !== p.job || tk.pending.page !== p.page) && !tk.waiting.has(key)) tk.waiting.set(key, p);
+  };
+  tk.inflight = (async () => {
+    try {
+      const r = await fetch(`/api/job/${p.job}/page/${p.page}/ticks`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: ver, styles: p.styles }) });
+      if (r.ok) { const j = await r.json(); tk.ver.set(key, +j.version || 0); tk.why = ""; kept = true; return true; }
+      let said = "";
+      try { const e = await r.json(); if (e && typeof e.detail === "string") said = e.detail; } catch (e2) { /* not JSON */ }
+      if (r.status === 409) {
+        const why = said || "Your takeoff change was not saved (error 409). Reload this page.";
+        tk.ver.delete(key);     // stale: nothing more from this tab for that page until a reload
+        tk.why = "";
+        // ...and said where it stays in view, above the takeoff's rows (the status line holds one clipped line, and the
+        // next message replaces it): this tab's ticks are not kept, and it approves nothing, until a reload
+        if (p.job === state.job && p.page === state.page && state.result) {
+          state.tkNote = why + " " + TK_STALE_NOTE;
+          renderItemized();
+        }
+        setStatus(why, "err");
+        return false;
+      }
+      // ANY OTHER REFUSAL IS NOT "STALE": THE SET IS KEPT AND SENT AGAIN (critic empty-2, MINOR-3). It was dropped, so
+      // the next Approve sent an approve of a takeoff the server had never been given and was told "changed in another
+      // tab or on another computer" - one tab, one person - and the tab then approved nothing until a reload. The
+      // record's version did not move, so the same write is good again: with the next tick, or when Approve is pressed
+      keep();
+      tk.why = "the server answered error " + r.status + (said ? ": " + said : "");
+      setStatus(tkUnsavedWords(), "err");
+      return false;
+    } catch (e) {
+      keep();                                       // sent again with the next change
+      tk.why = "the server did not answer";
+      setStatus(tkUnsavedWords(), "err");
+      return false;
+    } finally {
+      tk.inflight = null;
+      tkUnsavedShow();
+      const more = tk.again;
+      tk.again = false;
+      // a newer set of this page goes next; and once the server keeps a write again, the sets other pages are waiting
+      // with follow, one at a time. A write that was NOT kept is not sent again by itself (the next tick or Approve does)
+      if (tk.pending ? more : (kept && tk.waiting.size)) tkWrite();
+    }
+  })();
+  return tk.inflight;
+}
+// A takeoff change the server did not keep, for a reason that is not "stale": the real reason, and what happens next
+function tkUnsavedWords() {
+  return "Your takeoff change was not saved (" + (tk.why || "the server did not keep it") + "). It is sent again with your "
+    + "next tick, or when you press Approve; reload if this keeps happening.";
+}
+// ...and it stays IN VIEW where Approve is pressed for as long as this page's set waits to be sent: the status line
+// holds a few clipped words and the next message replaces them. Gone as soon as the set is kept.
+// `approve`: an Approve was just stopped by it, so the note says that (tkUnsavedApproveWords).
+function tkUnsavedShow(approve) {
+  const el = $("tkUnsaved");
+  if (!el) return;
+  const p = tk.pending;
+  const on = !!(tk.why && p && p.job === state.job && p.page === state.page);
+  el.hidden = !on;
+  el.textContent = on ? (approve ? tkUnsavedApproveWords() : tkUnsavedWords()) : "";
+  tkBarFit();
+}
+// ...and what Approve says when the set still could not be sent: the real reason, and the offer to try again
+function tkUnsavedApproveWords() {
+  return "Approve did not go through: your last takeoff change could not be saved (" + (tk.why || "the server did not keep it")
+    + "). Nothing was approved. Press Approve again to try again.";
+}
+// every tick sent before an approve; false when one was not kept (the approve then stops and says why). One try per
+// press: a write that failed is not sent again here (the set is kept - tkWrite - for the next tick or the next press)
+async function tkFlush() {
+  if (tk.timer) { clearTimeout(tk.timer); tk.timer = null; }
+  let ok = true;
+  // (the sets other pages are waiting with go too, each on its own page: an approve is of a takeoff the server holds)
+  for (let i = 0, n = 4 + tk.waiting.size; ok && i < n && (tk.pending || tk.inflight || tk.waiting.size); i++)
+    ok = (await (tk.inflight || tkWrite())) !== false;
+  return ok && !tk.pending && !tk.waiting.size;
+}
+// The Bid readiness row (core-redesign shell.js readiness() adds it: one line at the merge): what this page's takeoff holds
+function tkReadiness() {
+  if (!state.result) return null;
+  const d = computeTakeoffRows();
+  const n = d ? d.groups.reduce((a, g) => a + g.items.length, 0) : 0;
+  return n ? { label: "Takeoff", state: "supplied", value: `${n} item${n === 1 ? "" : "s"}`, why: "the rows you added to the takeoff" }
+    : { label: "Takeoff", state: "missing", value: "empty", why: TK_EMPTY_APPROVE };
+}
+// TICKS-END ==================================================================
 if ($("onceAskBtn")) $("onceAskBtn").onclick = twinsAsk;
 
 // ---------- color bulk-toggle chips ----------
@@ -7232,8 +8425,9 @@ function renderMemBtn() {
       + "recent edits are held for this session only and will be lost when the "
       + "tab closes. Clear saved work to make room."
     : n + " decisions remembered in this browser - labels, prices, trades, "
-      + "quantity overrides, scales, and which rows are ticked. They come back "
-      + "when you reopen a document. Click to forget all of them.";
+      + "quantity overrides and scales. They come back when you reopen a "
+      + "document. (What is in each page's takeoff is kept on the server, not "
+      + "here.) Click to forget all of them.";
   if (memDropped)
     b.title += "\n\n" + memDropped + " quantity override(s) saved by an older "
       + "build applied to EVERY sheet of their document and did not record "
@@ -7323,6 +8517,10 @@ $("memBtn").onclick = (e) => {
       if (c.render) bits.push(c.render + " page render(s)");
       if (c.approved) bits.push(c.approved + " APPROVED SHEET EXPORT(S)");
       if (c.report) bits.push(c.report + " REPORT PDF");
+      // what the person added to each page's takeoff (the takeoff starts empty, 2026-10-03): their work, named
+      if (c.takeoff) bits.push(c.takeoff + " PAGE TAKEOFF(S): the styles you added");
+      // a withdrawn approval's record is the only copy of that export: named, never under "cached" (critic empty-1, MINOR-9)
+      if (c.withdrawn) bits.push(c.withdrawn + " WITHDRAWN APPROVAL RECORD(S): the only copy of each withdrawn export");
       if (c.other) bits.push(c.other + " other cached file(s)");
       // the cut / fill engine's store is named on its own line: it holds the
       // datum, the limit and typed heights beside its reading cache and
@@ -7334,8 +8532,8 @@ $("memBtn").onclick = (e) => {
           + "\n\nso the next detect runs from scratch in front of whoever is watching."
         : "The service will delete every cached detection for this PDF so the "
           + "next detect runs from scratch.";
-      const warn = (c.approved || c.report || c.cutfill)
-        ? "\n\nNOTE: approved exports, the report PDF and the cut / fill work are "
+      const warn = (c.approved || c.report || c.cutfill || c.takeoff || c.withdrawn)
+        ? "\n\nNOTE: approved exports (withdrawn ones too), the report PDF, the page takeoffs and the cut / fill work are "
           + "your WORK, not a cache. Download the report first if you still need it.\n"
         : "\n";
       if (!confirm("Reset \"" + (state.docName || "this document") + "\" for a fresh run?\n\n"
@@ -7360,8 +8558,9 @@ $("memBtn").onclick = (e) => {
 
   m.appendChild(mk(
     "Forget everything \u00b7 " + nAll,
-    "Every document's labels, ticks, scales and overrides, plus the shared "
-      + "price list and trade assignments. Cached detections are left alone.",
+    "Every document's labels, scales and overrides, plus the shared "
+      + "price list and trade assignments. Cached detections and what is in "
+      + "each page's takeoff (kept on the server) are left alone.",
     () => {
       if (!confirm("Forget all " + nAll + " remembered decisions?\n\n"
         + "This clears every label, price, trade, quantity override, scale and "
@@ -7428,7 +8627,14 @@ if (memDropped)
 // a grading zone's own row ("Site Cut – Island") is priced as Site Cut / Site Fill: one unit price
 // for the dirt, whatever zone it came out of (a zone's row used to carry no price at all, and the
 // job's cut and fill dollars dropped out of the total)
-function priceLabel(label) { const m = /^(Site Cut|Site Fill) – /.exec(label == null ? "" : String(label)); return m ? m[1] : label; }
+// A flooring row carries its own price key (the floor type's id, the row, the unit - flItems): its
+// price never follows its label, which changes when a manufacturer or colour is typed (critic 1, M1).
+function priceLabel(label) {
+  // A FLOORING ROW IS PRICED IN THE ESTIMATE, one price per floor type (ruling T): the generic book has no key
+  // for it, so no price typed by label - nor one a 2.0 build left - ever prices it
+  if (typeof flIsRowLabel === "function" && flIsRowLabel(label)) return "\u0000flooring:" + label;
+  const m = /^(Site Cut|Site Fill) – /.exec(label == null ? "" : String(label)); return m ? m[1] : label;
+}
 function priceKey(label) { return "price:" + priceLabel(label); }
 // quantity/footage override: the estimator's number beats the detector's.
 // PAGE-scoped and UNIT-scoped. The comment that stood here argued for exactly
@@ -7438,15 +8644,15 @@ function priceKey(label) { return "price:" + priceLabel(label); }
 // on purpose and measure::<LABEL> is global - so the same named row exists on
 // most sheets of a set, and every one of them read the one override. The
 // calculators do not even need the transfer: "Site Cut", "Site Fill" and the
-// structure labels are literal constants emitted on every sheet. Mirrors
-// includeKey's ::p<N> segment.
+// structure labels are literal constants emitted on every sheet. (The tick
+// record 2.0 kept in this browser carried the same ::p<N> segment.)
 //
 // The UNIT is in the key because a quantity typed while the sheet has NO
 // scale is in raw PDF points, and the old key filed it under "ft" - so the
 // moment a scale was set, a points figure was served back as feet. Different
 // unit, different key, no silent reinterpretation.
 //
-// No engine_sig here, unlike includeKey. That key names a style_id, which
+// No engine_sig here, unlike a key that names a style_id, which
 // only means something inside one result; this one names an operator-typed
 // LABEL, which survives a re-detect. Adding the signature would silently
 // discard the estimator's own number on every engine change.
@@ -7463,11 +8669,20 @@ function priceKey(label) { return "price:" + priceLabel(label); }
 // render (see arApplyItems), which is what makes them follow a scale
 // correction. Storing the numbers would freeze exactly what that fixed.
 function calcKey() { return docKey() + "::p" + state.page + "::calc"; }
-// THIS app's row cache: its own, versioned key (G6). v1.8.5 keeps a page's takeoff rows ONLY under calcKey(), so this
-// app never writes, rewrites or removes that key: it stays byte-for-byte as v1.8.5 left it at the upgrade, and an undo
-// to v1.8.5 finds exactly what it had. It is READ once, to migrate, when this key is absent (calcRestore)
+// The live build's (2.0's) row cache: its own, versioned key (G6). v1.8.5 keeps a page's takeoff rows ONLY under
+// calcKey(), so no later build writes, rewrites or removes that key: it stays byte-for-byte as v1.8.5 left it at the
+// upgrade, and an undo to v1.8.5 finds exactly what it had. Neither key is written here, and no row of either is
+// restored (calcKey3); they are read for one fact only (calcEarlierHadOldEw)
 function calcKey2() { return docKey() + "::p" + state.page + "::calc2"; }
-function areaSelKey() { return docKey() + "::p" + state.page + "::areasel"; }
+// NOTHING AN EARLIER VERSION KEPT IN THIS BROWSER COMES BACK INTO THE TAKEOFF (critic empty-2, MAJOR-1; the owner's
+// "don't bring anything over, start empty" covers areas and counts too). The live build (2.0) kept a page's calculator
+// rows under calcKey2() and its ticked areas under "::areasel", and this page read both: a page 2.0 had approved opened
+// with 0 line styles and ONE row in the takeoff - the area 2.0 had ticked in that browser (23,249.2 SF) - and one press
+// of Approve exported that row alone. So this build keeps its own two records under its own keys, and reads and writes
+// nothing else: 2.0's and v1.8.5's stay byte for byte where they are (an undo finds them) and restore nothing here.
+// Rows an earlier version kept on the SERVER - the page record's calculator rows, the job's cut / fill rows - stay.
+function calcKey3() { return docKey() + "::p" + state.page + "::calc3"; }
+function areaSelKey() { return docKey() + "::p" + state.page + "::areasel3"; }
 
 function calcSave() {
   if (!state.result) return;
@@ -7488,11 +8703,11 @@ function calcSave() {
         if (typeof it[k] === "string" && it[k]) o[k] = it[k];
       return o;
     });
-  // under this app's own key (calcKey2), as {core: 2, rows} - an empty list too, so "this page has no rows here" is
-  // never read as "not migrated yet". v1.8.5's key (calcKey) is never touched: a v1.8.5 tab cannot load this app's rows
-  // and write them back stripped of their marks (critic legacy-3, RISK-1), and an undo finds v1.8.5's rows as they were
-  // `ew_dropped`: this browser dropped old Earthwork calculator rows at the move (calcRestore); the record hears it once
-  store.setItem(calcKey2(), JSON.stringify({ core: 2, rows, ...(state.ewDropped ? { ew_dropped: true } : {}) }));
+  // under this build's own key (calcKey3), as {core: 3, rows}. An earlier version's keys (2.0's calcKey2, v1.8.5's
+  // calcKey) are never written: a tab of theirs cannot load these rows and write them back stripped of their marks
+  // (critic legacy-3, RISK-1), and an undo finds their rows as they were.
+  // `ew_dropped`: this page had old Earthwork calculator rows that count nowhere (calcRestore); the record hears it once
+  store.setItem(calcKey3(), JSON.stringify({ core: 3, rows, ...(state.ewDropped ? { ew_dropped: true } : {}) }));
 
   // area ticks and labels by a stable key, stamped with the detection they were made on (arSelPayload)
   const sel = (state.areaRows.length || state.areaInc.size || state.areaLabels.size || state.areaNote)
@@ -7501,20 +8716,31 @@ function calcSave() {
   else store.removeItem(areaSelKey());
 }
 
+// Did an earlier version's row cache in this browser hold old Earthwork calculator rows (v1.8.5's, a bare array under
+// calcKey), or say it had dropped some (2.0's, under calcKey2)? Read for this ONE fact - the page's note that such work
+// was removed (ew_dropped -> the record -> its note) - and for nothing else: no row is restored from either, and
+// neither key is written.
+function calcEarlierHadOldEw() {
+  try {
+    const two = store.getItem(calcKey2());
+    const got = JSON.parse((two !== null ? two : store.getItem(calcKey())) || "[]");
+    const all = Array.isArray(got) ? got : (got && Array.isArray(got.rows) ? got.rows : []);
+    return !!(got && got.ew_dropped) || all.some((r) => ewOldRow(r, two === null));
+  } catch (e) { return false; }
+}
 function calcRestore() {
   try {
-    // this app's own key once it exists - v1.8.5's key is then never looked at again, so a stale v1.8.5 tab writing it
-    // after the upgrade changes nothing here; until then, ONE migration reads v1.8.5's rows (a bare array) and files them
-    // under this app's key (a build of this app from 2026-10-01 stored {core: 2, rows} under the old key: read too).
-    // The old Earthwork calculator's rows are not carried over (ewOldRow: the owner's decision, 2026-10-01): they count
-    // nowhere, and the page says so once (ew_dropped -> the record -> its note)
-    const mine = store.getItem(calcKey2());
-    const got = JSON.parse((mine !== null ? mine : store.getItem(calcKey())) || "[]");
-    const all = Array.isArray(got) ? got : (got && Array.isArray(got.rows) ? got.rows : null);
-    const rows = Array.isArray(all) ? all.filter((r) => !ewOldRow(r, mine === null)) : null;
-    state.ewDropped = !!(got && got.ew_dropped) || (Array.isArray(all) && rows.length < all.length);
-    if ((mine === null && Array.isArray(all) && all.length) || (mine !== null && Array.isArray(all) && rows.length < all.length))
-      store.setItem(calcKey2(), JSON.stringify({ core: 2, rows, ...(state.ewDropped ? { ew_dropped: true } : {}) }));
+    // THIS BUILD'S OWN ROW CACHE (calcKey3) and nothing else puts a row back (see calcKey3): whatever 2.0 or v1.8.5
+    // kept in this browser for the page - a count, a trench run, a structure row - starts empty here like the line
+    // styles. The old Earthwork calculator's rows count nowhere (ewOldRow: the owner's decision, 2026-10-01), and the
+    // page still says so once when an earlier version's cache held some (calcEarlierHadOldEw)
+    const mine = store.getItem(calcKey3());
+    const got = mine !== null ? JSON.parse(mine || "null") : null;
+    const all = got && Array.isArray(got.rows) ? got.rows : null;
+    const rows = Array.isArray(all) ? all.filter((r) => !ewOldRow(r, false)) : null;
+    state.ewDropped = !!(got && got.ew_dropped) || (Array.isArray(all) && rows.length < all.length) || calcEarlierHadOldEw();
+    if (Array.isArray(all) && rows.length < all.length)
+      store.setItem(calcKey3(), JSON.stringify({ core: 3, rows, ...(state.ewDropped ? { ew_dropped: true } : {}) }));
     if (Array.isArray(rows))
       for (const r of rows)
         if (r && r.label && isFinite(r.qty)) {
@@ -7706,10 +8932,7 @@ function calcStatePayload() {
   } else if (saved.st) out.st = saved.st;
   // FLOORING (additive key "fl"): floor types with their colours and
   // prices, every room with its polygon and numbers, the hand-closed gaps.
-  const fl = (state.fl && state.fl.result === state.result
-              && state.calcFlApplied) ? state.fl : null;
-  if (fl) out.fl = flSavePayload(fl);
-  else if (saved.fl) out.fl = saved.fl;
+  // FLOORING is the job document's (ruling P): the page record carries no flooring part from this page
   // WORK AREA boxes (additive key "zones"): plain page-pt rects, keyed to
   // no chain or style id, so a re-detect can never orphan them - restore
   // re-applies them against whatever the live detection holds. Unlike the
@@ -7751,7 +8974,7 @@ function calcStatePayload() {
     // counted twice until the Trench panel was opened (checker T4r, 2026-09-27)
     const cff = state.cfFacts || saved.cf || null;
     if (cff && state.extraItems.some(it => typeof CF_ROW_RE !== "undefined" && cfIsRow(it))) out.cf = cff;
-    out.rows = state.extraItems.filter(it => !it._area)
+    out.rows = state.extraItems.filter(it => !it._area && it.src !== "flooring")
       .map(it => ({ label: it.label, qty: it.qty, unit: it.unit,
                     ...(Number.isInteger(it.run) ? { run: it.run } : {}),
                     ...(it.runOf ? { runOf: String(it.runOf) } : {}),
@@ -7759,12 +8982,13 @@ function calcStatePayload() {
                     ...(it.utility ? { utility: String(it.utility) } : {}),
                     ...(it.basis ? { basis: String(it.basis) } : {}),
                     ...(it.src ? { src: String(it.src) } : {}),
+                    ...(it.price_key ? { price_key: String(it.price_key) } : {}),
                     ...(Array.isArray(it.details) ? { details: it.details } : {}) }));
     const labels = new Set(out.rows.map(r => r.label));
     for (const v of state.labels.values()) if (v) labels.add(v);
     const prices = {}, trades = {};
     for (const lab of labels) {
-      const p = parseFloat(store.getItem(priceKey(lab)) || "");
+      const p = flIsRowLabel(lab) ? NaN : parseFloat(store.getItem(priceKey(lab)) || "");
       if (!isNaN(p) && p > 0) prices[lab] = p;
       const tr = store.getItem(tradeKey(lab));
       if (tr && TRADES.includes(tr)) trades[lab] = tr;
@@ -7811,11 +9035,12 @@ function rowsApplySaved() {
                                 ...(typeof r.utility === "string" && r.utility ? { utility: r.utility } : {}),
                                 ...(typeof r.basis === "string" && r.basis ? { basis: r.basis } : {}),
                                 ...(typeof r.src === "string" && r.src ? { src: r.src } : {}),
+                                ...(typeof r.price_key === "string" && r.price_key ? { price_key: r.price_key } : {}),
                                 ...(Array.isArray(r.details) ? { details: r.details } : {}) });
   }
   if (sv.prices && typeof sv.prices === "object")
     for (const [lab, p] of Object.entries(sv.prices))
-      if (isFinite(+p) && +p > 0 && !store.getItem(priceKey(lab))) store.setSession(priceKey(lab), String(+p));
+      if (isFinite(+p) && +p > 0 && !flIsRowLabel(lab) && !store.getItem(priceKey(lab))) store.setSession(priceKey(lab), String(+p));
   if (sv.trades && typeof sv.trades === "object")
     for (const [lab, tr] of Object.entries(sv.trades))
       if (TRADES.includes(tr) && !store.getItem(tradeKey(lab))) store.setSession(tradeKey(lab), tr);
@@ -7911,7 +9136,9 @@ async function calcStateLoad(gen) {
   // ...but this browser's dropped old Earthwork calculator rows are told to the record once (the page's note)
   if (state.ewDropped && !state.calcSaved.ew_dropped) { calcStateSent = null; calcStateDirty(); }
   stApplySaved();
-  flApplySaved();
+  // THE JOB'S FLOORING is read (never written) as the page loads: the takeoff shows the server's flooring rows
+  // for this sheet, and an Approve carries the version this tab holds
+  if (typeof flJobFor === "function" && state.result) { if (!flJobFor()) flJobLoad(); else flSync(); }
 }
 
 // The count-of-dropped sentence, in the panel where the loss happened.
@@ -8071,7 +9298,8 @@ function ovKey(label, unit) {
 // fingerprint exists at all. An include tick is a statement about THIS
 // SHEET ("measure these 22 rows of C4.3"); carrying it to another page is
 // not a feature, it is the lost prune. They shared a key and both were
-// wrong in different directions. See labelKey / includeKey below.
+// wrong in different directions. See labelKey below; what is in a page's
+// takeoff is the server's record now (TICKS block), keyed by page.
 function docKey() {
   return "doc::" + (state.docName || "unknown");
 }
@@ -8163,68 +9391,6 @@ function rawColor(c) {
 function styleFp(st) {
   return [st.class, "w" + weightClass(st.width || 0), rawColor(st.color),
           st.signature, "L=" + (st.layer || "")].join("|");
-}
-// ---------- set-level decisions (EXCAVATION-PLAN §7 item 5) ----------
-// An include/exclude the operator makes BY HAND on one style row is also
-// recorded against the whole document, so excluding the title-block style
-// on sheet 1 holds on sheets 2-48. Three rules, ranked:
-//   1. the page's own record (includeKey) ALWAYS outranks the set-level
-//      one - the page-level override the operator sees is just the same
-//      checkbox, and it keeps winning on that page forever;
-//   2. only styles with a CAD layer participate (setDecEligible). The
-//      styleFp comment above documents the residue: rows with NO layer on
-//      DIFFERENT pages are indistinguishable under every key this file can
-//      build, and a label that travels wrongly is a visible typo while an
-//      EXCLUSION that travels wrongly is silently deleted footage. So
-//      no-layer rows abstain and keep their per-page seeds - 529/2,664
-//      rows (19.9%) on set A, 103/1,059 (9.7%) on set B, 22/22 on the
-//      set C sheet, where the whole feature therefore stays inert;
-//   3. only the row's own checkbox writes the set-level record. Bulk
-//      gestures (all / none / color chips / AI apply / scope filter) stay
-//      page-scoped: "none" on sheet 1 must not empty sheets 2-48.
-//
-// MEASURED 2026-08-30, before building, offline detect_page on this tree:
-// Set A 15 pages / 2,664 style rows, set B 12-page spread / 1,059 rows,
-// plus cached set B p38-39 (327) and set C p42 (22). A candidate key of
-// (layer LEAF, class, signature rounded to 1 pt) fuses rows the engine
-// split ON THE SAME PAGE - different-looking styles by construction - for
-// 714/2,664 rows (26.8%) on set A and 262/1,059 (24.7%) on set B, worst
-// group 14 rows, and 7 set-B groups put 54,985 pt of real linework under
-// an annotation row's key: an exclusion there deletes footage silently,
-// so leaf-keyed inheritance is dead on arrival. styleFp collides on
-// 0/2,664, 0/1,059, 0/327 and 0/22 (the theorem above, re-measured
-// anyway). Coverage under styleFp with this eligibility rule: 948/2,067
-// eligible later-page rows (45.9%) already have a key on an earlier page
-// on set A, 495/956 (51.8%) on set B - the misses are mostly dash-cadence
-// jitter (of 6,581 set-A cross-page pairs matched on layer+class+weight+
-// colour, 3,328 = 50.6% agree on cadence too), which fails SAFE: the row
-// keeps its seed and its checkbox. The headline case holds: excluding
-// C3.0's four G-ANNO-TTLB title-block styles reaches every TTLB row on
-// all 14 other set-A sheets (40/40). A rounded-signature styleFp variant
-// also measured 0 collisions and would add +84/+18 covered rows, but its
-// zero is a corpus fact, not a construction (set B p38 carries
-// 'd8.8 g4.5' and 'd9.1 g4.5' as two rows, kept apart only by the XREF
-// prefix in the full layer), and the label record travels on the exact
-// signature - one identity for both records, so exact it stays.
-function setDecEligible(st) {
-  return !!(st && (st.layer || "").trim());
-}
-// The record's identity = styleFp, the SAME fingerprint the label record
-// travels on: if the name typed on sheet 1 follows a row to sheet 40, the
-// exclusion clicked next to that name follows the same row - one identity
-// for both records, never two that can disagree.
-function setDecKey(docKeyStr, st) {
-  return docKeyStr + "::setinc::" + styleFp(st);
-}
-// Precedence, pure so the test can pin it. Records are the stored strings
-// ("1" / "0"), null or undefined = no record. Returns null (no decision -
-// the per-page seed stands) or {on, inherited}.
-function setDecResolve(pageRec, docRec, eligible) {
-  if (pageRec === "1" || pageRec === "0")
-    return { on: pageRec === "1", inherited: false };
-  if (eligible && (docRec === "1" || docRec === "0"))
-    return { on: docRec === "1", inherited: true };
-  return null;
 }
 // SET-DECISIONS-END
 
@@ -8414,15 +9580,15 @@ function colorSrcLabel(src) {
 // ---- the override layer's keys and readers (impure: state + store) -------
 // THREE RECORDS, THREE SCOPES, and the scope is the whole design. Each one
 // is keyed on the narrowest identity that is actually valid for it, which is
-// the lesson labelKey / includeKey below already paid for.
+// the lesson labelKey below already paid for.
 //
 //   per-family : docKey + styleFp  - the SAME identity the label record
 //                travels on, so a family recoloured on sheet 1 is that
 //                colour on sheets 2-48 exactly as its typed name is.
 //   per-line   : docKey + page + engine_sig + chain_id - a chain id is an
 //                ordinal inside ONE page of ONE result, so the key names the
-//                only scope in which it means anything (see includeKey for
-//                the measurement behind that rule).
+//                only scope in which it means anything (across an engine
+//                change only 43 of 154 style ids kept their meaning).
 //   convention : the bare label, upper-cased, no document in the key - the
 //                same road tradeKey and measure::<LABEL> already ride, so
 //                "FIBER OPTIC comes up red on the next job" needs no new
@@ -8826,22 +9992,6 @@ function colorPopForChain(ch, anchor) {
 function labelKey(st) {
   return docKey() + "::" + styleFp(st);
 }
-// The include record: keyed on the exact style row of THIS page of THIS
-// result. style_id is an ordinal inside one page's style table - it means
-// nothing anywhere else - so the key names the only scope in which it is
-// valid, and _assign_styles is deterministic inside it (measured: two runs
-// of a civil set's p12 agree 151/151, C4.0 p0 113/113). Two consequences:
-//   * within a page an include tick can no longer reach another row, which
-//     is the lost prune (5 styles / 16,558.7 ft came back as 22 styles /
-//     28,248.2 ft, x1.706, through one page round trip);
-//   * across pages it no longer transfers at all - 942 (cached) / 674
-//     (wide) leaks stop. Include defaults are seeded per page anyway.
-// engine_sig is in the key because style_id only survives while the result
-// does: across an engine change only 43 of 154 style_ids kept their meaning.
-function includeKey(st) {
-  return docKey() + "::p" + state.page + "::" + sigKey()
-       + "::inc::" + st.style_id;
-}
 // Every write to state.include goes through here. The individual row
 // checkbox persisted its choice and NOTHING ELSE DID, so `none` + a hand
 // pick, then navigating away and back, silently restored every style the
@@ -8851,29 +10001,20 @@ function includeKey(st) {
 // CLAUDE.md section 5, in the UI: one fact, five writers, one of them
 // keeping the record. Route new writers through here too.
 // (That fix made every writer record; it left the record keyed on a
-// fingerprint shared with other styles and other pages, which is the
-// second half of the same bug - see includeKey.)
+// fingerprint shared with other styles and other pages, which was the
+// second half of the same bug.)
+// THE RECORD IS THE SERVER'S NOW (TICKS block, 2026-10-03): a tick ADDS the style to this page's takeoff and an untick
+// takes it out, and the page sends the set of styles the person added (tkDirty -> POST .../ticks). Nothing about ticks
+// is written to this browser's storage, and nothing an earlier version wrote there is read (its per-page and set-level
+// tick records, and the code that read them, are gone: nothing is brought over).
+// A family the person created on this page lives for the session only (famCreate), so it is never in the record.
 function setInclude(sid, on) {
   state.include.set(sid, !!on);
-  // any page-level write supersedes an inherited tick for this row, so the
-  // disclosure line stops counting it the moment the operator overrides it
-  state.inheritedInc.delete(sid);
+  tkFollow();          // the panels that quote the takeoff follow every tick, whoever made it
   const st = state.result && state.result.styles.find(x => x.style_id === sid);
-  if (!st) return;                       // nothing to key the record on
-  try { store.setItem(includeKey(st), on ? "1" : "0"); }
-  catch (e) { /* private mode: the session still honours the click */ }
-}
-
-// The set-level twin of setInclude's record: called ONLY from the row's own
-// checkbox (rule 3 above), AFTER setInclude has kept the page record, and
-// never from bulk gestures or the scope filter's put-back branches. Writing
-// it is what makes the same hand decision hold on the sheets the operator
-// has not visited yet; their visited sheets keep their own page records,
-// which outrank this one.
-function setIncludeSetWide(st, on) {
-  if (!st || !setDecEligible(st)) return;
-  try { store.setItem(setDecKey(docKey(), st), on ? "1" : "0"); }
-  catch (e) { /* private mode: the page record already failed the same way */ }
+  if (!st || st.operator_created) return;     // nothing the server can key the record on
+  if (on) state.tkSet.add(sid); else state.tkSet.delete(sid);
+  tkDirty();
 }
 
 // The scope filter's twin of setInclude, and the difference is the whole
@@ -8918,7 +10059,6 @@ function memSave(st, touchedMeasure) {
 }
 function memApply() {
   if (!state.result) return;
-  state.inheritedInc = new Map();
   // OPERATOR LINE COLOUR, restored. Only the two RECORDS are read back here -
   // the convention book is not, because it is resolved live by label in
   // colorConvFor(): copying it into state.famColor would freeze a family at
@@ -8936,16 +10076,8 @@ function memApply() {
     if (h) state.lineColor.set(ch.chain_id, h);
   }
   for (const st of state.result.styles) {
-    // page record first, set-level record second, seed otherwise - the
-    // ranking lives in setDecResolve so the test can pin it. Inherited
-    // applications are counted and DISCLOSED (renderStyles), never silent.
-    const dec = setDecResolve(store.getItem(includeKey(st)),
-                              store.getItem(setDecKey(docKey(), st)),
-                              setDecEligible(st));
-    if (dec) {
-      state.include.set(st.style_id, dec.on);
-      if (dec.inherited) state.inheritedInc.set(st.style_id, dec.on);
-    }
+    // THE TICKS ARE NOT READ HERE ANY MORE (2026-10-03): what is in the takeoff is the server's record of what the
+    // person added (tkLoad). The page / set-level tick records 2.0 kept in this browser are never read.
     // three states, not two: EA / explicitly-LF / never decided. The record
     // stores measure:"" for "the operator put this back to LF", and reading
     // that as "no opinion" let the label-level default below overrule it -
@@ -10194,7 +11326,8 @@ function computeTakeoffRows() {
         if (it.cnt === "EA") it.qtyText = String(ov);
         it.ov = true;
       }
-      const price = parseFloat(store.getItem(priceKey(it.label)) || "") || null;
+      // a flooring row is priced in the estimate only (ruling T): no book price, whatever a record carried
+      const price = flIsRowLabel(it.label) ? null : (parseFloat(store.getItem(priceKey(it.label)) || "") || null);
       it.price = price;
       it.trade = tr;
       it.ext = it.priced && price ? it.qty * price : null;
@@ -11762,6 +12895,7 @@ function renderItemized() {
     // PREVIOUS sheet's "12.4k ft measured - $84320" sitting under it. A stale
     // number with no table under it reads as this sheet's total.
     $("tallyBar").textContent = "";
+    tkEarlierShow(null);       // ...and so does the previous sheet's "approved on an earlier version" line
     // ...and the bid view mirrors these rows, so it goes stale the same way
     renderBidView(null);
     return;
@@ -11777,6 +12911,53 @@ function renderItemized() {
   // approve payload's source, and an export must not write storage.
   subCommitRecompute(groups);
   const u = ftPerIn ? "ft" : "pt";
+  // THE TAKEOFF STARTS EMPTY (TICKS block): said at the top while nothing is in it, and what a re-detect or the server
+  // did to this page's ticks, once, above the rows
+  if (state.tkNote) {
+    const tn = document.createElement("div");
+    tn.className = "item-scale-note"; tn.id = "tkNote";
+    tn.textContent = state.tkNote;
+    box.appendChild(tn);
+  }
+  // APPROVED ON AN EARLIER VERSION: one plain line, what was approved folded behind it (tkEarlierEl), shown in the
+  // approve bar - where Approve is pressed - not among these rows (tkEarlierShow)
+  tkEarlierShow(tkEarlierEl(groups));
+  if (!groups.some(g => g.items.length)) {
+    const em = document.createElement("div");
+    em.className = "tk-empty"; em.id = "tkEmpty";
+    em.textContent = TK_EMPTY_HEAD;
+    em.title = TK_HELP;
+    box.appendChild(em);
+  }
+  // ONE line, once, at the top (S3): a scale in force that nothing has confirmed
+  const _v = state.result._verdict;
+  const _acc = !!(_v && _v.person && +_v.person.value > 0 && _v.person.how === "accepted" && _v.state !== "CONFIRMED");
+  const _accOff = _acc && typeof svMeasureOff === "function" ? svMeasureOff(_v.person) : null;
+  if (ftPerIn && _v && _v.state === "UNCHECKED" && (_acc || !(_v.person && +_v.person.value > 0))
+      && !(typeof svScreenOwn === "function" && svScreenOwn(state.result.scale, _v))) {
+    const note = document.createElement("div");
+    note.className = "item-scale-note";
+    note.textContent = _accOff ? `Scale accepted; a measure on ${svDate(_accOff.at)} said 1 in = ${svNum(_accOff.ft)} ft`
+      : _acc ? "Scale accepted without measuring on this page" : "Scale not confirmed on this page";
+    note.title = typeof SV_HELP === "string" ? SV_HELP : "";
+    box.appendChild(note);
+  }
+  // NO SCALE IN FORCE, MEASURED ROWS TICKED: Approve will be refused (the server's rule, S4), said here first so the
+  // reviewer is not surprised by it. Counts alone approve without a scale.
+  if (!ftPerIn && state.result._verdictWaiting) {
+    const nb = document.createElement("div");
+    nb.className = "item-scale-note";
+    nb.textContent = "Checking the scale's readings: lengths are in paper units until they have been heard.";
+    box.appendChild(nb);
+  } else if (!ftPerIn && groups.some(g => g.items.some(it => it.unit !== "EA" && +it.qty > 0))) {
+    const nb = document.createElement("div");
+    nb.className = "item-scale-note stop";
+    nb.textContent = (_v && _v.state === "CONFLICT"
+      ? "Approve will be refused: this sheet's scale readings disagree and measured rows are ticked. "
+      : "Approve will be refused: this sheet has no scale and measured rows are ticked. ")
+      + "Choose or set a scale in the sheet header, or untick the measured rows (counts can be approved without one).";
+    box.appendChild(nb);
+  }
   const head = document.createElement("div");
   head.className = "item-row head";
   head.innerHTML = "<div>label</div><div>count</div><div>" +
@@ -11892,6 +13073,10 @@ function renderItemized() {
         + ". Empty means no rate is set, so this row carries no dollars.";
       pin.name = "price-" + it.label;
       if (it.price) pin.value = it.price;
+      if (flIsRowLabel(it.label)) {
+        pin.disabled = true; pin.value = ""; pin.placeholder = "estimate";
+        pin.title = "A flooring row is priced in the Flooring panel's estimate: one price per floor type, in one place";
+      }
       pin.oninput = () => {
         store.setItem(priceKey(it.label), pin.value);
         // NOT renderItemized(). That clears #itemized, detaching THIS input
@@ -12109,6 +13294,18 @@ Both are included in every `
     row.className = "item-row total";
     row.innerHTML = `<div>TOTAL</div><div></div><div></div><div></div><div>${grand.toFixed(0)}</div>`;
     box.appendChild(row);
+  }
+  // WHERE THE FLOORING MONEY IS (critic 4, M2): one line, the job's flooring estimate total, beside the takeoff's
+  {
+    const fj = flJobFor();
+    if (fj && fj.comp && (state.extraItems || []).some(it => flIsRowLabel(it.label))) {
+      const nOpen = (fj.comp.open || []).length;
+      const fn = document.createElement("div");
+      fn.className = "item-row fl-est-note ew-meta";
+      fn.textContent = `Flooring is priced on the flooring estimate: $${fj.comp.total || "0.00"}`
+        + (nOpen ? ` (held: ${nOpen} check${nOpen === 1 ? "" : "s"} open)` : "") + " - not in the total above";
+      box.appendChild(fn);
+    }
   }
   // The bid view is the SAME rows regrouped, so it repaints wherever the
   // itemized takeoff does - one call site, and the two cannot drift.
@@ -12363,6 +13560,11 @@ function takeoffCsv() {
                  ftPerIn ? "union feet" : "union pt",
                  ftPerIn ? "drawn twice feet" : "drawn twice pt",
                  "qty set by", "sub-item of"]];
+  // THE SCALE, one line under the header (scale verdict S5): what every number below is multiplied by, and how it
+  // stands - in the words the bid sheet and the report use
+  if (typeof svPlainWords === "function")
+    rows.push([`SCALE: ${svPlainWords(state.result._verdict || null, state.result.scale)}`,
+               "", "", "", "", "", "", "", "", ""]);
   for (const g of groups) {
     for (const it of g.items) {
       const isLf = !isNaN(parseFloat(it.cnt));   // plain line-count rows
@@ -13027,12 +14229,22 @@ $("trBtn").onclick = () => {
   trLoad();
 };
 
+// TRENCH WORKS ON AN EMPTY TAKEOFF (critic empty-1, MAJOR-5). The run builder and the picker read only styles IN the
+// takeoff - every engine pick, while the takeoff started full. Now it starts empty, so a new sheet listed no run and
+// offered nothing to pick, and a tick made with the panel open changed nothing until it was reopened. The simpler of
+// the two cures: the panel offers the sheet's utility lines WHETHER THEY ARE IN THE TAKEOFF OR NOT - the families the
+// engine picks (what was listed after every Detect until now) and anything the person added - and its picker lists
+// every line family on the sheet. A trench row is its own row, added by this panel's Add; the pipe's footage is in the
+// takeoff only when the person adds that style.
+function trOffered(st) {
+  return !!st && (!!state.include.get(st.style_id) || includeSeed(st));
+}
 // the families the run builder is asked about
 function trUtilityStyleIds() {
   if (!state.result) return [];
   const out = [];
   for (const st of state.result.styles) {
-    if (!state.include.get(st.style_id)) continue;
+    if (!trOffered(st)) continue;
     const name = (state.labels.get(st.style_id) || st.suggested_label || "") + " " + (st.layer || "");
     if (!TR_UTIL_RX.test(name) || TR_NOT_UTIL_RX.test(name)) continue;
     out.push(st.style_id);
@@ -13116,7 +14328,7 @@ async function trLoadRuns() {
   if (!state.result || !state.tr) return;
   const gen = state.gen, job = state.job, page = state.page;
   const sids = trUtilityStyleIds();
-  if (!sids.length) { state.trRuns = { runs: [], structures: [], systems: [], notes: ["no utility line family is ticked on this sheet"] }; return; }
+  if (!sids.length) { state.trRuns = { runs: [], structures: [], systems: [], notes: ["no line family on this sheet is named as a utility: pick the pipe's line family below"] }; return; }
   const labels = {};
   for (const sid of sids) labels[sid] = state.labels.get(sid) || "";
   // the CURRENT geometry of those families (the operator's merges, splits
@@ -13349,7 +14561,7 @@ function renderTr() {
   head.innerHTML = "<b>Runs</b> <span class=\"dim\">click one here, or click its line on the plan</span>";
   runsBox.appendChild(head);
   if (!R || R.loading) runsBox.appendChild(note("reading the runs on this sheet…"));
-  else if (!R.runs || !R.runs.length) runsBox.appendChild(note((R.notes && R.notes[0]) || "no pipe runs found in the ticked utility families"));
+  else if (!R.runs || !R.runs.length) runsBox.appendChild(note((R.notes && R.notes[0]) || "no pipe runs found in this sheet's utility line families: pick the pipe's line family below"));
   else {
     const sys = {};
     for (const r of R.runs) (sys[r.system] = sys[r.system] || []).push(r);
@@ -13357,7 +14569,8 @@ function renderTr() {
       const S = (R.systems || []).find(s => s.code === code) || {};
       const sh = document.createElement("div");
       sh.className = "tr-sys";
-      sh.textContent = `${TR_SYSTEM_WORD[code] || code}: ${sys[code].length} run${sys[code].length === 1 ? "" : "s"}, ${trFmtFt(S.length_ft || 0)} ft, ${S.structures_on_runs || 0} structure${S.structures_on_runs === 1 ? "" : "s"}`;
+      sh.textContent = `${TR_SYSTEM_WORD[code] || code}: ${sys[code].length} run${sys[code].length === 1 ? "" : "s"}, ${S.length_ft != null ? trFmtFt(S.length_ft) + " ft"
+        : Math.round(sys[code].reduce((t, r) => t + (+r.length_pt || 0), 0)).toLocaleString() + " pt (no scale in force)"}, ${S.structures_on_runs || 0} structure${S.structures_on_runs === 1 ? "" : "s"}`;
       runsBox.appendChild(sh);
       for (const r of sys[code]) {
         const row = document.createElement("div");
@@ -13464,13 +14677,13 @@ function renderTr() {
   const live = new Map();
   for (const c of state.result.chains)
     if (!state.excluded.has(c.chain_id)) live.set(c.style_id, (live.get(c.style_id) || 0) + 1);
-  for (const st of state.result.styles) {
-    if (!state.include.get(st.style_id)) continue;
+  // every line family on the sheet, in the takeoff or not (trOffered's note): the ones offered above first
+  for (const st of [...state.result.styles].sort((a, b) => (trOffered(b) ? 1 : 0) - (trOffered(a) ? 1 : 0))) {
     const n = live.get(st.style_id) || 0;
     if (!n) continue;
     const o = document.createElement("option");
     o.value = st.style_id;
-    o.textContent = `${(state.labels.get(st.style_id) || st.suggested_label).slice(0, 30)} · ${n} line${n === 1 ? "" : "s"}`;
+    o.textContent = `${(state.labels.get(st.style_id) || st.suggested_label || "").slice(0, 30)} · ${n} line${n === 1 ? "" : "s"}`;
     if (t.style_id === st.style_id) o.selected = true;
     sel.appendChild(o);
   }
@@ -15451,6 +16664,11 @@ function approveScaleParts() {
       ? { ft_per_paper_inch: +scOn.ft_per_paper_inch,
           text: scOn.text || null,
           picked_by_reviewer: !!scOn.picked_by_reviewer,
+          // HOW a person set it, for a number the server cannot recognise as one of the sheet's readings (CRITIC-scale-1
+          // M1 / M2: without it such a number is not recorded): typed, or measured with the Measure tool
+          how: scOn.typed_by_reviewer ? (/over a measured line$/.test(String(scOn.text || "")) ? "calibrated" : "typed")
+            // a printed reading this page chose (the server keeps `picked` only for an exact reading: MINOR 1)
+            : scOn.picked_by_reviewer || scOn.from_suggestion ? "picked" : null,
           // the second axis, so the report cannot disagree with this panel
           v_ft_per_paper_inch: state.vScale || null }
       : null,
@@ -15480,6 +16698,8 @@ function approveFailText(status, e) {
       (d && Array.isArray(d.loc) ? d.loc.filter(x => x !== "body").join(".") + ": " : "")
       + ((d && d.msg) || JSON.stringify(d))).join("; ");
   if (e && e.detail && typeof e.detail === "string") return e.detail;
+  // a refusal that carries facts beside its sentence (server.py EARLIER_ASK, EARLIER_KEEP_FAILED): the sentence is `say`
+  if (e && e.detail && typeof e.detail === "object" && typeof e.detail.say === "string") return e.detail.say;
   if (status >= 500)
     return "Approve did not go through: the server had a problem (error " + status + "). Nothing new is approved. Press Approve again.";
   return "Approve was refused (error " + status + "). Nothing new is approved.";
@@ -15496,9 +16716,37 @@ async function approveClick(run, say) {
 $("approveBtn").onclick = () => approveClick(approveRun, setStatus);
 async function approveRun() {
   const job0 = state.job, page0 = state.page, gen0 = state.gen;   // the page approved (the cut / fill refusal below)
+  // the scale's readings are still being heard: nothing on screen is in feet yet, so nothing is approved from it
+  if (state.result && state.result._verdictWaiting) {
+    setStatus("Approve waits for the scale: its readings are still being checked. Press Approve again in a moment.",
+              "warn");
+    return;
+  }
+  if (typeof flJobFor === "function" && flJobFor() && flJobFor().stale) { setStatus(FL_STALE_TEXT, "err"); return; }
+  if (typeof flJobFor === "function" && flJobFor() && (flJobFor().dirty || flJobFor().saving)) await flJobWrite();
   const labels = {};
   const subRows = subExportRows();
   for (const [sid, inc] of state.include) if (inc) labels[sid] = state.labels.get(sid) || "unlabeled";
+  // THE TAKEOFF STARTS EMPTY: nothing added, nothing approved (the server refuses it too, in the same words); and the
+  // ticks the page has not sent yet go first, so the server's record is the takeoff being approved
+  if (!Object.keys(labels).length && !state.extraItems.some(it => it && String(it.label || "").trim() && +it.qty > 0)
+      && !subRows.length)
+    // on a page that is approved the only way out of the bid is Withdraw, so the refusal names it (critic empty-1, MINOR-3)
+    return setStatus(TK_EMPTY_APPROVE + ($("withdrawBtn") && !$("withdrawBtn").hidden ? " " + TK_EMPTY_APPROVED : ""), "err");
+  if (!(await tkFlush())) {
+    // a change the server refused as stale needs a reload; one it did not keep for any other reason is still waiting
+    // to be sent, and the next press sends it again: said with the real reason (critic empty-2, MINOR-3), in the status
+    // line and in the approve bar's note, which stays in view
+    if (tk.pending || (tk.waiting && tk.waiting.size)) { tkUnsavedShow(true); return setStatus(tkUnsavedApproveWords(), "err"); }
+    return setStatus("Approve did not go through: your last tick was not saved on the server. Reload this page, check the takeoff, and approve again.", "err");
+  }
+  if (state.job !== job0 || state.page !== page0 || state.gen !== gen0) return;
+  // THE APPROVE IS OF THE SERVER'S RECORD (critic empty-1, MAJOR-4). tkFlush answers true when nothing waits to be
+  // sent - which is also the case right after a write was REFUSED as stale, so a tab whose ticks the server did not
+  // keep approved them anyway and the bid held another takeoff than the record. A page that holds no version of the
+  // record (refused, or never read) sends no approve; one that does names it, and the server holds the approve to it.
+  const tkVer = tk.ver.get(tkKey(job0, page0));
+  if (tkVer === undefined) return setStatus(TK_STALE_APPROVE, "err");
   // The scale the estimator is LOOKING AT. Send it or the server recomputes
   // every length from the engine's own pick, and a sheet where he switched
   // 1.0 -> 4.0 ft/in exports 4x low with his approval on it, stamped "auto".
@@ -15528,11 +16776,23 @@ async function approveRun() {
         });
       }
   }
+  // REPLACING AN APPROVAL MADE ON AN EARLIER VERSION IS ASKED ONCE (critic empty-2, MAJOR-1: one press, no question,
+  // replaced 41 rows by length with the one row that had come back by itself). The question names what is in the bid
+  // (the server's facts) and what the takeoff here holds (the rows of the panel, which are the rows this approve
+  // sends); No sends nothing and changes nothing; Yes sends the approve with `replace_earlier`, and the server keeps
+  // the replaced approval so it can be put back. The server refuses an approve of such a page without that yes
+  const replaceEarlier = !!state.tkEarlier;
+  if (replaceEarlier && !confirm(tkEarlierAskWords(state.tkEarlier, page0, tkHereWords(ovSrc ? ovSrc.groups : []))))
+    return setStatus(TK_EARLIER_NO);
   const { scale: scaleOnScreen, scale_seen: scaleSeenSent } = approveScaleParts();
   const body = JSON.stringify({ labels, image_dpi: 300, scale: scaleOnScreen,
+      ...(replaceEarlier ? { replace_earlier: true } : {}),
       // the stamp of the scale record this page loaded (scaleRestore): the server refuses, writing nothing, when the
       // record changed since and the scale on screen disagrees with it (critic 23, RISK-1)
       scale_seen: scaleSeenSent,
+      // the takeoff this approve is of: the version of the server's record this page holds (server.py
+      // _approve_ticks_check refuses another version, and any line style the record does not hold)
+      ticks_version: tkVer,
       // Taken from the ROWS THE PANEL IS SHOWING, like quantity_overrides
       // above and for the same reason: the old builder re-derived the pools
       // from state.result.styles, which knows nothing about chain labels, so
@@ -15624,7 +16884,7 @@ async function approveRun() {
       extra_items: [
         ...state.extraItems.map(it => ({
           ...it,
-          unit_price: parseFloat(store.getItem(priceKey(it.label)) || "") || null,
+          unit_price: flIsRowLabel(it.label) ? null : (parseFloat(store.getItem(priceKey(it.label)) || "") || null),
         })),
         // Sub-items ride the extra_items lane: they are quantities that are
         // not measured linework, which is exactly what that lane is for. See
@@ -15640,6 +16900,8 @@ async function approveRun() {
       // than one that displaces a caveat the panel also prints on screen.
       // approveNotesDropped() below reports the trim if one happens.
       notes: approveNotes(),
+      // the job's flooring estimate version this tab holds: a stale tab is refused (ruling H)
+      fl_est_version: typeof flJobFor === "function" && flJobFor() ? flJobFor().version : null,
       prices: Object.fromEntries(
         [...Object.values(labels), ...state.chainLabels.values()]
           .map(l => [l, parseFloat(store.getItem(priceKey(l)) || "") || 0])
@@ -15697,10 +16959,29 @@ async function approveRun() {
         cfLeftNote(other ? `the job's rows are in page ${full.rows_page + 1}'s takeoff` : why409.replace(/\.$/, ""), said409);
         return setStatus(said409, "err");
       }
+      // THE SERVER ASKS FIRST (critic empty-2, MAJOR-1): the approval in the bid was made on an earlier version and this
+      // approve did not carry the person's yes - the page had not heard of it (it was put back from another tab).
+      // Nothing was written. The line shows from here on, and the next press asks the question
+      if (r.status === 409 && e && e.detail && typeof e.detail === "object" && e.detail.earlier) {
+        if (state.job === job0 && state.page === page0 && state.gen === gen0 && state.result) {
+          state.tkEarlier = e.detail.earlier;
+          renderItemized();
+        }
+        return setStatus(typeof e.detail.say === "string" ? e.detail.say : TK_EARLIER_PRESS, "err");
+      }
       // FastAPI's validation errors arrive as a LIST OF OBJECTS, and
       // String([{...}]) is "[object Object]" - which is what an operator was
       // shown when an approve was rejected. Say which field and why (approveFailText).
       why = approveFailText(r.status, e);
+      // THE SERVER SAYS THIS PAGE'S TAKEOFF IS NOT ITS RECORD (server.py _approve_ticks_check: another tab or another
+      // computer changed it, and this tab had made no tick since). The tab is then as one whose tick was refused: it
+      // holds no version of the record, sends no tick and no approve, and says so above the rows until a reload
+      if (r.status === 409 && e && e.detail === TK_STALE_SERVER
+          && state.job === job0 && state.page === page0 && state.gen === gen0 && state.result) {
+        tk.ver.delete(tkKey(job0, page0));
+        state.tkNote = TK_STALE_SERVER + " " + TK_STALE_NOTE;
+        renderItemized();
+      }
     } catch (err) { /* not JSON: the plain sentence for the status stands */ }
     return setStatus(why, "err");
   }
@@ -15715,6 +16996,11 @@ async function approveRun() {
   // approved again: the server says whether this page's approval stands now (an approve that fixed nothing keeps the
   // note: critic 22, RISK-1)
   approvalOutdated(state.gen).catch(() => {});
+  // ...and an approval made on an earlier version is replaced by this one: its line goes
+  if (state.tkEarlier && state.job === job0 && state.page === page0 && state.gen === gen0) {
+    state.tkEarlier = null;
+    renderItemized();
+  }
   // Report the round trip. A correction that silently failed to land is the
   // whole defect this change exists to close, so an override that matched no
   // row turns the line red rather than passing unmentioned.
@@ -15724,6 +17010,9 @@ async function approveRun() {
   // the page's old Earthwork calculator work left the bid with this approve: said once, first (critic legacy-5, RISK-4)
   setStatus((j.ew_said ? j.ew_said + " · " : "") + `exported ${nWord(j.exported, "element")}` +
     (j.items ? ` · ${nWord(j.items.length, "item")} itemized` : "") +
+    // the approval made on an earlier version that this one replaced: kept, and how to get it back
+    (j.replaced ? ` · it replaced the approval made on an earlier version (${j.replaced.holds || "its rows"}), which is kept:`
+      + ` "Put back earlier approval" brings it back` : "") +
     // Disclosure, not a boast: the export carries the components' money and
     // their parent's name, but the server drops the structured parent link,
     // so say which export is the full-fidelity one instead of letting a
@@ -15752,6 +17041,72 @@ async function approveRun() {
   const bl = $("bidsheetLink");
   if (bl) { bl.href = bsCsvUrl(); bl.hidden = false; }
 };
+
+// WITHDRAW-BEGIN --------------------------------------------------------------
+// WITHDRAW A PAGE'S APPROVAL (coordinator ruling, 2026-10-03; server.py withdraw_approval). An approve with nothing in the
+// takeoff is refused, so this is how a page leaves the bid: asked first, then the server takes the page's export out of
+// the bid sheet and the report and records who and when; the takeoff on screen is not touched.
+async function wdClick() {
+  const job0 = state.job, page0 = state.page, gen0 = state.gen;
+  if (!job0) return;
+  if (!confirm(`Withdraw page ${page0 + 1}'s approval?
+
+The bid sheet and the report will no longer count this page. `
+      + "The takeoff on screen stays as it is; approve the page again to put it back in the bid.")) return;
+  let r = null, d = null;
+  try {
+    r = await fetch(`/api/job/${job0}/page/${page0}/withdraw`, { method: "POST" });
+    d = await r.json().catch(() => null);
+  } catch (e) {
+    return setStatus("The approval was not withdrawn: the server did not answer. Try again.", "err");
+  }
+  if (!r.ok) return setStatus((d && typeof d.detail === "string") ? d.detail
+    : `The approval was not withdrawn (error ${r.status}).`, "err");
+  if (state.job !== job0 || state.page !== page0 || state.gen !== gen0) return;
+  $("withdrawBtn").hidden = true;
+  $("dlLink").hidden = true;                            // this page's export is gone
+  if (state.tkEarlier) { state.tkEarlier = null; renderItemized(); }   // ...and with it the earlier version's approval
+  if (!(d && d.approved && d.approved.length)) {        // no page of the job approved: no report, no bid sheet to get
+    $("reportLink").hidden = true;
+    if ($("bidsheetLink")) $("bidsheetLink").hidden = true;
+  }
+  setStatus(`page ${page0 + 1}'s approval was withdrawn: the bid sheet and the report no longer count it`
+    + ((d && d.approved && d.approved.length) ? "" : " (no page of this job is approved now)"));
+  approvalOutdated(state.gen).catch(() => {});
+}
+if ($("withdrawBtn")) $("withdrawBtn").onclick = () => wdClick();
+// PUT AN EARLIER APPROVAL BACK (critic empty-2, MAJOR-1; server.py put_back_approval). An approval made on an earlier
+// version that an approve here replaced - or that was withdrawn - is kept by the server; this puts it back in the bid as
+// it was, asked first. The button shows only while the server keeps one for this page (approvalOutdated: `kept`). The
+// takeoff on screen is not touched; the page then says again that it was approved on an earlier version.
+async function pbClick() {
+  const job0 = state.job, page0 = state.page, gen0 = state.gen;
+  const k = state.tkKept;
+  if (!job0 || !k) return;
+  if (!confirm(tkPutBackAskWords(k, page0, $("withdrawBtn") && !$("withdrawBtn").hidden))) return;
+  let r = null, d = null;
+  try {
+    r = await fetch(`/api/job/${job0}/page/${page0}/putback`, { method: "POST" });
+    d = await r.json().catch(() => null);
+  } catch (e) {
+    return setStatus("The earlier approval was not put back: the server did not answer. Try again.", "err");
+  }
+  if (!r.ok) return setStatus((d && typeof d.detail === "string") ? d.detail
+    : `The earlier approval was not put back (error ${r.status}).`, "err");
+  if (state.job !== job0 || state.page !== page0 || state.gen !== gen0) return;
+  state.tkKept = null;
+  $("putBackBtn").hidden = true;
+  state.tkEarlier = (d && d.earlier && typeof d.earlier === "object") ? d.earlier : null;
+  renderItemized();
+  const a = $("dlLink");
+  a.href = url(`/api/job/${job0}/page/${page0}/elements`); a.hidden = false;
+  $("reportLink").href = bsReportUrl(); $("reportLink").hidden = false;
+  if ($("bidsheetLink")) { $("bidsheetLink").href = bsCsvUrl(); $("bidsheetLink").hidden = false; }
+  setStatus(`page ${page0 + 1}'s earlier approval is back in the bid: ${k.holds || "as it was approved"}`);
+  approvalOutdated(state.gen).catch(() => {});
+}
+if ($("putBackBtn")) $("putBackBtn").onclick = () => pbClick();
+// WITHDRAW-END ----------------------------------------------------------------
 
 // ---------- legend sheet vocabulary ----------
 // The TYPED-PATH / search-this-document route. Ends in legendApply, the same
@@ -16251,6 +17606,17 @@ function draw() {
       ctx.lineWidth = sel ? 4.5 / k
         : msel ? 3.2 / k
         : Math.max(hot ? wPt * 2.0 : (gc ? wPt * 3.0 : wPt), gc ? 3.0 / k : 1.4 / k);
+      // SHOWN, NOT IN THE TAKEOFF (coordinator ruling, 2026-10-03). Since the takeoff starts empty the drawing shows the
+      // engine's picks before anything is added, and a full-colour line must never be read as counted: a family that is
+      // drawn but not in the takeoff is MUTED - faint, thinner than its plotted weight, and without the group paint -
+      // until it is added; an added family draws in its full colour and weight. Selection still lights it (it is the
+      // pointer, said by the line card); a hover still gets its halo under the muted line.
+      const muted = !ghost && !sel && !msel && !state.include.get(sid);
+      if (muted) {
+        ctx.globalAlpha = Math.min(ctx.globalAlpha, 0.35);
+        ctx.lineWidth = Math.max(wPt * 0.6, 0.8 / k);
+        if (gc) ctx.strokeStyle = chainCssColor(ch, st2);
+      }
       // selection recolors but keeps the true pattern - a solid magenta
       // overlay reads as "this line became solid", which it has not
       const pts = ch.points;
@@ -17130,7 +18496,9 @@ function handleCanvasClick(e) {
     // used to extend the ruler (audit D31). Backspace and one Esc do the
     // same; the context menu is suppressed while the ruler is armed.
     if (e.button === 2) { measureDropLast(); return; }
-    state.measurePts.push([px, py]);
+    // the same snap the ring showed: a drawn line or corner within the usual radius, else the click itself
+    const mh = snapToChain(px, py, null);
+    state.measurePts.push(mh ? [mh.point[0], mh.point[1]] : [px, py]);
     updateMeasureInfo();
     draw();
     return;
@@ -17430,6 +18798,7 @@ const SNAP_RADII = {              // tool -> [pick px, vertex px]
   drawline: [SNAP_PX, SNAP_VERTEX_PX],
   extend:   [SNAP_PX, SNAP_VERTEX_PX],
   merge:    [24, 7],
+  measure:  [SNAP_PX, SNAP_VERTEX_PX],   // the ruler's ends land ON the drawn line or corner (CRITIC-scale-2 MINOR 8)
 };
 const SNAP_TOOLS = new Set(Object.keys(SNAP_RADII));
 
@@ -17594,6 +18963,10 @@ function snapHover(px, py) {
       msg = `spur \u2014 a new ${fmtQty(add)} line off chain ${anc.chain_id}`
         + (hit ? `, joined to chain ${hit.chain_id} here` : "");
     }
+  } else if (state.tool === "measure") {
+    hit = snapToChain(px, py, null);
+    if (hit) msg = hit.isVertex ? `measure: snaps to a corner of chain ${hit.chain_id}`
+                                : `measure: snaps onto chain ${hit.chain_id}`;
   } else if (state.tool === "merge" && sel) {
     hit = snapToChain(px, py, sel.chain_id);
     if (hit) {
@@ -18420,9 +19793,9 @@ function updateMeasureInfo() {
   const sc = state.result && state.result.scale;
   info.innerHTML = "";
   const read = document.createElement("span");
-  read.textContent = sc
-    ? `${(pt / 72 * sc.ft_per_paper_inch).toFixed(1)} ft`
-    : fmtLen(pt);
+  // the paper distance between the picked points beside it, so the person sees what the scale multiplies
+  read.textContent = (sc ? `${(pt / 72 * sc.ft_per_paper_inch).toFixed(1)} ft` : fmtLen(pt))
+    + ` (${(pt / 72).toFixed(3)} in on paper)`;
   info.appendChild(read);
   // Calibrate the sheet from this line. A foundation contractor's
   // feedback 2026-08-27, BLOCKED): "The selected line should be 24' but is
@@ -18436,13 +19809,45 @@ function updateMeasureInfo() {
   if (state.result && pt > 1e-6) {
     const sep = document.createElement("span");
     sep.className = "cal-sep";
-    sep.textContent = " · should be ";
+    // S3: this IS the way to set the scale by a length you know, and it says so
+    sep.textContent = " · set the scale by a length you know: it should be ";
     const inp = document.createElement("input");
     inp.type = "number"; inp.step = "any"; inp.min = "0";
     inp.className = "cal-ft"; inp.name = "calibrate-ft";
     inp.placeholder = "true ft";
     const go = document.createElement("button");
     go.className = "mini"; go.textContent = "set scale";
+    // the same length checks the scale in force: when it agrees (2 %), Confirm is offered right here (S3)
+    const conf = document.createElement("button");
+    conf.className = "mini cal-confirm"; conf.hidden = true;
+    const says = document.createElement("span");
+    says.className = "cal-says";
+    const agreeNow = () => {
+      const trueFt = parseFloat(inp.value);
+      const inF = sc && +sc.ft_per_paper_inch > 0 ? +sc.ft_per_paper_inch : null;
+      const meas = trueFt > 0 ? trueFt / (pt / 72) : null;
+      const ok = inF && meas && svAgree(meas, inF);
+      conf.hidden = !ok;
+      says.textContent = inF && meas
+        ? (ok ? ` your measure: 1 in = ${svNum(meas)} ft, agrees ` : ` your measure: 1 in = ${svNum(meas)} ft, the sheet reads ${svNum(inF)} `)
+        : "";
+      if (ok) {
+        conf.textContent = `Confirm ${svScale(inF)}`;
+        conf.title = `Your measure (1 in = ${svNum(meas)} ft) agrees with the scale in force (${svScale(inF)}, within 2 %): `
+          + "confirm it for this sheet.";
+      }
+    };
+    const noteNow = () => {
+      const trueFt = parseFloat(inp.value);
+      if (trueFt > 0 && typeof svNoteMeasure === "function")
+        svNoteMeasure(trueFt / (pt / 72), `${trueFt}' over a measured line`, state.measurePts, trueFt);
+    };
+    conf.onclick = () => {
+      const trueFt = parseFloat(inp.value);
+      if (!(trueFt > 0)) return;
+      svConfirm({ ft: trueFt / (pt / 72), true_ft: trueFt, points: state.measurePts.map(q => [+q[0], +q[1]]) })
+        .then((done) => { if (done) updateMeasureInfo(); });
+    };
     go.title = "Derive the page scale from this line: the feet you typed "
       + "divided by the inches of paper the line spans.";
     const commit = () => {
@@ -18455,20 +19860,25 @@ function updateMeasureInfo() {
           + `feet you typed.`);
         return;
       }
-      applyTypedScale(ft, `${trueFt}' over a measured line`);
-      setStatus(`scale CALIBRATED: this line = ${trueFt} ft, so 1 inch = `
-        + `${ft.toFixed(2)} ft. Every quantity on this sheet recalculated. `
-        + `The line now reads ${trueFt} ft - confirm that, then spot-check `
-        + `one other known dimension.`);
-      updateMeasureInfo();   // the reading flips to the typed feet - the
-                             // operator's own confirmation the math landed
+      // recorded on the server first (S3: how=calibrated); nothing changes if it is refused
+      scalePersonSet("calibrated", ft, `${trueFt}' over a measured line`).then((done) => {
+        if (!done) return;
+        setStatus(`scale CALIBRATED: this line = ${trueFt} ft, so 1 inch = `
+          + `${ft.toFixed(2)} ft. Every quantity on this sheet recalculated. `
+          + `The line now reads ${trueFt} ft - confirm that, then spot-check `
+          + `one other known dimension.`);
+        updateMeasureInfo();   // the reading flips to the typed feet - the
+                               // operator's own confirmation the math landed
+      });
     };
     go.onclick = commit;
+    inp.oninput = agreeNow;
+    inp.onchange = noteNow;
     inp.onkeydown = (e) => {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
       e.stopPropagation();   // keep review shortcuts off a focused input
     };
-    info.append(sep, inp, document.createTextNode(" ft "), go);
+    info.append(sep, inp, document.createTextNode(" ft "), says, go, conf);
   }
   info.hidden = false;
 }
@@ -19268,15 +20678,22 @@ function hotChainSet(cid) {
 // state.include keeps its meaning untouched: it is what the takeoff counts,
 // and it is the ONLY thing every quantity, the itemized rows, the CSV and the
 // approve export read. Nothing below this line touches a number.
+//
+// SINCE THE TAKEOFF STARTS EMPTY (2026-10-03) the eye's default is the tick OR the engine's pick (state.tkSeed): after
+// Detect the drawing shows what it always showed - the styles the engine picks - while nothing is in the takeoff yet,
+// so the person sees what was found before adding it. A style they add is shown too. One rule for every page: a page
+// approved or saved on an earlier version starts empty like any other, and looks like it.
+function famVisDefault(sid) {
+  return !!state.include.get(sid) || !!(state.tkSeed && state.tkSeed.get(sid));
+}
 function famVis(sid) {
-  return state.vis.has(sid) ? !!state.vis.get(sid)
-                            : !!state.include.get(sid);
+  return state.vis.has(sid) ? !!state.vis.get(sid) : famVisDefault(sid);
 }
 function famVisOverridden(sid) {
-  return state.vis.has(sid) && !!state.vis.get(sid) !== !!state.include.get(sid);
+  return state.vis.has(sid) && !!state.vis.get(sid) !== famVisDefault(sid);
 }
 function setFamVis(sid, on) {
-  if (!!on === !!state.include.get(sid)) state.vis.delete(sid);
+  if (!!on === famVisDefault(sid)) state.vis.delete(sid);
   else state.vis.set(sid, !!on);
 }
 // FAM-VIS-END ----------------------------------------------------------------
@@ -19384,9 +20801,9 @@ function famCreate(name, donor, undoLabel, moveIds) {
   state.seedLabels.set(st.style_id, "");   // nothing seeded it; it was typed
   // ticked ON: an operator who just named a family means to count it. Written
   // straight into the map, NOT through setInclude - setInclude records the
-  // tick in the browser store against includeKey(st), and a per-page record
-  // for a style_id that only exists while this page is open would be read
-  // back by memApply on a LATER result that happens to reach the same id.
+  // tick against the style, and a record for a style_id that only exists
+  // while this page is open would land on a LATER result that happens to
+  // reach the same id (the server keeps no record of a family made here).
   state.include.set(st.style_id, true);
   return st;
 }
@@ -20510,7 +21927,9 @@ function fmtLen(pt) {
 // into #statusBar below <main> (index.html, CRITIQUE fix 4); this function
 // keeps its name, its (text, cls) signature and every one of its call sites.
 // Nothing here looks up a parent, so the move is invisible to all of them.
-function setStatus(t, cls) { const el = $("status"); el.textContent = t; el.className = "status " + (cls || ""); }
+// The line clips (one row, by design: the status bar never reflows), so a sentence longer than the room it is given
+// - a refused Approve says why in a full sentence - is also the line's hover text, whole.
+function setStatus(t, cls) { const el = $("status"); el.textContent = t; el.title = t == null ? "" : String(t); el.className = "status " + (cls || ""); }
 
 // ---------- the status bar's PERSISTENT half ------------------------------
 // The sheet facts used to be pushed through setStatus() by loadResult(), so
@@ -20549,11 +21968,24 @@ function sheetFactsText() {
   if (!state.result) return "";
   const sc = state.result.scale;
   const nsug = sc ? 0 : scaleSuggestions().length;
+  // the scale verdict's one sentence (S3), when the server has said one and it describes the screen
+  const _v = state.result._verdict || null;
+  const _waitNow = !!state.result._verdictWaiting;
+  const svw = typeof svStatusWords === "function" && !(typeof svScreenOwn === "function" && svScreenOwn(sc, _v))
+    && (_v || _waitNow) ? svStatusWords(_v, svOpt()) : null;
+  if (!sc && svw && (_waitNow || (_v && _v.state === "CONFLICT") || (_v && _v.state === "NONE")))
+    return `${nWord(state.result.chains.length, "line")} in ${nWord(state.result.styles.length, "style")} · ${svw}`;
+  // a person's scale names how it was set, as the record says it (a reload rebuilds the screen's object as "typed")
+  const _how = _v && _v.person && +_v.person.value > 0 && !(typeof svScreenOwn === "function" && svScreenOwn(sc, _v))
+    ? ({ typed: "typed", calibrated: "measured", picked: "chosen", confirmed: "checked by measuring",
+         accepted: "accepted" })[_v.person.how] : null;
+  // "matches the drawn bar" only once the full verdict says two kinds agree (never while it waits)
+  const _agreeOk = sc && sc.agrees === true && (!_v || _v.state === "CONFIRMED");
   return `${nWord(state.result.chains.length, "line")} in ${nWord(state.result.styles.length, "style")}`
-    + (sc ? ` · scale ${scaleShort(sc)} (${sc.source}`
-        + (sc.agrees === true ? ", matches the drawn bar"
+    + (sc ? ` · scale ${scaleShort(sc)} (${_how || sc.source}`
+        + (_agreeOk ? ", matches the drawn bar"
           : sc.agrees === false ? `, but the drawn bar says ${cfScaleTxt(sc.bar_ft_per_paper_inch)} ft/in`
-          : "") + ")"
+          : "") + ")" + (svw ? ` — ${svw}` : "")
       : nsug ? ` · no scale set — ${nsug} unchecked reading`
           + `${nsug === 1 ? "" : "s"} offered, none chosen`
       : " · no scale set — the engine read none");
@@ -20610,20 +22042,40 @@ function renderZoomFact() {
 // shows pt and prices nothing (same rule as the structure tool).
 // NO TRUTH DATA YET: the corpus is civil. The first real flooring plans with
 // the client's own marked-up takeoff are what score these numbers.
-SECTIONS.push(["flHead", ["flHint", "flTypes", "flBody", "flRows", "flActions"]]);
+SECTIONS.push(["flHead", ["flHint", "flTypes", "flBody", "flRows", "flEst", "flActions"]]);
 {
   const head = $("flHead");
   head.querySelector("h2").onclick = () => {
     const closed = head.classList.toggle("closed");
-    for (const cid of ["flHint", "flTypes", "flBody", "flRows", "flActions"]) $(cid).hidden = closed;
+    for (const cid of ["flHint", "flTypes", "flBody", "flRows", "flEst", "flActions"]) $(cid).hidden = closed;
   };
 }
 const FL_PALETTE = ["#4e9af1", "#f2a33a", "#4fc27a", "#e05c8a", "#b58cf5", "#e8d44d", "#49c7c9", "#c98b5a"];
 const FL_DEFAULT_TYPES = ["Carpet", "LVP", "Tile", "Hardwood"];
 const FL_UNASSIGNED = "#9aa3b2";
 const FL_CLOSE_COLOR = "#ff5d3b";
-const FL_LABEL_RX = /^(Flooring|Base\/molding|Waste|Wall area|Transition strips|Walls) \u2014 /;
-const FL_TOOLS = ["fl-pick", "fl-draw", "fl-close", "fl-deduct", "fl-edit"];
+// the base overlay: a door opening as drawn, and an edge left out of the base
+const FL_OPEN_COLOR = "#f59e0b";
+const FL_BASE_OFF_COLOR = "#e11d48";
+const FL_LABEL_RX = /^(Flooring|Base\/molding|Integral base|Waste|Wall area|Transition strips|Walls) \u2014 /;
+const FL_TOOLS = ["fl-pick", "fl-draw", "fl-close", "fl-deduct", "fl-edit", "fl-base", "fl-open", "fl-wall", "fl-stroke"];
+// a wall DRAWN by hand: wall for picks only (not an opening, not a transition, not a takeoff line, in no export)
+const FL_WALL_LINE_COLOR = "#7c3aed";
+// WHAT A FLOOR TYPE IS MADE OF (2026-10-02). The kind decides ONE thing: the
+// waste allowance shown as the DEFAULT. The defaults are the two a flooring
+// contractor stated - "We add on about 7% for waste ... Ceramic tile, we add
+// on 15%", and squares "7 to 10%" - and nothing else: every other kind starts
+// with waste NOT SET, and the row says so (never a silent 0, never a guess).
+// "" = kind not set, which is what every type saved before this has. The
+// kind NEVER changes the unit a type is priced in (critic 1, B1: a kind
+// switch silently moved the price from per-SF to per-SY, -89 %): that is the
+// type's own BID UNIT, chosen by the estimator (flSetUnit).
+const FL_KINDS = [["", "kind not set"], ["roll", "roll goods (carpet)"], ["sheet", "sheet vinyl"],
+                  ["square", "square goods / carpet tile"], ["ceramic", "ceramic tile"],
+                  ["wood", "wood"], ["other", "other"]];
+const FL_WASTE_DEFAULTS = { square: 7, ceramic: 15 };
+const FL_SY_KINDS = ["roll", "sheet"];
+const FL_SY_PER_SF = 1 / 9;
 // WHAT FLOORING STOPS AT. The engine lists every fixture-sized cell the
 // non-wall linework encloses inside a room (rooms.room_objects) and names
 // it from its CAD layer and size; this table says which kinds come out of
@@ -20650,37 +22102,121 @@ const flFmt = (v, d = 0) => (v === null || v === undefined || !Number.isFinite(v
   ? "?" : v.toLocaleString(undefined, { maximumFractionDigits: d });
 const flFtIn = (ft) => {
   if (!Number.isFinite(ft)) return "?";
-  const f = Math.floor(ft), i = Math.round((ft - f) * 12 * 8) / 8;
+  let f = Math.floor(ft), i = Math.round((ft - f) * 12 * 8) / 8;
+  // 2.9993 ft rounds to 12 inches: carry it (it printed 2'-12")
+  if (i >= 12) { f += 1; i -= 12; }
   const w = Math.floor(i), fr = i - w;
   const frs = fr ? { 0.125: " 1/8", 0.25: " 1/4", 0.375: " 3/8", 0.5: " 1/2", 0.625: " 5/8", 0.75: " 3/4", 0.875: " 7/8" }[fr] || "" : "";
   return `${f}'-${w}${frs}"`;
 };
 
+// A floor type of the JOB's estimate (ruling H): one list per job and per account, on the server.
+//   id        stable for the type's life; everything is keyed by it, never by a label
+//   unit      its BID UNIT: "SF" (the default) or "SY", chosen by the estimator; its base row is LF
+//   rate_cents / base_rate_cents   whole cents in the bid unit / per LF; null = no price
+//   waste_pct null = NOT SET (0 is a typed zero, a decision); waste_by "default" or "typed"
+//   pack / base_pack   sold in packs: {size, unit, word} - the order rounds UP to whole packs and
+//             prints "(N Boxes)" / "(N Cartons)"; none = up to a whole bid unit
+//   no_charge / base_no_charge   the line is priced "No charge" on purpose
+//   integral  its base is integral base (sheet goods turned up the wall)
+//   mfr / colour / style / base_code / base_spec   plain text for the estimate's descriptions
+// (`color` is the swatch on the sheet.)
+function flNewId() { return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function flNewType(name, i, extra) {
-  return Object.assign({ name, color: FL_PALETTE[i % FL_PALETTE.length], sf_price: 0, lf_price: 0, waste_pct: 0 }, extra || {});
+  const t = Object.assign({ id: flNewId(), name, color: FL_PALETTE[i % FL_PALETTE.length], unit: "SF",
+                            rate_cents: null, base_rate_cents: null, rate_note: null,
+                            kind: "", waste_pct: null, waste_by: null, integral: false,
+                            mfr: "", colour: "", style: "", base_code: "", base_spec: "",
+                            pack: null, base_pack: null, no_charge: false, base_no_charge: false }, extra || {});
+  if (t.waste_pct !== null && t.waste_pct !== undefined && t.waste_pct !== "") t.waste_pct = +t.waste_pct;
+  return t;
+}
+// the waste in force for a type: {pct, by} or null when not set
+function flWaste(t) {
+  if (!t || t.waste_pct === null || t.waste_pct === undefined || t.waste_pct === "") return null;
+  const v = +t.waste_pct;
+  return Number.isFinite(v) && v >= 0 ? { pct: v, by: t.waste_by || "typed" } : null;
+}
+// a kind chosen: its stated default fills the waste unless a person typed one.
+// The bid unit is NOT touched.
+function flSetKind(t, kind) {
+  return flAct({ kind: "type_set", id: t.id, field: "kind", value: FL_KINDS.some(k => k[0] === kind) ? kind : "" });
+}
+// the unit a type's flooring is counted and priced in: its own bid unit
+function flUnit(t) { return t && t.unit === "SY" ? "SY" : "SF"; }
+// SF -> the type's unit
+function flInUnit(t, sf) { return flUnit(t) === "SY" ? sf * FL_SY_PER_SF : sf; }
+// the price-book key of one of a type's rows: the type id, the row, the unit
+function flPriceKey(t, row) { return `fl:${t.id}:${row}:${row === "base" ? "LF" : flUnit(t)}`; }
+// MONEY IS WHOLE CENTS (ruling I): a type carries rate_cents / base_rate_cents in its bid unit; this
+// is for SHOWING a rate only - every amount comes from the server (takeoff_engine/fl_job.py)
+function flGetPrice(t, row) {
+  const c = row === "base" ? t && t.base_rate_cents : t && t.rate_cents;
+  return Number.isInteger(c) && c > 0 ? c / 100 : null;
+}
+// whole cents from what was typed, exactly - no float: "49.75" -> 4975, "5.555" -> 556 (half up)
+function flCents(v) {
+  let t = String(v === null || v === undefined ? "" : v).trim().replace(/^\$\s*/, "");
+  // a comma is a thousands separator only in a well-formed group: "1,080" and "12,345.50" are read, "49,75" is
+  // refused - never $4,975 (critic 3, minor 3; the server's fl_job.cents is the same rule)
+  if (t.includes(",")) { if (!/^\d{1,3}(,\d{3})+(\.\d*)?$/.test(t)) return null; t = t.replace(/,/g, ""); }
+  const m = /^(\d{0,9})(?:\.(\d*))?$/.exec(t);
+  if (!m || (m[1] === "" && !m[2])) return null;
+  const frac = (m[2] || "") + "000";
+  let c = (+(m[1] || 0)) * 100 + (+frac.slice(0, 2));
+  if (+frac[2] >= 5) c += 1;
+  return c > 0 && c <= 1e9 ? c : null;
+}
+function flMoney(c) {
+  if (!Number.isInteger(c)) return "";
+  const n = Math.abs(c);
+  return (c < 0 ? "-" : "") + Math.floor(n / 100).toLocaleString("en-US") + "." + String(n % 100).padStart(2, "0");
+}
+// a typed price: kept on THIS type of THIS job's estimate only (ruling H). Blank or 0 = no price,
+// everywhere at once; nothing remembers it by name (critic 2, B1)
+function flSetPrice(t, row, v) {
+  return flAct({ kind: "type_set", id: t.id, field: row === "base" ? "base_rate" : "rate", value: String(v == null ? "" : v).trim() });
+}
+// CHANGE THE BID UNIT. The price is converted exactly ($/SY = 9 x $/SF) and
+// the row says once what it was; the price book entry moves to the new unit.
+// Returns the sentence for the status line.
+// CHANGE THE BID UNIT (ruling I): the rate converts ($/SY = 9 x $/SF) and is ROUNDED to whole cents,
+// so the amount can move by a little; the row shows the old and new rate and amount at that moment.
+function flSetUnit(t, unit) {
+  return flAct({ kind: "type_set", id: t.id, field: "unit", value: unit === "SY" ? "SY" : "SF" });
+}
+// manufacturer / colour / style as one short phrase, "" when none typed
+function flSpec(t) {
+  return [t && t.mfr, t && t.colour, t && t.style].map(v => String(v || "").trim()).filter(Boolean).join(" / ").slice(0, 40);
+}
+// THE ORDER of a type, for its takeoff row (a quantity; the estimate's own quantity is the server's):
+// net (in its unit) + waste, rounded UP to a whole unit when its waste is set; = net when it is not.
+function flOrder(t, net_sf) {
+  const net = flInUnit(t, net_sf);
+  const w = flWaste(t);
+  if (!w) return { net, order: net, waste_pct: null, rounded: false };
+  const raw = net * (1 + w.pct / 100);
+  return { net, order: Math.ceil(raw - 1e-9), waste_pct: w.pct, rounded: true, raw };
+}
+// a price key a takeoff row carries (flItems) wins over its label in the book
+function flPriceKeyOfLabel(label) { return null; }
+// the takeoff rows the server makes for the flooring (fl_rooms.items): priced in the estimate, never by the book
+function flIsRowLabel(label) {
+  return /^(Flooring|Base\/molding|Integral base|Waste|Wall area|Transition strips) \u2014 /.test(String(label == null ? "" : label));
 }
 function flSync() {
   if (!state.fl || state.fl.result !== state.result) {
-    state.fl = { result: state.result, types: FL_DEFAULT_TYPES.map((n, i) => flNewType(n, i)),
-                 rooms: [], closures: [], seq: 1, hot: null, busy: false, drawPts: [],
-                 hover: null, closeDraft: null, lastType: 0,
-                 // the outline being reshaped by hand: {room, drag, hover}
-                 edit: null,
-                 // a ceiling height for rooms whose label carries none (typed)
-                 default_ceiling_ft: null,
-                 // wall line types by class {style_id: class}; faces per wall
-                 // (1 or 2, null = as measured); whether the centreline rows
-                 // go into the takeoff
-                 wallClass: {}, wallFaces: null, wallRows: false, _faceCache: null,
-                 // the line types showing at the last room pick - the walls
-                 // the picks were made with, put back after a reload
-                 wallStyles: null,
-                 // which kinds of object come out of the flooring by default
-                 deductDefaults: Object.assign({}, FL_DEDUCT_DEFAULTS) };
+    // THE PANEL MIRRORS THE JOB'S DOCUMENT (ruling P): its rooms, types and figures are the server's,
+    // read with GET /flooring and replaced by the reply of every act. Nothing here is saved by itself.
+    state.fl = { result: state.result, types: [], rooms: [], closures: [], wallLines: [], hot: null, busy: false, drawPts: [],
+                 hover: null, closeDraft: null, lastType: 0, edit: null, default_ceiling_ft: null,
+                 wallClass: {}, wallFaces: null, wallRows: false, _faceCache: null, wallAdd: [], wallDrop: [],
+                 wallStyles: null, deductDefaults: Object.assign({}, FL_DEDUCT_DEFAULTS), zoneScales: [],
+                 page: { totals: [], items: [], transitions: { transitions: [], open: 0 } }, mirrored: false, rescaleOffer: null };
     if (FL_TOOLS.includes(state.tool)) state.tool = null;
     $("flPanel").hidden = true;
     $("flResult").textContent = "";
-    flApplySaved();
+    if (flJobFor()) flMirror(true); else flJobLoad();
   }
   $("flBtn").hidden = !state.result;
   return state.fl;
@@ -20689,27 +22225,121 @@ function flSync() {
 // what comes out of a room's flooring: the objects ticked to deduct (tubs
 // and showers by default) plus anything the operator clicked out
 function flDeductSf(r) {
-  let s = 0;
-  for (const o of (r && r.objects) || []) if (o.deduct) s += +o.area_sf || 0;
-  for (const d of (r && r.deductions) || []) s += +d.area_sf || 0;
-  return s;
+  return r && r.c && Number.isFinite(+r.c.deduct_sf) ? +r.c.deduct_sf : 0;
 }
 // the room's flooring area: wall to wall, less what the flooring stops at
 function flNetSf(r) {
-  if (!r || r.area_sf === null || r.area_sf === undefined) return null;
-  return Math.max(0, r.area_sf - flDeductSf(r));
+  return r && r.c && r.c.net_sf !== null && r.c.net_sf !== undefined ? +r.c.net_sf : null;
 }
 // the deductions in words: "tub 10.8 SF, shower 9.2 SF"
 function flDeductText(r) {
-  const parts = [];
-  for (const o of (r && r.objects) || []) if (o.deduct) parts.push(`${o.kind} ${flFmt(o.area_sf, 1)} SF`);
-  for (const d of (r && r.deductions) || []) parts.push(`${d.name || "clicked out"} ${flFmt(d.area_sf, 1)} SF`);
-  return parts.join(", ");
+  return (r && r.c && r.c.deduct_text) || "";
 }
-// wall footage for the base: the ring less the door openings on it
+// wall footage for the base (flBase has the parts)
 function flWallLf(r) {
-  if (!r || r.perim_lf === null || r.perim_lf === undefined) return null;
-  return Math.max(0, r.perim_lf - (r.openings_lf || 0));
+  return r && r.c && r.c.base_lf !== null && r.c.base_lf !== undefined ? +r.c.base_lf : null;
+}
+// how far point (x, y) is from segment a-b, and where along it (t 0..1)
+function flSegDist(a, b, x, y) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
+  let t = L2 ? ((x - a[0]) * dx + (y - a[1]) * dy) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return { d: Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)), t };
+}
+// a left-out run lies along an edge when both its ends sit within
+// FL_BASE_TOL pt of the edge's line (a geometry guard: an outline's corner
+// is placed to about a pt)
+const FL_BASE_TOL = 1.5;
+// the part of edge a-b a left-out run covers, as [lo, hi] pt along the edge, or null
+function flOffSpan(a, b, run) {
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (!(L > 0)) return null;
+  const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+  const off = (P) => Math.abs((P[0] - a[0]) * uy - (P[1] - a[1]) * ux);
+  const p = [run[0], run[1]], q = [run[2], run[3]];
+  if (off(p) > FL_BASE_TOL || off(q) > FL_BASE_TOL) return null;
+  const tp = (p[0] - a[0]) * ux + (p[1] - a[1]) * uy, tq = (q[0] - a[0]) * ux + (q[1] - a[1]) * uy;
+  const lo = Math.max(0, Math.min(tp, tq)), hi = Math.min(L, Math.max(tp, tq));
+  return hi > lo ? [lo, hi] : null;
+}
+// the pt of edge a-b a left-out run covers
+function flOffOverlap(a, b, run) { const sp = flOffSpan(a, b, run); return sp ? sp[1] - sp[0] : 0; }
+// the nearest outline edge to (x, y): {i, t (pt along it), d, L}
+function flNearestEdge(pts, x, y) {
+  let best = null;
+  for (let i = 0, n = pts.length; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!(L > 0)) continue;
+    const q = flSegDist(a, b, x, y);
+    if (!best || q.d < best.d) best = { i, t: q.t * L, d: q.d, L };
+  }
+  return best;
+}
+// a typed width: 3'-0", 3', 3' 6", 3'-6 1/2", 3.5, 36" -> feet, or null
+// a typed width WITH ITS UNIT: 3'-0", 3', 3' 6", 3'-6 1/2", 3 ft, 3.5 ft, 36", 36 in -> feet;
+// a bare number is refused (null) - "36" took a whole 13 ft wall out as 36 feet (critic 2, M7)
+function flParseFtIn(v) {
+  const t = String(v == null ? "" : v).trim().toLowerCase()
+    .replace(/[\u2032\u2019]/g, "'").replace(/[\u2033\u201d]/g, '"').replace(/\s+/g, " ");
+  if (!t) return null;
+  let m = /^(\d+(?:\.\d+)?)\s*(?:'|ft|feet|foot)\s*-?\s*(?:(\d+(?:\.\d+)?)(?:\s+(\d+)\/(\d+))?\s*(?:"|in|inch|inches)?)?$/.exec(t);
+  if (m) return +m[1] + (m[2] ? (+m[2] + (m[3] ? +m[3] / +m[4] : 0)) / 12 : 0);
+  m = /^(\d+(?:\.\d+)?)(?:\s+(\d+)\/(\d+))?\s*(?:"|in|inch|inches)$/.exec(t);
+  if (m) return (+m[1] + (m[2] ? +m[2] / +m[3] : 0)) / 12;
+  return null;
+}
+// THE OPENINGS OF A ROOM'S BASE. r.openings: [{x, y, w_pt, w_ft, by, why}]:
+//   x, y   where the opening sits (pt, on the outline)
+//   w_pt   the width the engine read: the door LEAF ("from the swing"), or
+//          the gap "as drawn" where it agrees with the leaf
+//          (rooms.opening_as_drawn)
+//   w_ft   a width the estimator typed: wins over w_pt
+//   by     "from the swing" | "as drawn" | "added by hand" | "gap closed by
+//          hand" (a cased opening the estimator closed for the fill: no base
+//          across it - an inference from "excluding the doorways"; remove it
+//          when the base runs across)
+// A room saved by the 2.0 build has no list: its doors come from its bridges.
+function flOpenings(r) {
+  if (Array.isArray(r && r.openings)) return r.openings;
+  return ((r && r.bridges) || []).map(b => {
+    const g = Array.isArray(b.g) && b.g.length === 4 ? b.g : [b.x0, b.y0, b.x1, b.y1];
+    return { x: (g[0] + g[2]) / 2, y: (g[1] + g[3]) / 2, w_pt: +b.w > 0 ? +b.w : +b.r, w_ft: null,
+             by: +b.w > 0 ? (b.w_by || "as drawn") : "from the swing", why: b.w_why || null };
+  });
+}
+// an opening's width in pt on this room (a typed width through the room's scale)
+function flOpeningPt(o, fpp) {
+  if (Number.isFinite(+o.w_ft) && +o.w_ft > 0 && fpp) return +o.w_ft / fpp;
+  return Number.isFinite(+o.w_pt) && +o.w_pt > 0 ? +o.w_pt : 0;
+}
+// THE BASE OF ONE ROOM: perimeter - openings = base. Every opening and every
+// left-out edge is an interval ALONG THE OUTLINE; the base loses their UNION,
+// so an opening on a left-out edge is never taken out twice, the base never
+// goes UP when an edge is left out (critic 1, minor 4b), and an opening never
+// takes out more than the edge it sits on. Feet per pt from the room's own
+// numbers (perim_lf / perim_pt), so a room measured at a view's own caption
+// stays at it. null without a scale.
+function flBase(r) {
+  return r && r.c && r.c.base ? r.c.base : null;
+}
+// the base in words, short (the CSV and the report keep 80 characters of a
+// note): "perimeter 103.0 - openings 9.0 (3) = base 94.0 LF"
+function flBaseText(r) {
+  const b = flBase(r);
+  if (!b) return "";
+  const nO = b.openings.filter(o => o.on_edge).length;
+  if (!nO && !b.off_runs && !(b.legacy && b.openings_lf > 0)) return "";
+  const parts = [`perimeter ${flFmt(b.ring_lf, 1)}`];
+  if (nO || (b.legacy && b.openings_lf > 0)) parts.push(`openings ${flFmt(b.openings_lf, 1)} (${nO || r.doors || 0})`);
+  if (b.off_runs) parts.push(`edges left out ${flFmt(b.off_lf, 1)}`);
+  return parts.join(" \u2212 ") + ` = base ${flFmt(b.lf, 1)} LF`;
+}
+// each opening in words: 3'-0" from the swing, 2'-11" as drawn
+function flOpeningsText(r) {
+  const b = flBase(r);
+  if (!b) return "";
+  return b.openings.map(o => `${flFtIn(o.w_lf)} ${o.by}${o.on_edge ? "" : " (not on the outline)"}${o.clipped ? " (cut to its edge)" : ""}${o.slid ? " (moved along its edge to fit)" : ""}`).join(", ");
 }
 // the ceiling height in force for a room, and where it came from: the
 // note in the room's own label ("9'-1 1/8\" CEILING"), a height the operator
@@ -20723,28 +22353,26 @@ function flCeiling(r, fl) {
 // opening at door height (the wall above a door is still wall). null when
 // there is no height or no scale.
 function flWallSf(r, fl) {
-  const c = flCeiling(r, fl);
-  if (!c || !r || r.perim_lf === null || r.perim_lf === undefined) return null;
-  const gross = r.perim_lf * c.ft;
-  const doors = Math.min(gross, (r.openings_lf || 0) * Math.min(c.ft, FL_DOOR_HT_FT));
-  return { gross, net: gross - doors, doors, ft: c.ft, by: c.by };
+  return r && r.c && r.c.wall ? r.c.wall : null;
 }
-// per floor type: SF, base LF, room count, waste SF at the type's
-// percentage, wall SF of its rooms; rooms with no type are their own row
-// at the end so they are never silently outside the takeoff
+// per floor type: net SF, base LF, room count, wall SF of its rooms, and
+// its ORDER in its bid unit (flOrder: net + waste, rounded up to a whole
+// unit when its waste is set); rooms with no type are their own row at the
+// end so they are never silently outside the takeoff. A type whose waste is
+// not set has waste_set false and order = net - never a silent 0 %.
 function flTotals(types, rooms, fl) {
-  const out = (types || []).map((t, i) => ({ i, name: t.name, color: t.color, sf: 0, lf: 0, rooms: 0,
-                                             waste_pct: +t.waste_pct || 0, waste_sf: 0, wall_sf: 0, wall_rooms: 0 }));
-  const un = { i: -1, name: "unassigned", color: FL_UNASSIGNED, sf: 0, lf: 0, rooms: 0, waste_pct: 0, waste_sf: 0, wall_sf: 0, wall_rooms: 0 };
-  for (const r of rooms || []) {
-    const t = Number.isInteger(r.type) && out[r.type] ? out[r.type] : un;
-    t.rooms += 1; t.sf += flNetSf(r) || 0; t.lf += flWallLf(r) || 0;
-    const w = flWallSf(r, fl);
-    if (w) { t.wall_sf += w.net; t.wall_rooms += 1; }
-  }
-  for (const t of out) t.waste_sf = t.sf * t.waste_pct / 100;
-  if (un.rooms) out.push(un);
-  return out;
+  // the server's per-type rows for this sheet, one per type of the estimate in its order (a sheet with no
+  // rooms yet has none on the server: each type then shows empty), the unassigned row last when it has rooms
+  const f = fl || state.fl;
+  const srv = (f && f.page && f.page.totals) || [];
+  const byId = new Map(srv.filter(t => t.i >= 0).map(t => [t.id, t]));
+  const out = ((types || (f && f.types)) || []).map((t, i) => Object.assign(
+    { i, id: t.id, name: t.name, color: t.color, unit: flUnit(t), kind: t.kind || "", integral: !!t.integral,
+      waste_set: !!flWaste(t), waste_pct: flWaste(t) ? flWaste(t).pct : 0, waste_by: flWaste(t) ? flWaste(t).by : null,
+      sf: 0, lf: 0, rooms: 0, wall_sf: 0, wall_rooms: 0, net: 0, sy: 0, order: 0 }, byId.get(t.id) || {}, { i }));
+  const un = srv.find(t => t.i < 0);
+  if (un && un.rooms) out.push(Object.assign({}, un, { color: FL_UNASSIGNED }));
+  return out.map(t => Object.assign(t, { rounded: !!t.waste_set }));
 }
 // TRANSITION STRIPS: a doorway two picked rooms share, where the floor
 // changes type. Each room's boundary carries the door bridges the fill
@@ -20764,117 +22392,24 @@ function flTotals(types, rooms, fl) {
 // thickness of the opening's midpoint. Two sides of different types = one
 // strip, the door's width; one side = a doorway to a room not picked yet.
 function flTransitions(rooms, types, closures) {
-  const out = [];
-  let open = 0;
-  const typed = (rooms || []).map((r, i) => ({ r, i }))
-    .filter(({ r }) => Number.isInteger(r.type) && types[r.type]);
-  if (!typed.length) return { transitions: out, open };
-  const openings = [];
-  const seen = new Map();          // opening key -> its record
-  const keyOf = (mx, my) => Math.round(mx / 3) + "," + Math.round(my / 3);
-  const put = (x0, y0, x1, y1, w, src, who) => {
-    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-    const k = keyOf(mx, my);                                     // the same doorway once
-    let o = seen.get(k);
-    if (!o) { o = { mx, my, w, src, listed: new Set() }; seen.set(k, o); openings.push(o); }
-    if (who !== undefined) o.listed.add(who);                    // a room that used this bridge
-  };
-  for (const { r, i } of typed)
-    for (const b of (r.bridges || [])) put(+b.x0, +b.y0, +b.x1, +b.y1, +b.r, "door", i);
-  for (const c of (closures || []))
-    if (Array.isArray(c) && c.length === 4) put(+c[0], +c[1], +c[2], +c[3], Math.hypot(c[2] - c[0], c[3] - c[1]), "closure");
-  const edgeDist = (pts, x, y) => {
-    let best = Infinity;
-    for (let i = 0, n = pts.length; i < n; i++) {
-      const a = pts[i], b = pts[(i + 1) % n];
-      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
-      let t = L2 ? ((x - a[0]) * dx + (y - a[1]) * dy) / L2 : 0;
-      t = Math.max(0, Math.min(1, t));
-      best = Math.min(best, Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)));
-    }
-    return best;
-  };
-  // pt: a wall's thickness on the sheet. A bridge is drawn on ONE face of
-  // the wall and the room on the other side runs its outline on the OTHER
-  // face: a house set's A2.1 primary-bath door sits on the bath's face at
-  // x = 1263 and the bedroom's outline on x = 1269.4, 6.3 pt away, and
-  // the sheet's wall faces are up to 8.2 pt apart (1280.4 / 1288.6). At 6
-  // the bedroom-to-bath strip was missed; 9 covers this sheet's walls and
-  // is still a fraction of any door width (a 2'-0" door is 24 pt at 1/4").
-  const TOL = 9;
-  for (const o of openings) {
-    // on this opening's side: the fill listed the bridge, or the outline
-    // runs within a wall's thickness of it (a record with no outline can
-    // only be matched by its bridges)
-    const sides = typed.map(({ r, i }) => {
-      const geo = r.pts && r.pts.length >= 3 ? edgeDist(r.pts, o.mx, o.my) : Infinity;
-      return { i, type: r.type, d: o.listed.has(i) ? 0 : geo };
-    }).filter(s => s.d <= TOL).sort((p, q) => p.d - q.d);
-    if (sides.length < 2) { open += 1; continue; }
-    const a = sides[0], b = sides.find(s => s.type !== a.type);
-    if (!b) continue;                      // the same floor runs through
-    const ta = Math.min(a.type, b.type), tb = Math.max(a.type, b.type);
-    out.push({ a: a.i, b: b.i, ta, tb, width_pt: o.w, src: o.src });
-  }
-  return { transitions: out, open };
+  const f = state.fl;
+  return (f && f.page && f.page.transitions) || { transitions: [], open: 0 };
 }
-// the takeoff rows, each with the rooms behind it: per type one SF row
-// (+ a waste row when a percentage is set) and one base LF row; one wall
-// area row for every room with a ceiling height; one transition-strip row
-// per pair of types that meet at a doorway
+// the takeoff rows, each with the rooms behind it: per type ONE flooring row
+// whose quantity is the ORDER in the type's bid unit, its parts the rooms'
+// net plus one "waste" part, so the parts add up to the row (critic 1,
+// minors 2 and 3); one base LF row; one wall area row for every room with a
+// ceiling height; one transition-strip row per pair of types that meet at a
+// doorway. Each row carries its PRICE KEY (the type's id, the row, the unit):
+// the price never follows the label.
+const FL_LABEL_MAX = 80;
+function flRowLabel(head, name, tail) {
+  const room = FL_LABEL_MAX - head.length - tail.length;
+  return head + (name.length > room ? name.slice(0, Math.max(8, room - 1)) + "\u2026" : name) + tail;
+}
 function flItems(types, rooms, fl) {
-  const items = [];
-  const fpp = fl && fl.result && fl.result.scale ? fl.result.scale.ft_per_paper_inch / 72 : null;
-  const named = (r, i) => r.name || ("Room " + (i + 1));
-  const tot = flTotals(types, rooms, fl);
-  for (const t of tot) {
-    if (t.i < 0 || !t.rooms) continue;
-    const ty = types[t.i];
-    const mine = rooms.map((r, i) => [r, i]).filter(([r]) => r.type === t.i);
-    if (t.sf > 0) {
-      items.push(Object.assign({ label: "Flooring \u2014 " + t.name, qty: Math.round(t.sf * 10) / 10, unit: "SF",
-                                 details: mine.map(([r, i]) => {
-                                   const ded = flDeductSf(r);
-                                   return { name: named(r, i), qty: Math.round((flNetSf(r) || 0) * 10) / 10, unit: "SF",
-                                            note: ded > 0 ? `${flFmt(r.area_sf, 1)} SF less ${flDeductText(r)}` : undefined };
-                                 }) },
-                               +ty.sf_price > 0 ? { unit_price: +ty.sf_price } : {}));
-      if (t.waste_pct > 0 && t.waste_sf > 0)
-        items.push(Object.assign({ label: `Waste \u2014 ${t.name} (${flFmt(t.waste_pct, 1)}%)`, qty: Math.round(t.waste_sf * 10) / 10, unit: "SF",
-                                   details: [{ name: `${flFmt(t.waste_pct, 1)}% of ${flFmt(t.sf, 1)} SF measured`, qty: Math.round(t.waste_sf * 10) / 10, unit: "SF" }] },
-                                 +ty.sf_price > 0 ? { unit_price: +ty.sf_price } : {}));
-    }
-    if (t.lf > 0)
-      items.push(Object.assign({ label: "Base/molding \u2014 " + t.name, qty: Math.round(t.lf * 10) / 10, unit: "LF",
-                                 details: mine.map(([r, i]) => ({ name: named(r, i), qty: Math.round((flWallLf(r) || 0) * 10) / 10, unit: "LF",
-                                                                 note: r.doors ? `${r.doors} door${r.doors === 1 ? "" : "s"} out` : undefined })) },
-                               +ty.lf_price > 0 ? { unit_price: +ty.lf_price } : {}));
-  }
-  // wall area: every room that has a height, whatever its floor type
-  const walls = rooms.map((r, i) => [r, i, flWallSf(r, fl)]).filter(([, , w]) => w && w.net > 0);
-  if (walls.length) {
-    const sum = walls.reduce((a, [, , w]) => a + w.net, 0);
-    items.push({ label: "Wall area \u2014 perimeter \u00d7 ceiling", qty: Math.round(sum * 10) / 10, unit: "SF",
-                 details: walls.map(([r, i, w]) => ({ name: named(r, i), qty: Math.round(w.net * 10) / 10, unit: "SF",
-                                                     note: `${flFmt(flWallLf(r) + (r.openings_lf || 0), 1)} LF \u00d7 ${flFtIn(w.ft)}`
-                                                       + (w.by === "sheet" ? " from the sheet" : w.by === "typed" ? " typed" : " default")
-                                                       + (w.doors > 0 ? `, \u2212${flFmt(w.doors)} SF of doors` : "") })) });
-  }
-  // transition strips per pair of floor types
-  const tr = flTransitions(rooms, types, fl && fl.closures);
-  const byPair = new Map();
-  for (const t of tr.transitions) {
-    const k = t.ta + ":" + t.tb;
-    if (!byPair.has(k)) byPair.set(k, []);
-    byPair.get(k).push(t);
-  }
-  for (const [k, list] of byPair) {
-    const [ta, tb] = k.split(":").map(Number);
-    items.push({ label: `Transition strips \u2014 ${types[ta].name} / ${types[tb].name}`, qty: list.length, unit: "EA",
-                 details: list.map(t => ({ name: `${named(rooms[t.a], t.a)} \u2194 ${named(rooms[t.b], t.b)}`, qty: 1, unit: "EA",
-                                           note: fpp ? `door ${flFtIn(t.width_pt * fpp)} wide` : `door ${flFmt(t.width_pt)} pt wide` })) });
-  }
-  return items;
+  const f = fl || state.fl;
+  return ((f && f.page && f.page.items) || []).map(it => Object.assign({}, it));
 }
 // one room's line: what it measures and what was done to get it
 function flRoomLine(r, fl) {
@@ -20882,7 +22417,8 @@ function flRoomLine(r, fl) {
   const ded = flDeductSf(r);
   let s = (ded > 0 ? `${flFmt(r.area_sf)} SF \u2212 ${flDeductText(r)} = ${flFmt(flNetSf(r))} SF` : flFmt(r.area_sf) + " SF")
     + " \u00b7 walls " + flFmt(flWallLf(r)) + " LF";
-  if (r.doors) s += " (" + r.doors + " door" + (r.doors === 1 ? "" : "s") + ", \u2212" + flFmt(r.openings_lf, 1) + " LF)";
+  const bt = flBaseText(r);
+  if (bt) s += " (" + bt + ")";
   const w = flWallSf(r, fl);
   if (w) s += " \u00b7 wall area " + flFmt(w.net) + " SF at " + flFtIn(w.ft) + (w.by === "sheet" ? " (from the sheet)" : w.by === "typed" ? " (typed)" : " (default)");
   else if (r.ceiling_text) s += " \u00b7 " + r.ceiling_text + " \u2014 no height read, type one";
@@ -20890,27 +22426,271 @@ function flRoomLine(r, fl) {
   if (r.closures) s += " \u00b7 " + r.closures + " gap" + (r.closures === 1 ? "" : "s") + " closed by hand";
   if (r.source === "drawn") s += " \u00b7 outline drawn by hand";
   else if (r.source === "edited") s += " \u00b7 shape edited by hand";
+  const nu = (r.doors_unplaced || []).length;
+  if (nu) s += ` \u00b7 ${nu} door${nu === 1 ? "" : "s"} near this room could not be placed: click the wall to add the opening`;
   s += flRoomScaleNote(r);
   return s;
 }
+// a type with no price on this sheet takes the price its NAME carried on another sheet - shown in its
+// price box and said once, never silent (the 2.0 build's "the next sheet's Carpet row opens priced")
 function flApplyItems() {
-  const fl = flSync();
-  state.extraItems = state.extraItems.filter(it => !FL_LABEL_RX.test(it.label));
-  const rows = flItems(fl.types, fl.rooms, fl);
+  const fl = state.fl;
+  if (!fl || fl.result !== state.result) return;
+  // the server's rows for this sheet (quantities only: ruling T), plus the centreline wall rows when ticked
+  state.extraItems = state.extraItems.filter(it => !FL_LABEL_RX.test(it.label) && it.src !== "flooring");
+  const rows = flItems();
   if (fl.wallRows) for (const it of flWallRows(fl)) rows.push(it);
-  for (const it of rows) {
-    state.extraItems.push(it);
-    // THE PRICE TRAVELS THROUGH THE PRICE BOOK. The approve payload prices
-    // every extra item from store "price:<label>" (the itemized panel's
-    // own inputs) and ignores unit_price on the item - so a $/SF typed in
-    // this panel reached the report as "-" (a house-set export, headed,
-    // 2026-09-08). Writing it into the book is also the pricing memory
-    // the roadmap asks for: the next sheet's Carpet row opens priced.
-    if (it.unit_price > 0) store.setItem(priceKey(it.label), String(it.unit_price));
-  }
+  for (const it of rows) state.extraItems.push(it);
   renderItemized();
-  state.calcFlApplied = true;
-  calcStateDirty();
+}
+// ---- THE JOB'S FLOORING ESTIMATE (rulings H-K, 2026-10-02) ----
+// One per job and per account, on the server (takeoff_engine/fl_job.py): the types with their unit,
+// rate, waste and packs; removal / prep and the typed lines ONCE per job; the estimator's notes;
+// the acknowledgements; which type each room is. Every write carries the version it read; a stale
+// one is refused and this tab stops writing and approving until it is reloaded. Every amount and
+// total on this panel is the server's - the page computes no money.
+const FL_STALE_TEXT = "This estimate was changed on another computer. Reload to see it.";
+function flJobFor() { const j = state.flJob; return j && j.job === state.job ? j : null; }
+function flRoomKey(r) { return "p" + state.page + ":" + String((r && r.uid) || ""); }
+function flNewUid() { return "r" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+// the panel's types ARE the estimate's; a room's type is the estimate's assign
+async function flJobLoad() {
+  if (!state.job) return;
+  const job = state.job;
+  try {
+    const r = await fetch(`/api/job/${job}/flooring`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (state.job !== job) return;
+    flJobSet(job, d);
+    if (state.result) { if (!state.fl || state.fl.result !== state.result) flSync(); else flMirror(true); }
+    if (!$("flPanel").hidden) renderFl();
+    draw();
+  } catch (e) { /* the panel says it has no estimate yet */ }
+}
+// the job's document as the server answered (GET /flooring, or the reply of an act)
+function flJobSet(job, d) {
+  const j0 = flJobFor();
+  state.flJob = { job, version: d.version, est: d.est || {}, sheets: d.sheets || {}, comp: d.computed || {},
+                  stored: !!d.stored, shared: !!d.shared, stale: !!(j0 && j0.stale), queue: (j0 && j0.queue) || Promise.resolve() };
+}
+// THIS SHEET'S PART of the document, as the panel shows it: display copies of the types, every room
+// with the server's figures (r.c), the pick aids. Called after every read; writes nothing.
+function flMirror(first) {
+  const j = flJobFor(), fl = state.fl;
+  if (!j || !fl || !state.result || fl.result !== state.result) return;
+  const sh = (j.sheets || {})[String(state.page)] || { rooms: [], aids: {} };
+  const a = sh.aids || {};
+  fl.types = (j.est.types || []).map((t, i) => flNewType(t.name || ("Type " + (i + 1)), i, t));
+  const idx = new Map(fl.types.map((t, i) => [t.id, i]));
+  const comp = j.comp || {};
+  fl.rooms = (sh.rooms || []).map(r => flRoomView(r, idx, comp));
+  fl.closures = a.closures || []; fl.wallLines = a.wallLines || [];
+  fl.wallAdd = a.wallAdd || []; fl.wallDrop = a.wallDrop || []; fl.wallStyles = a.wallStyles || null;
+  fl.zoneScales = a.zoneScales || [];
+  fl.deductDefaults = Object.assign({}, FL_DEDUCT_DEFAULTS, a.deductDefaults || {});
+  fl.default_ceiling_ft = a.default_ceiling_ft || null; fl.wallClass = a.wallClass || {};
+  fl.wallFaces = a.wallFaces || null; fl.wallRows = !!a.wallRows; fl._faceCache = null;
+  if (sh.last_type && idx.has(sh.last_type)) fl.lastType = idx.get(sh.last_type);
+  if (fl.lastType >= fl.types.length) fl.lastType = 0;
+  fl.page = (comp.pages || {})[String(state.page)] || { totals: [], items: [], transitions: { transitions: [], open: 0 } };
+  // THE WALLS THE PICKS WERE MADE WITH come back on screen (a display, nothing is written): the line types
+  // showing at the last pick (a reload restored 49 of a house set A2.1's 86 line types from the per-family
+  // memory - furniture among them - and the next pick returned a furniture cell: audit D27)
+  if (first && !fl.mirrored && Array.isArray(fl.wallStyles) && fl.wallStyles.length && fl.rooms.length && state.result.styles) {
+    const keep = new Set(fl.wallStyles), have = new Set(state.result.styles.map(s2 => s2.style_id));
+    if ([...keep].some(id => have.has(id))) {
+      for (const s2 of state.result.styles) setFamVis(s2.style_id, keep.has(s2.style_id));
+      if (state.isolate !== null) state.isolate = null;
+      renderStyles();
+      setStatus(fl.rooms.length + " room" + (fl.rooms.length === 1 ? "" : "s") + " on this sheet - the "
+        + fl.wallStyles.filter(id => have.has(id)).length + " wall line types the picks were made with are showing again");
+    }
+  }
+  fl.mirrored = true;
+  flRescale();
+  flApplyItems();
+}
+// one room as the panel shows it: the stored room, its figures from the server, its type as an index
+function flRoomView(r, idx, comp) {
+  const c = ((comp && comp.rooms) || {})["p" + state.page + ":" + r.uid] || {};
+  const sc = r.scale || {};
+  return Object.assign({}, r, {
+    type: r.type && idx.has(r.type) ? idx.get(r.type) : null, typeId: r.type || null, c,
+    area_sf: c.area_sf === undefined ? null : c.area_sf, perim_lf: c.perim_lf === undefined ? null : c.perim_lf,
+    holes_sf: c.holes_sf || 0, openings_lf: c.base ? c.base.openings_lf : 0, doors: (r.bridges || []).length,
+    closures: r.closures_used || 0, scale_ft_per_in: +sc.ft > 0 ? +sc.ft : null,
+    objects: (r.objects || []).map((o, oi) => Object.assign({}, o, { area_sf: (c.objects_sf || [])[oi] || 0,
+      w_ft: (c.objects_wh || [])[oi] ? c.objects_wh[oi][0] : 0, h_ft: (c.objects_wh || [])[oi] ? c.objects_wh[oi][1] : 0 })),
+    deductions: (r.deductions || []).map((d, di) => Object.assign({}, d, { area_sf: (c.deductions_sf || [])[di] || 0 })),
+  });
+}
+// ONE ACT of the estimator, over the version this tab read (ruling P). The reply is the whole document
+// with its figures; a stale tab is refused and stops writing; a refused act says why. Acts run one at a
+// time, in the order they were made.
+function flAct(act, opts) {
+  const j = flJobFor();
+  if (!j) { setStatus("the job's flooring is still loading - try again in a moment", "err"); return Promise.resolve(null); }
+  if (j.stale) { flStaleSaid(); return Promise.resolve(null); }
+  const run = async () => {
+    const j2 = flJobFor();
+    if (!j2 || j2.stale) return null;
+    const route = (opts && opts.route) || `/api/job/${j2.job}/flooring/act`;
+    const body = opts && opts.body ? Object.assign({ version: j2.version }, opts.body) : { version: j2.version, act };
+    let r, d;
+    try {
+      r = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      d = await r.json().catch(() => ({}));
+    } catch (e) { setStatus("not saved - the server did not answer", "err"); return null; }
+    if (r.status === 409) { j2.stale = true; flStaleSaid(); return null; }
+    if (!r.ok) { setStatus(d.detail || `not saved (${r.status})`, "err"); return null; }
+    flJobSet(j2.job, d);
+    flMirror();
+    // WHERE A PICK LEAKED (critic 4, M3): the server marks where the fill gets out; drawn until the next act
+    if (state.fl) state.fl.leak = d.ok === false && Array.isArray(d.leak) && d.leak.length ? { page: state.page, pts: d.leak, closes: d.closes_with } : null;
+    if (!$("flPanel").hidden) renderFl();
+    draw();
+    if (d.ok === false) setStatus(d.why || "refused", "err");
+    else if (opts && opts.status) { const m = opts.status(d); if (m) setStatus(m, "ok"); }
+    else if (d.said) setStatus(d.said, "ok");
+    return d;
+  };
+  j.queue = (j.queue || Promise.resolve()).then(run, run);
+  return j.queue;
+}
+// a room by its key on the server, from its place in the panel
+function flUidOf(r) { return r && r.uid ? String(r.uid) : ""; }
+// the lines again after a sheet's rooms were saved (the quantities are the sheets')
+function flStaleSaid() {
+  setStatus(FL_STALE_TEXT, "err");
+  const eb = $("flEst");
+  if (eb && !$("flPanel").hidden) renderFlEstimate(eb);
+}
+// the estimate section of the panel: the JOB's lines (every sheet), its switches, its checks
+function renderFlEstimate(box) {
+  const fl = flSync();
+  const j = flJobFor();
+  const mk = (tag, cls, txt) => { const d = document.createElement(tag); if (cls) d.className = cls; if (txt !== undefined) d.textContent = txt; return d; };
+  box.innerHTML = "";
+  box.appendChild(mk("b", null, "Estimate (this job, every sheet)"));
+  if (!j) { box.appendChild(mk("div", "ew-meta", state.job ? "loading the job's estimate\u2026" : "open a job")); if (state.job) flJobLoad(); return; }
+  if (j.stale) {
+    const w = mk("div", "fl-check", FL_STALE_TEXT);
+    const b = mk("button", "mini", "Reload");
+    b.onclick = () => location.reload();
+    w.appendChild(b);
+    box.appendChild(w);
+  }
+  const e = j.est;
+  const ro = j.stale;
+  const c = j.comp || { lines: [], total: "0.00", checks: [], open: [] };
+  if (c.migrated && c.migrated.from) box.appendChild(mk("div", "ew-meta", `carried over once from ${c.migrated.from} (${c.migrated.at}) - the worksheet records what it was`));
+  const area = (key) => {
+    const a = e[key];
+    const row = mk("div", "fl-est-area");
+    const lab = document.createElement("label"); lab.className = "ew-meta";
+    const ck = document.createElement("input"); ck.type = "checkbox"; ck.checked = !!a.on; ck.disabled = ro;
+    ck.onchange = () => flAct({ kind: "area_set", which: key, field: "on", value: ck.checked });
+    lab.append(ck, document.createTextNode(" "));
+    const d = document.createElement("input"); d.className = "fl-spec"; d.value = a.desc; d.maxLength = 80; d.disabled = ro;
+    d.onchange = () => flAct({ kind: "area_set", which: key, field: "desc", value: d.value });
+    const rt = document.createElement("input"); rt.className = "fl-num"; rt.inputMode = "decimal";
+    rt.placeholder = "$/SF"; rt.value = Number.isInteger(a.rate_cents) ? flMoney(a.rate_cents).replace(/,/g, "") : ""; rt.disabled = ro;
+    rt.onchange = () => flAct({ kind: "area_set", which: key, field: "rate", value: rt.value.trim() });
+    row.append(lab, d, rt);
+    row.title = "An area line, once per job: qty = the net floor area of every typed room on every sheet, rounded to a whole SF";
+    return row;
+  };
+  box.append(area("removal"), area("prep"));
+  (e.lines || []).forEach((l, i) => {
+    const row = mk("div", "fl-est-line");
+    const d = document.createElement("input"); d.className = "fl-spec"; d.value = l.desc || ""; d.placeholder = "description"; d.maxLength = 80; d.disabled = ro;
+    d.onchange = () => flAct({ kind: "line_set", id: l.id, field: "desc", value: d.value });
+    const q = document.createElement("input"); q.className = "fl-num"; q.inputMode = "decimal"; q.placeholder = "qty"; q.value = l.qty ?? ""; q.disabled = ro;
+    q.title = "as typed: up to 2 decimals";
+    q.onchange = () => flAct({ kind: "line_set", id: l.id, field: "qty", value: q.value.trim() });
+    const rt = document.createElement("input"); rt.className = "fl-num"; rt.inputMode = "decimal"; rt.placeholder = "rate"; rt.disabled = ro;
+    rt.value = Number.isInteger(l.rate_cents) ? flMoney(l.rate_cents).replace(/,/g, "") : "";
+    rt.onchange = () => flAct({ kind: "line_set", id: l.id, field: "rate", value: rt.value.trim() });
+    const up = mk("button", "mini", "\u2191"); up.title = "move up"; up.disabled = ro || i === 0;
+    up.onclick = () => flAct({ kind: "line_move", id: l.id, to: i - 1 });
+    const dn = mk("button", "mini", "\u2193"); dn.title = "move down"; dn.disabled = ro || i === e.lines.length - 1;
+    dn.onclick = () => flAct({ kind: "line_move", id: l.id, to: i + 1 });
+    const x = mk("button", "mini", "\u00d7"); x.disabled = ro;
+    x.onclick = () => flAct({ kind: "line_del", id: l.id });
+    row.append(d, q, rt, up, dn, x);
+    box.appendChild(row);
+  });
+  const add = mk("button", "mini", "+ line (adhesive, freight, travel, moisture test, labour...)");
+  add.disabled = ro;
+  add.onclick = () => flAct({ kind: "line_add" });
+  box.appendChild(add);
+  const nt = document.createElement("textarea");
+  nt.className = "fl-notes"; nt.rows = 2; nt.placeholder = "notes for the customer (one per line), printed under the total";
+  nt.value = (e.notes || []).join("\n"); nt.disabled = ro;
+  nt.onchange = () => flAct({ kind: "notes_set", notes: nt.value.split("\n").map(v => v.trim()).filter(Boolean).slice(0, 20) });
+  box.appendChild(nt);
+  // THE JOB'S LINES, as the server printed them: the same strings as the CSV, the PDF and the report
+  const t = document.createElement("table");
+  t.className = "fl-est";
+  t.innerHTML = "<tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>";
+  for (const l of c.lines || []) {
+    const tr = document.createElement("tr");
+    for (const [v, cls] of [[l.desc, ""], [l.qty || "-", "n"], [l.rate || "-", "n"], [l.amount || "-", "n"]]) {
+      const td = document.createElement("td"); td.textContent = v; if (cls) td.className = cls; tr.appendChild(td);
+    }
+    t.appendChild(tr);
+  }
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><b>Total</b></td><td></td><td></td><td class="n"><b>${c.total || "0.00"}</b></td>`;
+  t.appendChild(tr);
+  box.appendChild(t);
+  if ((c.unassigned || []).length)
+    box.appendChild(mk("div", "ew-meta", `${c.unassigned.length} room${c.unassigned.length === 1 ? "" : "s"} with no floor type: type ${c.unassigned.length === 1 ? "it" : "them"}, or exclude ${c.unassigned.length === 1 ? "it" : "them"} on purpose - the estimate is held until then`));
+  // THE CHECKS: the customer estimate is held while any is open. A price, waste or line check closes when its
+  // data is set; a room's scale and its openings are acknowledged on the room's own row, for exactly what is shown
+  const open = (c.checks || []).filter(x => x.open);
+  if (open.length) {
+    const ob = mk("div", "fl-check fl-checks", `${open.length} check${open.length === 1 ? "" : "s"} open \u2014 the customer estimate is held until each is resolved:`);
+    for (const x of open) {
+      const ln = mk("div", "fl-check-line", x.text + " ");
+      if (x.kind === "measure" && x.ackable && x.digest && Number.isInteger(x.page)) {
+        // an earlier build's pick measured again from its outline (critic 5, minor 3): re-pick it, or take it as it is
+        const ab = mk("button", "mini", "acknowledge as it is");
+        ab.title = "Keep this room measured from its outline (recorded on the worksheet with your name); re-picking it restores its fill measure";
+        ab.onclick = () => flAct(null, { route: `/api/job/${j.job}/page/${x.page}/rooms/${encodeURIComponent(x.uid)}/measure/acknowledge`,
+                                         body: { digest: String(x.digest) } });
+        ln.appendChild(ab);
+      }
+      if (["scale", "openings", "untyped", "measure", "outline"].includes(x.kind) && Number.isInteger(x.page)) {
+        const b = mk("button", "mini", x.page === state.page ? "show the room" : `sheet ${x.page + 1}`);
+        b.title = "The room's row offers its choices side by side";
+        b.onclick = () => {
+          if (x.page !== state.page) { const ps = $("pageSel"); if (ps) { ps.value = String(x.page); ps.dispatchEvent(new Event("change")); } return; }
+          const k = state.fl.rooms.findIndex(r => r.uid === x.uid);
+          if (k >= 0) { state.fl.hot = k; renderFl(); draw(); const row = $("flRows").children[k]; if (row) row.scrollIntoView({ block: "center" }); }
+        };
+        ln.appendChild(b);
+      }
+      ob.appendChild(ln);
+    }
+    box.appendChild(ob);
+  } else if ((c.lines || []).length) box.appendChild(mk("div", "ew-meta", "no check open: the customer estimate can be issued"));
+  if (state.job) {
+    const held = !!open.length || !(c.lines || []).length;
+    const cust = mk("button", "mini", "Customer estimate PDF");
+    cust.disabled = ro || held;
+    cust.title = open.length ? "held: resolve the checks above first" : "Your letterhead, Description, Qty, Rate, Amount, Total and your notes - nothing else";
+    cust.onclick = () => { const a = document.createElement("a"); a.href = url(`/api/job/${state.job}/flooring_estimate.pdf`); a.click(); };
+    const csv = mk("button", "mini", "CSV");
+    csv.disabled = ro || held;
+    csv.title = cust.title;
+    csv.onclick = () => { const a = document.createElement("a"); a.href = url(`/api/job/${state.job}/flooring_estimate.csv`); a.click(); };
+    const wsb = document.createElement("a");
+    wsb.href = url(`/api/job/${state.job}/flooring_worksheet.csv`); wsb.className = "ew-meta"; wsb.textContent = "Worksheet CSV (internal)";
+    wsb.title = "Per line: net, waste, packs, the rooms and sheets behind it, each room's scale and openings, every check";
+    box.append(cust, document.createTextNode(" "), csv, document.createTextNode(" "), wsb);
+  }
 }
 // ---- WALLS BY TYPE ----
 // The CAD layers (a house set: A-wall, A-Exterior Wall Line) or the legend
@@ -21050,130 +22830,13 @@ function flLabelWalls(fl) {
   setStatus(n ? `${n} wall line type${n === 1 ? "" : "s"} relabelled by class \u2014 the footage rows now read Wall \u2014 exterior / interior / shear` : "the wall line types already carry their class names", "ok");
 }
 // ---- persistence (calcstate sidecar, additive key "fl") ----
-function flSavePayload(fl) {
-  return {
-    types: fl.types.map(t => ({ name: t.name, color: t.color, sf_price: +t.sf_price || 0, lf_price: +t.lf_price || 0,
-                                waste_pct: +t.waste_pct || 0 })),
-    rooms: fl.rooms.map(r => ({
-      name: r.name, pts: r.pts.map(p => [p[0], p[1]]), area_sf: r.area_sf, area_pt2: r.area_pt2,
-      perim_lf: r.perim_lf, perim_pt: r.perim_pt, openings_lf: r.openings_lf, holes_sf: r.holes_sf,
-      doors: r.doors || 0, closures: r.closures || 0, type: r.type, source: r.source, click: r.click || null,
-      // the scale this room was measured at, when it is not the sheet's
-      scale_ft_per_in: +r.scale_ft_per_in > 0 ? +r.scale_ft_per_in : null,
-      scale_by: r.scale_by || null,
-      // the ceiling height and where it came from; the door bridges on the
-      // ring (for transitions: two rooms sharing one bridge)
-      ceiling_ft: Number.isFinite(+r.ceiling_ft) && +r.ceiling_ft > 0 ? +r.ceiling_ft : null,
-      ceiling_text: r.ceiling_text || null, ceiling_by: r.ceiling_by || null,
-      bridges: (r.bridges || []).map(b => ({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, r: b.r })),
-      // the fixtures inside, with the decision on each, and the clicked-out shapes
-      objects: (r.objects || []).map(o => ({ kind: o.kind, layer: o.layer, area_sf: o.area_sf, w_ft: o.w_ft, h_ft: o.h_ft,
-                                              guessed: !!o.guessed, deduct: !!o.deduct, manual: !!o.manual,
-                                              pts: (o.pts || []).map(p => [p[0], p[1]]) })),
-      deductions: (r.deductions || []).map(d => ({ name: d.name, area_sf: d.area_sf, pts: (d.pts || []).map(p => [p[0], p[1]]) })),
-    })),
-    closures: fl.closures.map(c => c.map(v => Math.round(v * 100) / 100)),
-    seq: fl.seq,
-    deductDefaults: Object.assign({}, fl.deductDefaults || {}),
-    default_ceiling_ft: Number.isFinite(+fl.default_ceiling_ft) && +fl.default_ceiling_ft > 0 ? +fl.default_ceiling_ft : null,
-    wallClass: Object.assign({}, fl.wallClass || {}),
-    wallFaces: fl.wallFaces === 1 || fl.wallFaces === 2 ? fl.wallFaces : null,
-    wallRows: !!fl.wallRows,
-    wallStyles: Array.isArray(fl.wallStyles) && fl.wallStyles.length ? fl.wallStyles.slice() : null,
-  };
-}
-function flApplySaved() {
-  if (state.calcFlApplied || !state.calcSavedLoaded) return;
-  if (!state.fl || state.fl.result !== state.result) return;
-  state.calcFlApplied = true;
-  const sv = (state.calcSaved || {}).fl;
-  if (!sv) return;
-  const fl = state.fl;
-  if (Array.isArray(sv.types) && sv.types.length)
-    fl.types = sv.types.map((t, i) => flNewType(String((t && t.name) || ("Type " + (i + 1))), i, {
-      color: (t && t.color) || FL_PALETTE[i % FL_PALETTE.length],
-      sf_price: calcNum(t && t.sf_price) || 0, lf_price: calcNum(t && t.lf_price) || 0,
-      waste_pct: Math.max(0, calcNum(t && t.waste_pct) || 0) }));
-  if (Array.isArray(sv.rooms) && !fl.rooms.length) {
-    for (const r of sv.rooms) {
-      if (!r || !Array.isArray(r.pts) || r.pts.length < 3) continue;
-      const cf = calcNum(r.ceiling_ft);
-      fl.rooms.push({
-        name: String(r.name || ("Room " + (fl.rooms.length + 1))), pts: r.pts.map(p => [p[0], p[1]]),
-        area_sf: calcNum(r.area_sf), area_pt2: calcNum(r.area_pt2) || 0,
-        perim_lf: calcNum(r.perim_lf), perim_pt: calcNum(r.perim_pt) || 0,
-        openings_lf: calcNum(r.openings_lf) || 0, holes_sf: calcNum(r.holes_sf) || 0,
-        doors: calcNum(r.doors) || 0, closures: calcNum(r.closures) || 0,
-        type: Number.isInteger(r.type) ? r.type : null,
-        source: r.source === "drawn" || r.source === "edited" ? r.source : "click", click: Array.isArray(r.click) ? r.click : null,
-        scale_ft_per_in: calcNum(r.scale_ft_per_in) > 0 ? +r.scale_ft_per_in : null,
-        scale_by: r.scale_by ? String(r.scale_by) : null,
-        ceiling_ft: cf !== null && cf > 0 ? cf : null,
-        ceiling_text: r.ceiling_text ? String(r.ceiling_text) : null,
-        ceiling_by: r.ceiling_by === "typed" ? "typed" : (cf !== null && cf > 0 ? "sheet" : null),
-        bridges: Array.isArray(r.bridges)
-          ? r.bridges.filter(b => b && ["x0", "y0", "x1", "y1", "r"].every(k => calcNum(b[k]) !== null))
-                     .map(b => ({ x0: +b.x0, y0: +b.y0, x1: +b.x1, y1: +b.y1, r: +b.r }))
-          : [],
-        objects: Array.isArray(r.objects)
-          ? r.objects.filter(o => o && calcNum(o.area_sf) !== null)
-                     .map(o => ({ kind: String(o.kind || "shape"), layer: o.layer || null, area_sf: +o.area_sf,
-                                  w_ft: calcNum(o.w_ft) || 0, h_ft: calcNum(o.h_ft) || 0, guessed: !!o.guessed,
-                                  deduct: !!o.deduct, manual: !!o.manual,
-                                  pts: Array.isArray(o.pts) ? o.pts.map(p => [+p[0], +p[1]]) : [] }))
-          : [],
-        deductions: Array.isArray(r.deductions)
-          ? r.deductions.filter(d => d && calcNum(d.area_sf) !== null)
-                        .map(d => ({ name: String(d.name || "clicked out"), area_sf: +d.area_sf,
-                                     pts: Array.isArray(d.pts) ? d.pts.map(p => [+p[0], +p[1]]) : [] }))
-          : [],
-      });
-    }
-  }
-  if (sv.deductDefaults && typeof sv.deductDefaults === "object")
-    for (const k of Object.keys(FL_DEDUCT_DEFAULTS))
-      if (typeof sv.deductDefaults[k] === "boolean") fl.deductDefaults[k] = sv.deductDefaults[k];
-  if (Array.isArray(sv.closures))
-    fl.closures = sv.closures.filter(c => Array.isArray(c) && c.length === 4 && c.every(v => calcNum(v) !== null));
-  if (calcNum(sv.seq) !== null) fl.seq = sv.seq;
-  {
-    const dc = calcNum(sv.default_ceiling_ft);
-    fl.default_ceiling_ft = dc !== null && dc > 0 ? dc : null;
-    fl.wallClass = {};
-    if (sv.wallClass && typeof sv.wallClass === "object")
-      for (const k of Object.keys(sv.wallClass))
-        if (FL_WALL_CLASSES.includes(sv.wallClass[k]) && Number.isInteger(+k)) fl.wallClass[k] = sv.wallClass[k];
-    fl.wallFaces = sv.wallFaces === 1 || sv.wallFaces === 2 ? sv.wallFaces : null;
-    fl.wallRows = !!sv.wallRows;
-  }
-  // THE WALLS THE PICKS WERE MADE WITH come back too. The style ticks are
-  // the room pick's role assignment ("what is showing is a wall"), and a
-  // reload restored 49 of a house set A2.1's 86 line types from the
-  // per-family memory - furniture and cabinets among them - so the next
-  // pick of the PRIMARY BEDROOM returned a 25 SF furniture cell (audit
-  // D27). The set showing at the last pick is saved with the rooms and
-  // put back here, after the per-family memory has had its say.
-  let wallsBack = 0;
-  if (Array.isArray(sv.wallStyles) && sv.wallStyles.length && state.result && state.result.styles) {
-    const keep = new Set(sv.wallStyles.map(Number).filter(Number.isInteger));
-    const have = new Set(state.result.styles.map(s => s.style_id));
-    const ids = [...keep].filter(id => have.has(id));
-    if (ids.length) {
-      for (const s of state.result.styles) setFamVis(s.style_id, keep.has(s.style_id));
-      if (state.isolate !== null) state.isolate = null;
-      fl.wallStyles = ids;
-      wallsBack = ids.length;
-      renderStyles();
-    }
-  }
-  if (fl.rooms.length) {
-    flApplyItems();
-    if (!$("flPanel").hidden) renderFl();
-    setStatus(fl.rooms.length + " room" + (fl.rooms.length === 1 ? "" : "s") + " restored from this page's saved record"
-      + (wallsBack ? ` — the ${wallsBack} wall line types the picks were made with are showing again` : ""));
-    draw();
-  }
-}
+// a room's own figures, as the job estimate reads them (no money): net SF after deductions, base LF
+// after openings, the scale it was measured at and how it was set, the doors that could not be
+// placed, the openings with where each width came from
+// the scale a room is measured at, in words, and how it was set (the worksheet's two columns)
+// A PAGE SAVED BEFORE fl_v 4 carried its own types and prices: the server seeds the job's estimate
+// from them once (server _fl_est_seed - by each type's id, never merged by name, its price as that
+// page saved it); this page reads only its rooms.
 // ---- the three tools ----
 function flArm(mode) {
   const fl = flSync();
@@ -21195,8 +22858,16 @@ function flArm(mode) {
     ? "flooring: click inside a room \u2014 only the line types you have showing count as walls (Esc exits)"
     : mode === "fl-close"
     ? "close a gap: click one side of the opening, then the other \u2014 the fill treats that line as wall"
+    : mode === "fl-stroke"
+    ? "draw a wall: click one end of the wall, then the other \u2014 a wall for room picks only: not an opening, not a takeoff line, in no export (Esc exits)"
     : mode === "fl-deduct"
     ? "deduct: click a fixture inside a picked room \u2014 a listed object toggles, anything else enclosed by lines comes out of that room's flooring (Esc exits)"
+    : mode === "fl-open"
+    ? "add an opening: click ON a room's outline where the opening is, then type its width in the room's openings list (Esc exits)"
+    : mode === "fl-wall"
+    ? "walls: click a wall line \u2014 its whole line type is ticked as wall (Ctrl+click unticks it); Shift+click: only that one line is a wall, Ctrl+Shift+click: only that one line is not (Esc exits)"
+    : mode === "fl-base"
+    ? "base: click ON a room's outline to leave that straight run out of the base (a wall with no base); click it again to put it back (Esc exits)"
     : "flooring: click each corner of the room" + POLY_CLOSE_HINT, "busy");
   renderFl(); draw();
 }
@@ -21222,6 +22893,13 @@ function flDisarm(msg) {
 // Returns {ids, by} so the status line can say which rule spoke.
 function flWallStyleIds(styles) {
   const list = (styles || []).filter(s => s && Number.isInteger(s.style_id));
+  // 0. THE ESTIMATOR'S OWN TICKS on this sheet set (Walls: click a line),
+  //    by line-type signature: ahead of any rule
+  const mem = typeof flWallMem === "function" ? flWallMem() : {};
+  if (Object.values(mem).includes("wall")) {
+    const ids = list.filter(s => mem[flStyleSig(s)] === "wall").map(s => s.style_id);
+    if (ids.length) return { ids, by: "your own wall ticks on this job" };
+  }
   const layered = list.filter(s => s.layer && String(s.layer).trim());
   if (layered.length >= 3) {
     const ids = list.filter(s => /wall|exterior|floor/i.test(String(s.layer || ""))
@@ -21233,6 +22911,99 @@ function flWallStyleIds(styles) {
                             || (/^solid/.test(String(s.class || "")) && (s.width || 0) >= 1.0 && (s.n || 0) >= 3))
                   .map(s => s.style_id);
   return { ids, by: "line weight" };
+}
+// THE WORK AREA a pick stays inside: the work-area box (Tools: Work area)
+// that holds the click, or none. A sheet that carries a second plan beside
+// the first is framed by one border, so a fill that leaks into the other
+// plan is "enclosed" by the frame - inside a box it is refused instead.
+function flZoneAt(px, py) {
+  for (const z of state.workZones || []) {
+    const x0 = Math.min(z[0], z[2]), x1 = Math.max(z[0], z[2]), y0 = Math.min(z[1], z[3]), y1 = Math.max(z[1], z[3]);
+    if (px > x0 && px < x1 && py > y0 && py < y1) return [x0, y0, x1, y1];
+  }
+  return null;
+}
+// the line under a click, any line type, shown or not (a hidden wall must be
+// tickable): nearest chain within the hit tolerance chainHitAt uses
+function flChainAt(px, py) {
+  if (!state.result) return null;
+  const f = IMG_DPI / 72;
+  const tolPt = 6 / state.view.k / f * 4 + 1.5;
+  let best = null, bestD = tolPt;
+  for (const ch of state.result.chains || []) {
+    if (state.excluded && state.excluded.has(ch.chain_id)) continue;
+    const pts = ch.points || [];
+    for (let i = 1; i < pts.length; i++) {
+      const d = distToSeg(px, py, pts[i - 1], pts[i]);
+      if (d < bestD) { bestD = d; best = ch; }
+    }
+  }
+  return best;
+}
+// a line type's signature across the sheets of one set: the same drafter's
+// wall type carries the same class, weight and colour on every sheet
+function flStyleSig(s) {
+  return s ? [String(s.class || ""), Math.round((+s.width || 0) * 100) / 100, (s.color || []).map(v => Math.round(+v * 100) / 100).join(",")].join("|") : "";
+}
+// the ticks live in the JOB'S ESTIMATE on the server (est.walls, per account): a reload, another
+// browser or another computer offers the same walls on every sheet of the job
+function flWallMem() {
+  const j = typeof flJobFor === "function" ? flJobFor() : null;
+  const w = j && j.est && j.est.walls;
+  return w && typeof w === "object" ? w : {};
+}
+// WALLS: CLICK A LINE. Click = the line's whole TYPE becomes wall (or stops
+// being one): the estimator's own act, remembered for the sheet set and
+// offered by "Show walls only" on its other sheets. Shift+click = only THAT
+// line: measured on three client sheets, walls share their line types with
+// furniture and equipment (no set of types gives the walls alone), so a
+// partition drawn in the furniture's type is ticked by itself, and a heavy
+// line across a room in a wall type is ticked out by itself.
+function flWallClick(px, py, shift, untick) {
+  const fl = flSync();
+  const ch = flChainAt(px, py);
+  if (!ch) return setStatus("walls: no line under that click \u2014 zoom in and click ON the line", "err");
+  const sid = ch.style_id;
+  const st = (state.result.styles || []).find(s => s.style_id === sid);
+  if (shift) {
+    // ONE LINE, SET, NEVER TOGGLED (critic 5, minor 7: a walk run twice turned its Shift+clicked line back off):
+    // Shift+click makes this line a wall, Ctrl+Shift+click makes it not one; a click that changes nothing says so
+    const id = ch.chain_id;
+    const shown = famShown(sid);
+    const inAdd = fl.wallAdd.indexOf(id) >= 0, inDrop = fl.wallDrop.indexOf(id) >= 0;
+    const isWall = inAdd || (shown && !inDrop);
+    let said, to;
+    if (!untick) {
+      if (isWall) return setStatus("this line is already a wall — Ctrl+Shift+click makes just this line not a wall", "ok");
+      to = inDrop && shown ? "auto" : "wall"; said = "a wall" + (shown ? "" : " (its type stays unticked)");
+    } else {
+      if (!isWall) return setStatus("this line is not a wall — Shift+click makes just this line a wall", "ok");
+      to = inAdd && !shown ? "auto" : "not"; said = "NOT a wall" + (shown ? " (its type stays ticked)" : "");
+    }
+    flAct({ kind: "aids_line", page: state.page, id, to },
+          { status: () => `this line (${st ? st.class : "line"}, ${flFmt(+ch.length_pt || 0)} pt) is ${said} \u2014 the next pick uses it` });
+    return;
+  } else {
+    // A PLAIN CLICK ONLY TICKS (critic 3, minor 1: clicking a second wall of a type just ticked unticked it, so an
+    // estimator clicking every wall alternated on and off). Ctrl+click unticks a type.
+    if (!untick && famShown(sid)) {
+      return setStatus(`line type ${sid} is already a wall — Ctrl+click a line to untick its whole type, Shift+click to change just that line`, "ok");
+    }
+    if (untick && !famShown(sid)) return setStatus(`line type ${sid} is not ticked`, "ok");
+    const on = !untick;
+    setFamVis(sid, on);
+    const sig = flStyleSig(st), j = typeof flJobFor === "function" ? flJobFor() : null;
+    let kept = false;
+    if (sig && j && j.est && !j.stale) {
+      flAct({ kind: "walls_mem", sig, value: on ? "wall" : "not" }, { status: () => null });
+      kept = true;
+    }
+    renderStyles();
+    setStatus(`line type ${sid} (${st ? st.class + ", " + flFmt(+st.width || 0, 2) + " pt" : ""}) ${on ? "ticked as WALL" : "unticked"} \u2014 `
+              + (kept ? "kept with this job's estimate for its other sheets" : "for this sheet only (no estimate of yours is open to keep it in)")
+              + "; Shift+click one line to change just that line", "ok");
+  }
+  renderFl(); draw();
 }
 function flShowWallsOnly() {
   if (!state.result) return;
@@ -21269,126 +23040,83 @@ function flRoomFpp(r) {
 // picked at 1/4", the sheet corrected to 1/8", the bedroom stayed 177.9 SF where 711.6
 // follows, while the status said every quantity on the sheet was recalculated.)
 function flRescale() {
-  if (!state.result) return 0;
-  const now = flScreenScale();
-  if (!now) return 0;
-  if (!state.fl || state.fl.result !== state.result) {
-    // a session that never opened the Flooring panel: the rooms are in the job's record.
-    // Bring the panel's state up (not the panel) so they can be measured again.
-    const has = state.extraItems.some(it => FL_LABEL_RX.test(it.label));
-    if (!has || !state.calcSavedLoaded) return 0;
-    flSync();
-  }
   const fl = state.fl;
-  if (!fl || !Array.isArray(fl.rooms) || !fl.rooms.length) return 0;
-  const fpp = now / 72;
-  let n = 0;
-  for (const r of fl.rooms) {
-    if (/^inset/.test(String(r.scale_by || ""))) continue;      // its own caption governs it
-    if (!(+r.area_pt2 > 0)) continue;
-    // the scale its feet stand on: the one recorded, else the one its own numbers imply
-    const was = +r.scale_ft_per_in > 0 ? +r.scale_ft_per_in
-      : (+r.area_sf > 0 ? Math.sqrt(+r.area_sf / +r.area_pt2) * 72 : null);
-    if (was && Math.abs(was - now) <= 1e-9 * Math.max(1, now)) {
-      r.scale_ft_per_in = now; if (!r.scale_by) r.scale_by = "on screen";
-      continue;
-    }
-    const k = was ? now / was : null;
-    // by the RATIO when the room says which scale its feet stand on (so 4 -> 8 -> 4 returns the
-    // very numbers the pick gave: the outline times the scale differs from the server's own
-    // feet in the last digit, and a wall-area line came back 0.3 SF off), else from the outline
-    if (k && +r.scale_ft_per_in > 0 && +r.area_sf > 0) {
-      r.area_sf = +r.area_sf * k * k;
-      if (+r.perim_lf > 0) r.perim_lf = +r.perim_lf * k;
-    } else {
-      r.area_sf = +r.area_pt2 * fpp * fpp;
-      if (+r.perim_pt > 0) r.perim_lf = +r.perim_pt * fpp;
-    }
-    if (k) {
-      // kept in feet only: the door openings, the holes, the fixtures, the clicked-out shapes
-      r.openings_lf = (+r.openings_lf || 0) * k;
-      r.holes_sf = (+r.holes_sf || 0) * k * k;
-      for (const o of r.objects || []) {
-        o.area_sf = (+o.area_sf || 0) * k * k; o.w_ft = (+o.w_ft || 0) * k; o.h_ft = (+o.h_ft || 0) * k;
-      }
-      for (const d of r.deductions || []) d.area_sf = (+d.area_sf || 0) * k * k;
-    }
-    r.scale_ft_per_in = now; r.scale_by = "on screen";
-    n += 1;
-  }
-  if (n) {
-    flApplyItems();
-    const panel = $("flPanel");
-    if (panel && !panel.hidden) renderFl();
-  }
+  if (!fl || !Array.isArray(fl.rooms) || fl.result !== state.result) return 0;
+  const now = flScreenScale();
+  if (!now) { fl.rescaleOffer = null; return 0; }
+  const n = fl.rooms.filter(r => r.scale && r.scale.how === "sheet" && +r.scale.ft > 0 && Math.abs(+r.scale.ft - now) > 1e-9 * now).length;
+  fl.rescaleOffer = n ? { ft: now, n } : null;
   return n;
 }
 // a room measured at a scale other than the sheet's says so on its line
-function flRoomScaleNote(r) {
-  if (!r || !(+r.scale_ft_per_in > 0) || !r.scale_by) return "";
-  if (!/^inset/.test(String(r.scale_by))) return "";
-  return ` · measured at the inset's own scale (${String(r.scale_by).replace(/^inset caption\s*/, "")})`;
+// THE SCALE OF A ROOM on a sheet that prints more than one (server
+// _room_view_scale): r.scale_verdict {why, check, multi, choices}. The row
+// says the scale it was measured at and why; `check` turns it amber.
+function flRoomScaleText(r) {
+  const sc = (r && r.scale) || {};
+  if (!sc.multi && sc.how === "sheet") return "";
+  return `measured at ${(r.c && r.c.scale_words) || "the sheet's scale"}`;
 }
-function flAddRoom(room) {
-  const fl = flSync();
-  if (!room.name) room.name = "Room " + fl.seq;
-  if (!Number.isInteger(room.type)) room.type = fl.lastType;
-  fl.rooms.push(room); fl.seq += 1;
-  flApplyItems(); renderFl(); draw();
+function flRoomScaleNote(r) {
+  const t = flRoomScaleText(r);
+  if (!t) return "";
+  const ck = ((flJobFor() || {}).comp || {}).checks || [];
+  const open = ck.some(x => x.kind === "scale" && x.uid === (r && r.uid) && x.open);
+  return ` \u00b7 ${t}` + (open ? " \u2014 ACKNOWLEDGE THE SCALE OF THIS ROOM" : "");
+}
+// the same, short, for the CSV / report note: "at SCALE: 3/16 (check)"
+// one click: measure this room at another printed scale (its pt outline at
+// that scale; typed widths of its openings stay in feet)
+// a room's scale confirmed in the job's estimate: for the scale it is measured at now
+function flRoomSetScale(r, choice) {
+  // the room's scale ACKNOWLEDGED AS A VALUE through its own route (ruling R): the printed scale chosen and
+  // the digest of the room as it was shown; naming another printed scale measures the room at it
+  if (!r || !choice || !(+choice.fpi > 0)) return Promise.resolve(null);
+  const j = flJobFor();
+  if (!j) return Promise.resolve(null);
+  return flAct(null, { route: `/api/job/${j.job}/page/${state.page}/rooms/${encodeURIComponent(r.uid)}/scale/acknowledge`,
+                       body: { fpi: +choice.fpi, digest: String((r.c && r.c.scale_digest) || "") } });
+}
+function flAckOpenings(r) {
+  const j = flJobFor();
+  if (!j || !r) return Promise.resolve(null);
+  const n = Array.isArray(r.openings) ? r.openings.length : 0;
+  return flAct(null, { route: `/api/job/${j.job}/page/${state.page}/rooms/${encodeURIComponent(r.uid)}/openings/acknowledge`,
+                       body: { count: n, digest: String((r.c && r.c.open_digest) || "") } });
+}
+// A WORK-AREA BOX CAN CARRY A SCALE (ruling L): "this box is the FLOOR PLAN at 1/4 in". Every room
+// whose centre is inside it is measured at that scale and needs no per-room confirmation.
+function flZoneScaleOf(r) {
+  const fl = state.fl;
+  if (!fl || !r || !r.pts || r.pts.length < 3) return null;
+  let cx = 0, cy = 0;
+  for (const q of r.pts) { cx += q[0]; cy += q[1]; }
+  cx /= r.pts.length; cy /= r.pts.length;
+  for (const z of fl.zoneScales || []) {
+    const [x0, y0, x1, y1] = z.box;
+    if (cx > Math.min(x0, x1) && cx < Math.max(x0, x1) && cy > Math.min(y0, y1) && cy < Math.max(y0, y1)) return z;
+  }
+  return null;
 }
 async function flPickAt(px, py) {
   const fl = flSync();
   if (fl.busy) return;
-  // a click inside a room already on the list names that room instead of
-  // adding it twice (seen live on a house set's A2.1: DINING and GREAT ROOM are
-  // one open space, and the second click listed it again)
   const dup = fl.rooms.findIndex(r => r.pts && flPointIn(r.pts, px, py));
   if (dup >= 0) {
     const r = fl.rooms[dup];
-    setStatus(`that point is inside ${r.name || "a room"} already on the list (${Math.round(r.area_sf)} SF) — click a space that is not listed yet, or remove that row first`, "warn");
+    setStatus(`that point is inside ${r.name || "a room"} already on the list (${r.area_sf == null ? (Math.round(+r.area_pt2 || 0).toLocaleString() + " pt²") : Math.round(r.area_sf) + " SF"}) — click a space that is not listed yet, or remove that row first`, "warn");
     return;
   }
   fl.busy = true;
   setStatus("finding the room\u2026", "busy");
   try {
-    const r = await fetch(`/api/job/${state.job}/page/${state.page}/rooms/pick`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      // the scale ON SCREEN travels with the click: a typed scale lives only
-      // in this browser until Approve, and the server's own record is the
-      // reviewer's pick, then the engine's reading (server _room_pick_scale)
-      body: JSON.stringify({ x: px, y: py, styles: flVisibleStyles(), closures: fl.closures,
-                             scale_ft_per_in: flScreenScale() }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { setStatus(j.detail || `room lookup failed (${r.status})`, "err"); return; }
-    if (!j.ok) { setStatus(j.why, "err"); return; }
-    const cl = j.ceiling || null;
-    const room = { name: j.name || null, pts: j.polygon, area_sf: j.area_sf, area_pt2: j.area_pt2,
-                   perim_lf: j.perim_lf, perim_pt: j.perim_pt, openings_lf: j.openings_lf || 0,
-                   holes_sf: j.holes_sf || 0, doors: (j.bridges_used || []).length,
-                   closures: j.closures_used || 0, type: fl.lastType, source: "click", click: [px, py],
-                   // the scale this room's square feet were computed at and
-                   // who set it - an inset's own caption when the click sat
-                   // in one (a house set's A2.1 FLOORING PLAN at 1/8" beside the
-                   // 1/4" plan), else the scale in force on the sheet
-                   scale_ft_per_in: +j.scale_ft_per_in > 0 ? +j.scale_ft_per_in : null,
-                   scale_by: j.scale_by || null,
-                   // the ceiling note read inside the room, if the sheet prints one
-                   ceiling_ft: cl && +cl.ft > 0 ? +cl.ft : null, ceiling_text: cl ? cl.text : null,
-                   ceiling_by: cl && +cl.ft > 0 ? "sheet" : null,
-                   bridges: (j.bridges_used || []).map(b => ({ x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, r: b.r })),
-                   // the fixtures the engine found inside the fill; whether
-                   // each comes out of the flooring is the panel's default
-                   // for its kind until the operator ticks it by hand
-                   objects: (j.objects || []).map(o => flObjFrom(o, fl)),
-                   deductions: [] };
-    // the walls this pick was made with travel with the rooms (restored
-    // after a reload by flApplySaved)
-    fl.wallStyles = flVisibleStyles();
-    flAddRoom(room);
-    setStatus(`${room.name}: ${flRoomLine(room, fl)} \u2014 pick its floor type in the panel, or click the next room`, "ok");
-  } catch (e) {
-    setStatus("room lookup failed \u2014 the server did not answer", "err");
+    // the scale ON SCREEN travels with the click: a typed scale lives only in this browser until Approve
+    const t = fl.types[fl.lastType];
+    const d = await flAct({ kind: "room_pick", page: state.page, x: px, y: py, styles: flVisibleStyles(),
+                            scale_ft_per_in: flScreenScale(), zone: flZoneAt(px, py), type: t ? t.id : null },
+                          { status: (rep) => { const r = state.fl.rooms.find(q => q.uid === rep.room_uid);
+                                               return r ? `${r.name}: ${flRoomLine(r, state.fl)} \u2014 pick its floor type in the panel, or click the next room` : "room added"; } });
+    return d;
   } finally {
     fl.busy = false;
   }
@@ -21411,73 +23139,50 @@ function flFinishDraw() {
     if (!pts.length || Math.hypot(q[0] - pts[pts.length - 1][0], q[1] - pts[pts.length - 1][1]) > 0.5) pts.push(q);
   if (pts.length >= 2 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 0.5) pts.pop();
   if (pts.length < 3) return setStatus(`an outline needs at least 3 corners (have ${pts.length}) \u2014 keep clicking, or Esc to cancel`, "err");
-  const fpp = stFtPerPt();
-  const area_pt2 = stPolyArea(pts), perim_pt = stPolyPerim(pts);
-  const room = { name: null, pts, area_sf: fpp ? area_pt2 * fpp * fpp : null, area_pt2,
-                 perim_lf: fpp ? perim_pt * fpp : null, perim_pt, openings_lf: 0, holes_sf: 0,
-                 doors: 0, closures: 0, type: fl.lastType, source: "drawn", click: null,
-                 ceiling_ft: null, ceiling_text: null, ceiling_by: null, bridges: [],
-                 scale_ft_per_in: null, scale_by: null,
-                 objects: [], deductions: [] };
   fl.drawPts = []; fl.hover = null; polySnapClear(); state.tool = null;
-  flAddRoom(room);
-  setStatus(`${room.name}: ${flRoomLine(room, fl)}`, "ok");
-  // An outline traced inside an INSET is at the inset's scale, not the
-  // sheet's: ask the server which caption governs the outline's centre
-  // (the same decision a click pick makes) and re-measure when it differs.
-  flInsetRemeasure(room);
+  const t = fl.types[fl.lastType];
+  // an outline traced by hand: the server measures it, decides which printed scale governs it and finds
+  // the doors on its edges (the same decisions a pick makes)
+  flAct({ kind: "room_draw", page: state.page, pts: pts.map(p => [p[0], p[1]]), scale_ft_per_in: flScreenScale(), type: t ? t.id : null },
+        { status: (rep) => { const r = state.fl.rooms.find(q => q.uid === rep.room_uid); return r ? `${r.name}: ${flRoomLine(r, state.fl)}` : "room added"; } });
 }
-async function flInsetRemeasure(room) {
-  if (!state.job || !room || !room.pts || room.pts.length < 3) return;
-  let cx = 0, cy = 0;
-  for (const p of room.pts) { cx += p[0]; cy += p[1]; }
-  cx /= room.pts.length; cy /= room.pts.length;
-  const sc = flScreenScale();
-  const q = `x=${cx.toFixed(2)}&y=${cy.toFixed(2)}` + (sc ? `&scale_ft_per_in=${sc}` : "");
-  try {
-    const resp = await fetch(`/api/job/${state.job}/page/${state.page}/scale/at?${q}`);
-    if (!resp.ok) return;
-    const j = await resp.json();
-    if (!j || !(+j.ft_per_paper_inch > 0) || !/^inset/.test(String(j.scale_by || ""))) return;
-    const fl = flSync();
-    if (!fl.rooms.includes(room)) return;
-    room.scale_ft_per_in = +j.ft_per_paper_inch; room.scale_by = j.scale_by;
-    const fpp = room.scale_ft_per_in / 72;
-    room.area_sf = room.area_pt2 * fpp * fpp;
-    room.perim_lf = room.perim_pt * fpp;
-    flApplyItems(); renderFl(); draw();
-    setStatus(`${room.name}: ${flRoomLine(room, fl)}`, "ok");
-  } catch (e) { /* the sheet's scale stands */ }
-}
-function flCloseClick(px, py) {
+// the doors the server could not place on a room's edge (no arc drawn to
+// measure the swing on): hinge and leaf, for the row's "add it by hand"
+// the bridges of a pick reply as a room keeps them
+// a room's openings from its doors
+// the gaps closed by hand on a room's outline, as openings (a cased opening
+// the estimator closed so the fill would stop: no base across it - an
+// inference from "excluding the doorways"; listed so it can be removed)
+// a fresh list of detected openings into a room, keeping what the estimator
+// did: a typed width stays on the opening it was typed on, an opening removed
+// by hand stays removed, an opening added by hand stays
+// the doors on a room's edges, from the server (rooms.openings_on_outline)
+// which printed scale governs a traced room (server _room_scale_info), and its reason
+function flCloseClick(px, py, asWall) {
   const fl = flSync();
   if (!fl.closeDraft) {
     fl.closeDraft = [px, py];
-    setStatus("close a gap: now click the other side of the opening", "busy");
+    setStatus(asWall ? "draw a wall: now click its other end" : "close a gap: now click the other side of the opening", "busy");
     draw();
     return;
   }
   const seg = [fl.closeDraft[0], fl.closeDraft[1], px, py];
   fl.closeDraft = null;
   if (Math.hypot(seg[2] - seg[0], seg[3] - seg[1]) < 0.5) return;
-  fl.closures.push(seg);
-  state.calcFlApplied = true;
-  calcStateDirty();
+  if (asWall) {
+    // a WALL drawn by hand: for the fill only. Never an opening (a closed gap is one: the base runs
+    // past it and a transition sits on it), never a takeoff line, in no export.
+    flAct({ kind: "aids_add", page: state.page, key: "wallLines", value: seg },
+          { status: () => `wall drawn (${(state.fl.wallLines || []).length} on this sheet, for room picks only) \u2014 draw another, or Pick rooms` });
+    return;
+  }
   state.tool = "fl-pick";
-  setStatus(`gap closed (${fl.closures.length} on this sheet) \u2014 now click inside the room`, "ok");
-  renderFl(); draw();
+  flAct({ kind: "aids_add", page: state.page, key: "closures", value: seg },
+        { status: () => `gap closed (${(state.fl.closures || []).length} on this sheet) \u2014 now click inside the room` });
 }
 // an object record as the panel keeps it: the engine's fixture, plus
 // whether it comes out (the panel default for its kind) and whether a
 // person decided that (a changed default then leaves it alone)
-function flObjFrom(o, fl) {
-  const kind = String(o.kind || "shape");
-  const dflt = fl && fl.deductDefaults ? fl.deductDefaults : FL_DEDUCT_DEFAULTS;
-  return { kind, layer: o.layer || null, area_sf: +o.area_sf || 0,
-           w_ft: +o.w_ft || 0, h_ft: +o.h_ft || 0, guessed: !!o.guessed,
-           pts: Array.isArray(o.polygon) ? o.polygon.map(p => [p[0], p[1]]) : [],
-           deduct: !!dflt[kind] && !o.guessed, manual: false };
-}
 // ray cast, pt space
 function flPointIn(pts, x, y) {
   let inside = false;
@@ -21488,11 +23193,6 @@ function flPointIn(pts, x, y) {
   return inside;
 }
 // a changed default reaches every object of that kind nobody ticked by hand
-function flApplyDeductDefaults(fl) {
-  for (const r of fl.rooms)
-    for (const o of (r.objects || []))
-      if (!o.manual) o.deduct = !!fl.deductDefaults[o.kind] && !o.guessed;
-}
 // DEDUCT BY CLICK. Inside a picked room: a listed object under the click
 // toggles; anything else is asked of the engine with EVERY line type as a
 // wall, so the cell the click sits in (a tub drawn on no layer, a hearth)
@@ -21502,42 +23202,13 @@ async function flDeductClick(px, py) {
   const fl = flSync();
   const ri = fl.rooms.findIndex(r => r.pts && r.pts.length >= 3 && flPointIn(r.pts, px, py));
   if (ri < 0) return setStatus("deduct: click inside a room you have already picked", "err");
-  const r = fl.rooms[ri];
-  const oi = (r.objects || []).findIndex(o => o.pts && o.pts.length >= 3 && flPointIn(o.pts, px, py));
-  if (oi >= 0) {
-    const o = r.objects[oi];
-    o.deduct = !o.deduct; o.manual = true;
-    flApplyItems(); renderFl(); draw();
-    return setStatus(`${r.name}: ${o.kind} ${flFmt(o.area_sf, 1)} SF ${o.deduct ? "taken out of" : "back in"} the flooring — ${flRoomLine(r, fl)}`, "ok");
-  }
-  const di = (r.deductions || []).findIndex(d => d.pts && d.pts.length >= 3 && flPointIn(d.pts, px, py));
-  if (di >= 0) {
-    r.deductions.splice(di, 1);
-    flApplyItems(); renderFl(); draw();
-    return setStatus(`${r.name}: that deduction is back in the flooring — ${flRoomLine(r, fl)}`, "ok");
-  }
   if (fl.busy) return;
   fl.busy = true;
-  setStatus("finding the shape under the click…", "busy");
+  setStatus("finding the shape under the click\u2026", "busy");
   try {
-    const all = (state.result.styles || []).map(s => s.style_id);
-    const resp = await fetch(`/api/job/${state.job}/page/${state.page}/rooms/pick`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ x: px, y: py, styles: all, closures: fl.closures,
-                             scale_ft_per_in: flScreenScale() }),
-    });
-    const j = await resp.json().catch(() => ({}));
-    if (!resp.ok) return setStatus(j.detail || `lookup failed (${resp.status})`, "err");
-    if (!j.ok) return setStatus(j.why, "err");
-    if (!(j.area_sf > 0)) return setStatus("no scale set — nothing can be deducted in square feet", "err");
-    if (j.area_sf >= 0.5 * (r.area_sf || 0))
-      return setStatus(`that click is not inside a fixture — the lines around it enclose ${flFmt(j.area_sf)} SF, most of the room`, "err");
-    r.deductions = r.deductions || [];
-    r.deductions.push({ name: "clicked out", area_sf: j.area_sf, pts: j.polygon });
-    flApplyItems(); renderFl(); draw();
-    setStatus(`${r.name}: ${flFmt(j.area_sf, 1)} SF taken out of the flooring — ${flRoomLine(r, fl)}`, "ok");
-  } catch (e) {
-    setStatus("lookup failed — the server did not answer", "err");
+    // a listed object toggles; a shape clicked out goes back in; anything else the lines enclose (with every line
+    // type as a wall) is measured by the server and taken out - refused when it is most of the room
+    await flAct({ kind: "deduct_at", page: state.page, uid: fl.rooms[ri].uid, x: px, y: py });
   } finally {
     fl.busy = false;
   }
@@ -21576,13 +23247,12 @@ function flEditEdgeAt(pts, x, y, tol) {
   return best;
 }
 // the room's numbers from its polygon; everything else stays as picked
-function flEditRecompute(r, fpp) {
-  r.area_pt2 = stPolyArea(r.pts);
-  r.perim_pt = stPolyPerim(r.pts);
-  r.area_sf = fpp ? r.area_pt2 * fpp * fpp : null;
-  r.perim_lf = fpp ? r.perim_pt * fpp : null;
-  r.source = "edited";
-  return r;
+// after a reshape: what was put back, and the doors on the new edges
+function flEditAfter(r, pts, what) {
+  // a reshape is an act: the server measures the new outline, puts back an edge left out that is no
+  // longer on it, and finds the doors on the new edges; the room's checks open again
+  flAct({ kind: "room_edit", page: state.page, uid: r.uid, pts: pts.map(p => [p[0], p[1]]) },
+        { status: () => { const r2 = state.fl.rooms.find(q => q.uid === r.uid); return r2 ? `${r2.name}: ${what} \u2014 ${flRoomLine(r2, state.fl)}` : what; } });
 }
 function flEditSelect(k) {
   const fl = flSync();
@@ -21603,11 +23273,10 @@ function flEditRemoveVertex(i) {
   const r = flEditRoom();
   if (!r || i < 0 || i >= r.pts.length) return;
   if (r.pts.length <= 3) return setStatus("a room keeps at least 3 corners", "err");
-  r.pts.splice(i, 1);
-  flEditRecompute(r, flRoomFpp(r));
+  const pts = r.pts.slice();
+  pts.splice(i, 1);
   fl.edit.hover = null;
-  flApplyItems(); renderFl(); draw();
-  setStatus(`${r.name}: corner removed — ${flRoomLine(r, fl)}`, "ok");
+  flEditAfter(r, pts, "corner removed");
 }
 addEventListener("mousedown", (e) => {
   if (state.tool !== "fl-edit" || e.target !== cv || e.button !== 0) return;
@@ -21658,9 +23327,7 @@ addEventListener("mouseup", (e) => {
   const d = fl.edit.drag;
   fl.edit.drag = null;
   e.stopImmediatePropagation();
-  flEditRecompute(r, flRoomFpp(r));
-  flApplyItems(); renderFl(); draw();
-  setStatus(`${r.name}: ${d.moved ? "corner moved" : "corner set"} — ${flRoomLine(r, fl)}`, "ok");
+  flEditAfter(r, r.pts.slice(), d.moved ? "corner moved" : "corner set");
 }, true);
 cv.addEventListener("dblclick", (e) => {
   if (state.tool !== "fl-edit") return;
@@ -21682,8 +23349,72 @@ function flCanvasClick(e) {
   if (state.tool === "fl-pick") flPickAt(px, py);
   else if (state.tool === "fl-draw") flDrawClick(px, py);
   else if (state.tool === "fl-close") flCloseClick(px, py);
+  else if (state.tool === "fl-stroke") flCloseClick(px, py, true);
   else if (state.tool === "fl-deduct") flDeductClick(px, py);
   else if (state.tool === "fl-edit") flEditClick(px, py);
+  else if (state.tool === "fl-base") flBaseClick(px, py);
+  else if (state.tool === "fl-open") flOpenClick(px, py);
+  else if (state.tool === "fl-wall") flWallClick(px, py, !!e.shiftKey, !!(e.ctrlKey || e.metaKey));
+}
+// BASE: ADD AN OPENING. A click on a room's outline adds an opening there (a
+// door the engine missed, an opening with no door); its width is typed in
+// the room's openings list - nothing is assumed until it is.
+function flOpenClick(px, py) {
+  const fl = flSync();
+  const tol = flEditTolPt();
+  let best = null;
+  fl.rooms.forEach((r, k) => {
+    if (!r.pts || r.pts.length < 3) return;
+    const ed = flEditEdgeAt(r.pts, px, py, tol);
+    if (!ed) return;
+    const d = Math.hypot(ed.at[0] - px, ed.at[1] - py);
+    if (!best || d < best.d) best = { k, ed, d };
+  });
+  if (!best) return setStatus("add an opening: click ON a room's outline (the coloured edge)", "err");
+  const r = fl.rooms[best.k];
+  // ONE CLICK ON THE WALL (ruling W): where a door's swing is drawn there with no door record, the server
+  // reads its width off the swing; otherwise type the width in the room's openings list
+  flAct({ kind: "opening_add", page: state.page, uid: r.uid, x: best.ed.at[0], y: best.ed.at[1] },
+        { status: (rep) => {
+            const r2 = state.fl.rooms.find(q => q.uid === r.uid);
+            const o = r2 && r2.openings ? r2.openings[r2.openings.length - 1] : null;
+            return o && +o.w_pt > 0 ? `${r2.name}: an opening of ${flFtIn(+o.w_pt * flRoomFpp(r2))} added ${o.by} \u2014 ${flRoomLine(r2, state.fl)}`
+                                    : `${r.name}: an opening added \u2014 type its width in the room's openings list (nothing comes out of the base until you do)`; } });
+}
+// THE STRAIGHT RUN through edge i of an outline: the neighbouring edges whose
+// far corner stays within FL_BASE_TOL of edge i's line (a picked outline is
+// a simplified raster ring, so a straight wall can be several short edges).
+function flStraightRun(pts, i) {
+  const n = pts.length;
+  const a = pts[i], b = pts[(i + 1) % n];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  const ux = (b[0] - a[0]) / L, uy = (b[1] - a[1]) / L;
+  const onLine = (P) => Math.abs((P[0] - a[0]) * uy - (P[1] - a[1]) * ux) <= FL_BASE_TOL;
+  let s = i, e = (i + 1) % n, guard = 0;
+  while (guard++ < n && onLine(pts[(s - 1 + n) % n]) && (s - 1 + n) % n !== e) s = (s - 1 + n) % n;
+  guard = 0;
+  while (guard++ < n && onLine(pts[(e + 1) % n]) && (e + 1) % n !== s) e = (e + 1) % n;
+  return [pts[s][0], pts[s][1], pts[e][0], pts[e][1]];
+}
+// BASE: LEAVE AN EDGE OUT. A click on a room's outline takes that straight run
+// out of the room's base (a wall with no base on it); a click on a run already
+// out puts it back. The run is kept as geometry, so the base follows it
+// through Edit shape and a reload.
+function flBaseClick(px, py) {
+  const fl = flSync();
+  const tol = flEditTolPt();
+  let best = null;
+  fl.rooms.forEach((r, k) => {
+    if (!r.pts || r.pts.length < 3) return;
+    const ed = flEditEdgeAt(r.pts, px, py, tol);
+    if (!ed) return;
+    const d = Math.hypot(ed.at[0] - px, ed.at[1] - py);
+    if (!best || d < best.d) best = { k, ed, d };
+  });
+  if (!best) return setStatus("base: click ON a room's outline (the coloured edge) to leave that run out", "err");
+  const r = fl.rooms[best.k];
+  flAct({ kind: "base_toggle", page: state.page, uid: r.uid, x: best.ed.at[0], y: best.ed.at[1] },
+        { status: (rep) => { const r2 = state.fl.rooms.find(q => q.uid === r.uid); return r2 ? `${rep.said} \u2014 ${flRoomLine(r2, state.fl)}` : rep.said; } });
 }
 const _flClickBefore = handleCanvasClick;
 handleCanvasClick = function (e) {
@@ -21696,7 +23427,7 @@ addEventListener("mousemove", (e) => {
     state.fl.hover = ptFromEvent(e);
     polySnapHover(state.fl.hover[0], state.fl.hover[1]);
     draw();
-  } else if (state.tool === "fl-close" && state.fl.closeDraft) {
+  } else if ((state.tool === "fl-close" || state.tool === "fl-stroke") && state.fl.closeDraft) {
     state.fl.hover = ptFromEvent(e);
     draw();
   }
@@ -21726,9 +23457,9 @@ addEventListener("keydown", (e) => {
       setStatus(fl.drawPts.length ? `room outline: ${fl.drawPts.length} corner(s) \u2014 Esc again removes another`
                                   : "all corners removed \u2014 Esc again exits", "busy");
       draw();
-    } else if (state.tool === "fl-close" && fl.closeDraft) {
+    } else if ((state.tool === "fl-close" || state.tool === "fl-stroke") && fl.closeDraft) {
       fl.closeDraft = null;
-      setStatus("close a gap: first point cleared \u2014 Esc again exits", "busy");
+      setStatus("first point cleared \u2014 Esc again exits", "busy");
       draw();
     } else {
       flDisarm("flooring: tool released");
@@ -21746,51 +23477,146 @@ function renderFl() {
   const fpp = stFtPerPt();
   const tot = flTotals(fl.types, fl.rooms, fl);
 
-  // floor types: colour, name, prices, waste, what they hold
+  // floor types: colour, name, price per its BID UNIT, base price, waste, what they hold
   const tbl = mk("div", "fl-types-tbl");
-  for (const h of ["floor type", "$/SF", "$/LF base", "waste %", ""]) tbl.appendChild(mk("div", "fl-th", h));
+  for (const h of ["floor type", "rate", "$/LF base", "waste %", ""]) tbl.appendChild(mk("div", "fl-th", h));
+  const job = flJobFor();
+  const ro = !!(job && job.stale);
+  const lineOf = (id) => job && job.comp ? (job.comp.lines || []).find(l => l.id === id) : null;
+  const money = (inp, getc, setc) => {
+    inp.className = "fl-num"; inp.inputMode = "decimal"; inp.disabled = ro;
+    const c = getc();
+    inp.value = Number.isInteger(c) ? flMoney(c).replace(/,/g, "") : "";
+    inp.onchange = () => { setc(inp.value); };
+  };
   fl.types.forEach((t, i) => {
     const sw = document.createElement("input");
     sw.type = "color"; sw.value = t.color; sw.className = "fl-swatch";
     sw.title = "the colour this floor type paints on the sheet";
-    sw.oninput = () => { t.color = sw.value; draw(); calcStateDirty(); };
+    sw.onchange = () => flAct({ kind: "type_set", id: t.id, field: "color", value: sw.value });
     const nm = document.createElement("input");
-    nm.value = t.name; nm.className = "fl-name"; nm.placeholder = "floor type";
-    nm.oninput = () => { t.name = nm.value; flApplyItems(); };
+    nm.value = t.name; nm.className = "fl-name"; nm.placeholder = "floor type"; nm.disabled = ro; nm.maxLength = 40;
+    nm.onchange = () => flAct({ kind: "type_set", id: t.id, field: "name", value: nm.value });
     const cell = mk("div", "fl-td fl-td-name"); cell.append(sw, nm);
-    const num = (key) => {
-      const inp = document.createElement("input");
-      inp.type = "number"; inp.step = "0.01"; inp.min = "0"; inp.className = "fl-num";
-      inp.value = t[key] || "";
-      inp.oninput = () => { t[key] = +inp.value || 0; flApplyItems(); };
-      const c = mk("div", "fl-td"); c.appendChild(inp); return c;
-    };
     const tt = tot[i];
-    // what this type holds, on its own line under the name: the name and
-    // the two prices already fill a 350 px panel, and squeezed into a
-    // fifth column the name read "Car" / "Har" (Belle capture, 2026-09-08)
+    // THE RATE, whole cents in the type's own BID UNIT; the unit is chosen here and a change converts
+    // the rate to whole cents and shows the amount before and after
+    const pc = mk("div", "fl-td fl-price");
+    const pi = document.createElement("input");
+    money(pi, () => t.rate_cents, v => flSetPrice(t, "floor", v));
+    pi.classList.add("fl-price-in");
+    pi.placeholder = "$/" + flUnit(t);
+    pi.title = `Rate per ${flUnit(t) === "SY" ? "square yard" : "square foot"}, in dollars and cents. Blank or 0 = no price.`;
+    const us = document.createElement("select");
+    us.className = "fl-sel fl-unit"; us.disabled = ro;
+    us.title = "The unit this floor type is ordered and priced in. A change converts the rate ($/SY = 9 x $/SF), rounded to whole cents.";
+    for (const u of ["SF", "SY"]) {
+      const o = document.createElement("option"); o.value = u; o.textContent = "$/" + u;
+      if (flUnit(t) === u) o.selected = true;
+      us.appendChild(o);
+    }
+    us.onchange = () => flSetUnit(t, us.value);
+    pc.append(pi, us);
+    const bc = mk("div", "fl-td");
+    const bi = document.createElement("input");
+    money(bi, () => t.base_rate_cents, v => flSetPrice(t, "base", v));
+    bi.placeholder = "$/LF";
+    bc.appendChild(bi);
+    // what this type holds: net (here), and the ORDER, packs and amount AS THE SERVER PRINTED THEM
+    const u = tt.unit, areaOrder = FL_SY_KINDS.includes(t.kind);
+    const fline = lineOf("floor:" + t.id), bline = lineOf("base:" + t.id);
     const totc = mk("div", "fl-td fl-tot ew-meta", tt.rooms
-      ? `${flFmt(tt.sf)} SF \u00b7 ${flFmt(tt.lf)} LF base \u00b7 ${tt.rooms} room${tt.rooms === 1 ? "" : "s"}`
-        + (tt.waste_pct > 0 ? ` \u00b7 +${flFmt(tt.waste_sf)} SF waste` : "")
+      ? `net ${flFmt(tt.net, 2)} ${u}` + (u === "SY" ? ` (${flFmt(tt.sf, 1)} SF)` : areaOrder ? ` (${flFmt(tt.sy, 2)} SY)` : "")
+        + (tt.waste_set ? ` \u00b7 ${flFmt(tt.waste_pct, 1)}% waste${tt.waste_by === "default" ? " (the kind's stated default)" : ""}` : " \u00b7 waste not set")
+        + (fline ? ` \u00b7 order ${fline.qty} ${u}${t.pack ? " in packs" : ""}` + (fline.amount ? ` \u00b7 amount $${fline.amount}` : " \u00b7 no price") : " \u00b7 (the job's estimate counts every sheet)")
+        + (areaOrder ? " \u00b7 order from the floor area, not from a cut layout" : "")
+        + (t.rate_note ? ` \u00b7 ${t.rate_note}` : "")
+        + ` \u00b7 ${flFmt(tt.lf, 1)} LF ${tt.integral ? "integral base" : "base"}` + (bline ? ` (${bline.qty} l/f${bline.amount ? ", $" + bline.amount : ""})` : "")
+        + ` \u00b7 ${tt.rooms} room${tt.rooms === 1 ? "" : "s"} on this sheet`
         + (tt.wall_rooms ? ` \u00b7 ${flFmt(tt.wall_sf)} SF wall area` : "")
-      : "no rooms yet");
-    const rm = mk("button", "mini", "\u00d7");
-    rm.title = "remove this floor type (its rooms become unassigned)";
-    rm.onclick = () => {
-      fl.types.splice(i, 1);
-      for (const r of fl.rooms) { if (r.type === i) r.type = null; else if (r.type > i) r.type -= 1; }
-      if (fl.lastType >= fl.types.length) fl.lastType = 0;
-      flApplyItems(); renderFl(); draw();
+      : "no rooms on this sheet" + (tt.waste_set ? "" : " \u00b7 waste not set") + (t.rate_note ? ` \u00b7 ${t.rate_note}` : ""));
+    // WHAT IT IS: kind, integral base, packs, no charge, manufacturer / colour / style, its base product
+    const mat = mk("div", "fl-td fl-tot fl-mat");
+    const kindSel = document.createElement("select");
+    kindSel.className = "fl-sel fl-kind"; kindSel.disabled = ro;
+    kindSel.title = "What this floor type is. It sets the DEFAULT waste only: square goods / carpet tile 7% and ceramic tile 15% (the contractor's stated allowances); every other kind starts with waste not set. It never changes the unit or the rate.";
+    for (const [v, txt] of FL_KINDS) {
+      const o = document.createElement("option"); o.value = v; o.textContent = txt;
+      if ((t.kind || "") === v) o.selected = true;
+      kindSel.appendChild(o);
+    }
+    kindSel.onchange = () => flSetKind(t, kindSel.value);
+    const chk = (label, key, title) => {
+      const lab = document.createElement("label"); lab.className = "ew-meta fl-ib"; lab.title = title;
+      const c = document.createElement("input"); c.type = "checkbox"; c.checked = !!t[key]; c.disabled = ro;
+      c.onchange = () => flAct({ kind: "type_set", id: t.id, field: key, value: c.checked });
+      lab.append(c, document.createTextNode(" " + label));
+      return lab;
     };
+    mat.append(kindSel,
+      chk("integral base", "integral", "Integral base: the floor goods turned up the wall. Its base footage becomes its own \"Integral base\" line."),
+      chk("no charge", "no_charge", "The floor line prints \"No charge\" on purpose (it is then not a check)."),
+      chk("base no charge", "base_no_charge", "The base line prints \"No charge\" on purpose."));
+    const field = (key, ph, title) => {
+      const inp = document.createElement("input");
+      inp.className = "fl-spec"; inp.placeholder = ph; inp.maxLength = 60; inp.disabled = ro;
+      inp.value = t[key] === null || t[key] === undefined ? "" : String(t[key]);
+      inp.title = title;
+      inp.onchange = () => flAct({ kind: "type_set", id: t.id, field: key, value: inp.value });
+      mat.appendChild(inp);
+    };
+    field("mfr", "manufacturer", "Plain text, for the estimate's description");
+    field("colour", "colour", "Plain text, for the estimate's description");
+    field("style", "style", "Plain text, for the estimate's description");
+    field("base_code", "base code", "The base product's code for the estimate (\"WB-1\")");
+    field("base_spec", "base words", "The base product's words for the estimate (manufacturer, colour, height)");
+    // PACKS (ruling K): sold in packs of N <unit> - the order rounds UP to whole packs
+    const pack = (key, units, title) => {
+      const wrap = mk("span", "fl-pack");
+      const sz = document.createElement("input");
+      sz.className = "fl-spec fl-carton"; sz.inputMode = "decimal"; sz.disabled = ro;
+      sz.placeholder = key === "base_pack" ? "LF / carton" : "pack size"; sz.title = title;
+      sz.value = t[key] && t[key].size ? String(t[key].size) : "";
+      const un = document.createElement("select"); un.className = "fl-sel"; un.disabled = ro;
+      for (const x of units) { const o = document.createElement("option"); o.value = x; o.textContent = x; if (t[key] && t[key].unit === x) o.selected = true; un.appendChild(o); }
+      const wd = document.createElement("select"); wd.className = "fl-sel"; wd.disabled = ro;
+      for (const x of ["Boxes", "Cartons", "Rolls", "Pieces"]) {
+        const o = document.createElement("option"); o.value = x; o.textContent = x;
+        if ((t[key] && t[key].word) === x || (!t[key] && x === (key === "base_pack" ? "Cartons" : "Boxes"))) o.selected = true;
+        wd.appendChild(o);
+      }
+      const put = () => {
+        const v = sz.value.trim();
+        if (v && !(/^\d{1,6}(\.\d{1,2})?$/.test(v) && +v > 0)) { setStatus(`"${v}" is not a pack size - a number, at most 2 decimals`, "err"); return; }
+        flAct({ kind: "type_set", id: t.id, field: key, value: v ? { size: v, unit: un.value, word: wd.value } : null });
+      };
+      sz.onchange = put; un.onchange = put; wd.onchange = put;
+      wrap.append(mk("span", "ew-meta", key === "base_pack" ? "base sold in packs of" : "sold in packs of"), sz, un, wd);
+      mat.appendChild(wrap);
+    };
+    pack("pack", ["SF", "SY"], "Sold in packs (boxes of carpet tile, ...): the size of one pack. The order (net + waste) rounds UP to whole packs and prints \"(N Boxes)\". Blank: rounded up to a whole bid unit.");
+    pack("base_pack", ["LF"], "Base sold by the carton: the LF in one carton. The base rounds UP to whole cartons and prints \"(N Cartons)\". Blank: rounded up to a whole LF.");
+    const rm = mk("button", "mini", "\u00d7");
+    rm.title = "remove this floor type (its rooms become unassigned)"; rm.disabled = ro;
+    rm.onclick = () => flAct({ kind: "type_del", id: t.id });
     const rmc = mk("div", "fl-td"); rmc.appendChild(rm);
-    const waste = num("waste_pct");
-    waste.firstChild.step = "0.5"; waste.firstChild.max = "50";
-    waste.firstChild.title = "Waste allowance for this floor type, as a percentage of the measured square feet. Becomes its own row (\"Waste \u2014 Carpet (10%)\") so the measured figure stays visible. Typical allowances run 5-15% by material and layout; this panel does not assume one.";
-    tbl.append(cell, num("sf_price"), num("lf_price"), waste, rmc, totc);
+    // WASTE: blank = not set (never a silent 0); a typed number, 0 included, is a decision
+    const waste = mk("div", "fl-td");
+    const wi = document.createElement("input");
+    wi.type = "number"; wi.step = "0.5"; wi.min = "0"; wi.max = "100"; wi.className = "fl-num fl-waste"; wi.disabled = ro;
+    wi.placeholder = "not set";
+    const wst = flWaste(t);
+    wi.value = wst ? String(wst.pct) : "";
+    wi.classList.toggle("from-default", !!wst && wst.by === "default");
+    wi.title = "Waste allowance, % of the net. Blank = not set: the estimate is held until it is set (0 may be set on purpose). Square goods / carpet tile default to 7% and ceramic tile to 15% (the contractor's stated allowances).";
+    wi.onchange = () => flAct({ kind: "type_set", id: t.id, field: "waste", value: wi.value.trim() });
+    waste.appendChild(wi);
+    tbl.append(cell, pc, bc, waste, rmc, totc, mat);
   });
   types.appendChild(tbl);
   const add = mk("button", "mini", "+ floor type");
-  add.onclick = () => { fl.types.push(flNewType("Type " + (fl.types.length + 1), fl.types.length)); renderFl(); calcStateDirty(); };
+  add.disabled = ro;
+  add.onclick = () => flAct({ kind: "type_add", name: "Type " + (fl.types.length + 1) });
   types.appendChild(add);
   const un = tot.find(t => t.i < 0);
   if (un) types.appendChild(mk("div", "ew-meta fl-unassigned",
@@ -21809,12 +23635,27 @@ function renderFl() {
   wallsBtn.title = "Tick the line types that read as walls (by CAD layer name when the sheet has them, else by line weight) and untick the rest. A suggestion: the checkboxes stay yours.";
   wallsBtn.onclick = () => { flShowWallsOnly(); renderFl(); };
   modes.appendChild(wallsBtn);
+  modes.appendChild(mode("Walls: click a line", "fl-wall", "Click a wall line on the sheet: its whole line type is ticked as wall (Ctrl+click unticks it), and remembered for this job. Shift+click: only that one line is a wall (Ctrl+Shift+click: is not one) - for a partition drawn in the furniture's line type, or a heavy line across a room in a wall type. A click never toggles: clicking again changes nothing."));
+  {
+    const nAdd = (fl.wallAdd || []).length, nDrop = (fl.wallDrop || []).length;
+    if (nAdd || nDrop) {
+      const sp = mk("span", "ew-meta", `lines by hand: ${nAdd} wall${nAdd === 1 ? "" : "s"}, ${nDrop} not \u2014 `);
+      const clr = mk("button", "mini", "clear");
+      clr.onclick = () => flAct({ kind: "aids_set", page: state.page, key: "wallAdd", value: [] })
+        .then(() => flAct({ kind: "aids_set", page: state.page, key: "wallDrop", value: [] }));
+      sp.appendChild(clr);
+      modes.appendChild(sp);
+    }
+  }
   modes.append(
     mode("Pick rooms", "fl-pick", "Click inside a room: the engine fills to the walls of the line types you have showing, bridging the doors it detected"),
     mode("Close a gap", "fl-close", "Two clicks across an opening the sheet leaves open; the fill treats that line as wall"),
+    mode("Draw a wall", "fl-stroke", "Two clicks: a wall the sheet draws in no line the engine found (a partition in hatch or in nothing). It counts as wall for room picks only: not an opening, not a takeoff line, in no export. Saved with the sheet."),
     mode("Draw outline", "fl-draw", "Click each corner of the room yourself"),
     mode("Deduct", "fl-deduct", "Click a fixture inside a picked room: a listed object toggles in or out of the flooring; any other shape the lines enclose (a tub drawn on no layer, a hearth) comes out of that room"),
-    mode("Edit shape", "fl-edit", "Fix an outline by hand: click a room, then drag its corners; press on an edge to add a corner there; double-click or Delete removes one. Area and walls follow the new shape."));
+    mode("Edit shape", "fl-edit", "Fix an outline by hand: click a room, then drag its corners; press on an edge to add a corner there; double-click or Delete removes one. Area and walls follow the new shape."),
+    mode("Base: add an opening", "fl-open", "Click ON a room's outline where an opening is (a door the engine missed, an opening with no door): it is added to that room's openings; type its width there."),
+    mode("Base: leave out an edge", "fl-base", "Click ON a room's outline: that straight run comes out of the room's base (a wall with no base on it). Click it again to put it back. Door openings are listed under each room on their own."));
   const b3 = mk("button", "mini", "3D view");
   b3.title = "Stand the picked rooms up: floors in each type's material and colour, walls to the ceiling height, fixtures cut out. Orbit with the mouse.";
   b3.disabled = !fl.rooms.length;
@@ -21822,6 +23663,60 @@ function renderFl() {
   modes.appendChild(b3);
   modes.appendChild(mk("span", "ew-meta", fpp ? `scale ${state.result.scale.text}` : "NO SCALE SET \u2014 pt only"));
   body.appendChild(modes);
+  if (fl.rescaleOffer) {
+    // THE ROOMS FOLLOW THE SHEET'S RECORDED SCALE (critic 4, B1: sheet_rescale took the browser's number). The scale on
+    // screen reaches them when the sheet is approved with it; the server measures them again and reopens their checks
+    body.appendChild(mk("div", "fl-check ew-meta", `${fl.rescaleOffer.n} room${fl.rescaleOffer.n === 1 ? " on this sheet stands" : "s on this sheet stand"}`
+      + ` on the sheet's recorded scale, not the one on screen now (${state.result.scale.text || flFmt(fl.rescaleOffer.ft, 2) + " ft per inch"}):`
+      + " set it on the sheet's scale to record it (a typed or measured scale is recorded at once) - the rooms are measured at it then, and each asks for its acknowledgement"));
+  }
+  // WORK AREAS THAT CARRY A SCALE (ruling L): on a sheet that prints several scales, a box drawn with
+  // Tools > Work area can say which view it is; every room inside is measured at it, no per-room click
+  if ((state.workZones || []).length) {
+    const choices = [];
+    for (const r of fl.rooms) for (const c of ((r.c && r.c.scale_options) || []))
+      if (+c.ft > 0 && !choices.some(x => Math.abs(x.ft - +c.ft) < 1e-9)) choices.push({ ft: +c.ft, fpi: +c.fpi || null, text: String(c.text || "") });
+    for (const c of fl.zoneChoices || []) if (!choices.some(x => Math.abs(x.ft - c.ft) < 1e-9)) choices.push(c);
+    const zw = mk("div", "fl-zones ew-meta");
+    state.workZones.forEach((z, zi) => {
+      const box = [Math.min(z[0], z[2]), Math.min(z[1], z[3]), Math.max(z[0], z[2]), Math.max(z[1], z[3])];
+      const cur = (fl.zoneScales || []).find(q => q.box.every((v, k2) => Math.abs(v - box[k2]) < 0.5));
+      const sel = document.createElement("select"); sel.className = "fl-sel";
+      const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "no scale of its own"; sel.appendChild(o0);
+      choices.forEach((c, ci) => {
+        const o = document.createElement("option"); o.value = String(ci); o.textContent = c.text.replace(/^SCALE:\s*/i, "");
+        if (cur && Math.abs((+cur.fpi || 0) - (+c.fpi || 0)) < 1e-9) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.onchange = () => {
+        const list = (fl.zoneScales || []).filter(q => q !== cur);
+        if (sel.value !== "") { const c = choices[+sel.value]; list.push({ box, fpi: c.fpi || c.ft, text: c.text }); }
+        flAct({ kind: "aids_set", page: state.page, key: "zoneScales", value: list },
+              { status: () => sel.value === "" ? `work area ${zi + 1}: no scale of its own`
+                  : `work area ${zi + 1} is at ${choices[+sel.value].text}: the rooms inside are measured at it (each still asks for its acknowledgement)` });
+      };
+      zw.append(mk("span", null, `work area ${zi + 1}: `), sel, document.createTextNode(" "));
+    });
+    if (!choices.length) {
+      const rd = mk("button", "mini", "read the printed scales");
+      rd.title = "Ask the server which scales this sheet prints, to give a work area its own";
+      rd.onclick = async () => {
+        const z = state.workZones[0];
+        try {
+          const r = await fetch(`/api/job/${state.job}/page/${state.page}/rooms/scale`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ x: (z[0] + z[2]) / 2, y: (z[1] + z[3]) / 2, scale_ft_per_in: flScreenScale() }) });
+          const d = await r.json();
+          fl.zoneChoices = ((d.scale_verdict && d.scale_verdict.choices) || []).filter(c => +c.ft > 0)
+            .map(c => ({ ft: +c.ft, fpi: +c.fpi || null, text: String(c.text || "") }));
+          if (!fl.zoneChoices.length) setStatus("this sheet prints one scale (or none): a work area needs no scale of its own", "ok");
+          renderFl();
+        } catch (e) { setStatus("the server did not answer", "err"); }
+      };
+      zw.appendChild(rd);
+    }
+    body.appendChild(zw);
+  }
 
   // CEILING HEIGHT for rooms whose label carries none: one typed default.
   // Rooms with a note on the sheet keep the sheet's number (each row says
@@ -21833,7 +23728,7 @@ function renderFl() {
     inp.type = "number"; inp.step = "0.25"; inp.min = "0"; inp.className = "fl-num";
     inp.placeholder = "ft"; inp.value = fl.default_ceiling_ft || "";
     inp.title = "Feet. Applies only to rooms whose label prints no ceiling height; a room's own note (\"9'-1 1/8\\\" CEILING\") always wins, and each room's line says which was used.";
-    inp.oninput = () => { const v = +inp.value; fl.default_ceiling_ft = v > 0 ? v : null; flApplyItems(); renderFl(); };
+    inp.onchange = () => { const v = +inp.value; flAct({ kind: "aids_set", page: state.page, key: "default_ceiling_ft", value: v > 0 ? v : null }); };
     row.appendChild(inp);
     const n = fl.rooms.filter(r => flWallSf(r, fl)).length;
     row.appendChild(mk("span", "ew-meta", n ? `${n} of ${fl.rooms.length} room${fl.rooms.length === 1 ? "" : "s"} have a height \u2192 wall area rows` : (fl.rooms.length ? "no room has a height yet" : "")));
@@ -21852,7 +23747,8 @@ function renderFl() {
       lab.className = "fl-deduct-k";
       const ck = document.createElement("input"); ck.type = "checkbox";
       ck.checked = kinds.every(k => !!fl.deductDefaults[k]);
-      ck.onchange = () => { for (const k of kinds) fl.deductDefaults[k] = ck.checked; flApplyDeductDefaults(fl); flApplyItems(); renderFl(); draw(); };
+      ck.onchange = () => { const dd = Object.assign({}, fl.deductDefaults); for (const k of kinds) dd[k] = ck.checked;
+                            flAct({ kind: "aids_set", page: state.page, key: "deductDefaults", value: dd }); };
       lab.append(ck, document.createTextNode(" " + label));
       lab.title = kinds.includes("cabinet")
         ? "Off by default: many crews run the floor under base cabinets. Turn it on if yours stops at the toe kick."
@@ -21914,7 +23810,7 @@ function renderFl() {
           if (flWallClassOf(s, fl) === c) o.selected = true;
           sel.appendChild(o);
         }
-        sel.onchange = () => { fl.wallClass[s.style_id] = sel.value; fl._faceCache = null; flApplyItems(); renderFl(); };
+        sel.onchange = () => flAct({ kind: "aids_set", page: state.page, key: "wallClass", value: Object.assign({}, fl.wallClass, { [s.style_id]: sel.value }) });
         row.appendChild(sel);
         det.appendChild(row);
       }
@@ -21927,12 +23823,12 @@ function renderFl() {
         if (String(fl.wallFaces || "") === v) o.selected = true;
         faces.appendChild(o);
       }
-      faces.onchange = () => { fl.wallFaces = faces.value ? +faces.value : null; flApplyItems(); renderFl(); };
+      faces.onchange = () => flAct({ kind: "aids_set", page: state.page, key: "wallFaces", value: faces.value ? +faces.value : null });
       opts.appendChild(faces);
       const cb = document.createElement("label");
       cb.className = "ew-meta";
       const ck = document.createElement("input"); ck.type = "checkbox"; ck.checked = !!fl.wallRows;
-      ck.onchange = () => { fl.wallRows = ck.checked; flApplyItems(); renderFl(); };
+      ck.onchange = () => flAct({ kind: "aids_set", page: state.page, key: "wallRows", value: ck.checked });
       cb.append(ck, document.createTextNode(" add centreline wall LF rows to the takeoff"));
       cb.title = "Off by default: the measured line rows already list this linework, and a priced centreline row beside a priced line row is the same wall twice. Tick it when the line rows are unpriced.";
       opts.appendChild(cb);
@@ -21940,10 +23836,18 @@ function renderFl() {
     }
     body.appendChild(box);
   }
+  if ((fl.wallLines || []).length) {
+    const n = fl.wallLines.length;
+    const c = mk("div", "ew-meta", `${n} wall${n === 1 ? "" : "s"} drawn by hand on this sheet (room picks only: not a takeoff line, in no export) `);
+    const clr = mk("button", "mini", "clear");
+    clr.onclick = () => flAct({ kind: "aids_set", page: state.page, key: "wallLines", value: [] });
+    c.appendChild(clr);
+    body.appendChild(c);
+  }
   if (fl.closures.length) {
     const c = mk("div", "ew-meta", `${fl.closures.length} gap${fl.closures.length === 1 ? "" : "s"} closed by hand on this sheet `);
     const clr = mk("button", "mini", "clear");
-    clr.onclick = () => { fl.closures = []; calcStateDirty(); renderFl(); draw(); };
+    clr.onclick = () => flAct({ kind: "aids_set", page: state.page, key: "closures", value: [] });
     c.appendChild(clr);
     body.appendChild(c);
   }
@@ -21962,7 +23866,7 @@ function renderFl() {
     // report (audit D27). Rebuild the rows on every edit; the panel itself
     // is not re-rendered here, which would replace this input mid-word.
     nm.title = r.name || "";
-    nm.oninput = () => { r.name = nm.value; nm.title = nm.value; flApplyItems(); };
+    nm.onchange = () => flAct({ kind: "room_name", page: state.page, uid: r.uid, name: nm.value });
     const sel = document.createElement("select");
     sel.className = "fl-sel";
     const o0 = document.createElement("option"); o0.value = ""; o0.textContent = "\u2014 floor type \u2014"; sel.appendChild(o0);
@@ -21972,9 +23876,9 @@ function renderFl() {
       sel.appendChild(o);
     });
     sel.onchange = () => {
-      r.type = sel.value === "" ? null : +sel.value;
-      if (Number.isInteger(r.type)) fl.lastType = r.type;
-      flApplyItems(); renderFl(); draw();
+      const ti = sel.value === "" ? null : +sel.value;
+      if (Number.isInteger(ti)) fl.lastType = ti;
+      flAct({ kind: "room_type", page: state.page, uid: r.uid, type: Number.isInteger(ti) && fl.types[ti] ? fl.types[ti].id : null });
     };
     const ed = mk("button", "mini", "edit");
     ed.title = "reshape this room's outline by hand: drag corners, add one on an edge, remove with a double-click";
@@ -21982,7 +23886,7 @@ function renderFl() {
     ed.onclick = () => (state.tool === "fl-edit" && fl.edit && fl.edit.room === k) ? flDisarm("edit shape: done") : flEditSelect(k);
     const rm = mk("button", "mini", "\u00d7");
     rm.title = "remove this room";
-    rm.onclick = () => { if (fl.edit && fl.edit.room === k) fl.edit = null; fl.rooms.splice(k, 1); flApplyItems(); renderFl(); draw(); };
+    rm.onclick = () => { if (fl.edit && fl.edit.room === k) fl.edit = null; flAct({ kind: "room_del", page: state.page, uid: r.uid }); };
     // the ceiling height: the sheet's note prefilled, a typed number wins
     const clg = document.createElement("input");
     clg.type = "number"; clg.step = "0.01"; clg.min = "0"; clg.className = "fl-num fl-clg";
@@ -21991,16 +23895,101 @@ function renderFl() {
     clg.classList.toggle("from-sheet", r.ceiling_by === "sheet");
     clg.title = (r.ceiling_by === "sheet" ? `Ceiling height read in this room: ${r.ceiling_text}. ` : r.ceiling_text ? `The room says "${r.ceiling_text}" but prints no height. ` : "No ceiling note read in this room. ")
       + "Feet; type to override. Wall area = perimeter \u00d7 height, door openings out.";
-    clg.oninput = () => {
-      const v = +clg.value;
-      if (v > 0) { r.ceiling_ft = v; r.ceiling_by = "typed"; }
-      else { r.ceiling_ft = null; r.ceiling_by = null; }
-      clg.classList.remove("from-sheet");
-      flApplyItems(); renderFl();
-    };
-    top.append(dot, nm, sel, clg, ed, rm);
+    clg.onchange = () => { const v = +clg.value; flAct({ kind: "room_ceiling", page: state.page, uid: r.uid, ft: v > 0 ? v : null }); };
+    // A ROOM WITH NO FLOOR TYPE holds the estimate (critic 4, M1): type it, or leave it out on purpose (on the worksheet)
+    const exb = mk("button", "mini", r.excluded ? "include" : "exclude");
+    exb.title = r.excluded ? `left out of the estimate by ${r.excluded.by || "?"} ${r.excluded.at || ""}: put it back`
+      : "leave this room out of the estimate on purpose (recorded on the worksheet with your name)";
+    exb.hidden = !r.excluded && r.typeId;
+    exb.onclick = () => flAct({ kind: "room_exclude", page: state.page, uid: r.uid, on: !r.excluded });
+    top.append(dot, nm, sel, exb, clg, ed, rm);
     row.appendChild(top);
     row.appendChild(mk("div", "ew-meta", flRoomLine(r, fl)));
+    // THE SCALE of this room, on a sheet that prints more than one: what it
+    // was measured at and why, amber when it must be checked, and each other
+    // printed scale one click away (server _room_view_scale)
+    // THE SCALE of this room, on a sheet that prints more than one (critic 3, M1): what it was measured at and
+    // why, and EVERY printed scale side by side with the room's net area at it - one click acknowledges the
+    // scale named on the button (the room is measured at it), for the room exactly as shown
+    const sc = r.scale || {};
+    if (sc.pending) {
+      // measured at a scale typed on screen that the sheet does not record (yet): held, said
+      row.appendChild(mk("div", "fl-scale-line ew-meta fl-check", "scale not recorded: " + sc.pending));
+    }
+    if (sc.multi || sc.was_ft) {
+      const ck = ((flJobFor() || {}).comp || {}).checks || [];
+      const chk = ck.find(x => x.kind === "scale" && x.uid === r.uid);
+      const isOpen = !!(chk && chk.open);
+      const sl = mk("div", "fl-scale-line ew-meta");
+      sl.classList.toggle("fl-check", isOpen);
+      sl.appendChild(mk("span", null, (isOpen ? "acknowledge the scale of this room: " : "scale acknowledged: ")
+        + `measured at ${(r.c && r.c.scale_words) || "the sheet's scale"}` + (sc.why ? ` (${sc.why})` : "") + " "));
+      if (!isOpen && r.scale_ack) sl.appendChild(mk("span", null, `- by ${r.scale_ack.by || "?"} ${r.scale_ack.at || ""} `));
+      for (const o of (r.c && r.c.scale_options) || []) {
+        const lbl = String(o.text).replace(/^SCALE:\s*/i, "");
+        const b2 = mk("button", "mini fl-scale-pick" + (o.current ? " fl-scale-ok" : ""), `${lbl}: ${flFmt(o.net_sf)} SF`);
+        b2.title = (o.current ? "This room IS at this scale: acknowledge it" : `Measure this room at ${o.text} and acknowledge it`)
+          + " (recorded on the worksheet with your name; the customer estimate is held until it is)";
+        b2.disabled = !!(flJobFor() || {}).stale || (!isOpen && o.current);
+        b2.onclick = () => flRoomSetScale(r, o);
+        sl.appendChild(b2);
+      }
+      row.appendChild(sl);
+    }
+    // THE OPENINGS IN ITS BASE: each width (typed wins; feet-inches), how it
+    // was read, removable; "perimeter - openings = base" above
+    const ops = Array.isArray(r.openings) ? r.openings : null;
+    const bb = flBase(r);
+    if (ops && bb) {
+      const od = document.createElement("details");
+      od.className = "fl-objs fl-openings";
+      od.open = ops.length > 0 && ops.length <= 6;
+      const sm = document.createElement("summary");
+      sm.className = "ew-meta";
+      sm.textContent = `base: perimeter ${flFmt(bb.ring_lf, 1)} \u2212 openings ${flFmt(bb.out_lf, 1)} (${ops.length}) = ${flFmt(bb.lf, 1)} LF`;
+      od.appendChild(sm);
+      // THE OPENINGS REVIEWED (ruling W): the estimator confirms the count shown, against the drawing; a door the
+      // drawing has no record of is added with one click on its wall (Base: add an opening)
+      {
+        const ck = ((flJobFor() || {}).comp || {}).checks || [];
+        const oc = ck.find(x => x.kind === "openings" && x.uid === r.uid);
+        if (oc) {
+          const line = mk("div", "fl-obj" + (oc.open ? " fl-check" : ""));
+          if (oc.open) {
+            const nu = (r.doors_unplaced || []).length;
+            line.appendChild(document.createTextNode(`${ops.length} opening${ops.length === 1 ? "" : "s"} listed`
+              + (nu ? `; ${nu} door${nu === 1 ? "" : "s"} near it could not be placed` : "") + " - check against the drawing: "));
+            const okb = mk("button", "mini", `confirm ${ops.length} opening${ops.length === 1 ? "" : "s"}`);
+            okb.title = "Recorded on the worksheet with your name. Any change to the list opens it again.";
+            okb.disabled = !!(flJobFor() || {}).stale;
+            okb.onclick = () => flAckOpenings(r);
+            line.appendChild(okb);
+          } else {
+            line.appendChild(document.createTextNode(`openings confirmed: ${oc.ack ? oc.ack.count : ops.length}` + (oc.ack ? ` by ${oc.ack.by} ${oc.ack.at}` : "")));
+          }
+          od.appendChild(line);
+          if (oc.open) od.open = true;
+        }
+      }
+      bb.openings.forEach((o, oi) => {
+        const line = mk("div", "fl-obj fl-opening");
+        const wi = document.createElement("input");
+        wi.className = "fl-open-w"; wi.placeholder = "width";
+        wi.value = +o.w_ft > 0 ? flFtIn(+o.w_ft) : (o.w_lf > 0 ? flFtIn(o.w_lf) : "");
+        wi.title = "This opening's width, with its unit: 3'-0\", 3', 3 ft, 36\" or 36 in. A bare number is refused.";
+        wi.onchange = () => flAct({ kind: "opening_width", page: state.page, uid: r.uid, oid: o.id, value: wi.value.trim() });
+        line.appendChild(wi);
+        line.appendChild(document.createTextNode(` ${+o.w_ft > 0 ? "typed" : o.by}${o.why ? " (" + o.why + ")" : ""}${o.on_edge ? "" : " \u2014 not on the outline, not taken out"}${o.clipped ? " \u2014 cut to the edge it sits on" : ""}${o.slid ? " \u2014 moved along its edge to fit" : ""} `));
+        const x = mk("button", "mini", "\u00d7");
+        x.title = "remove this opening: its width goes back into the base";
+        x.onclick = () => flAct({ kind: "opening_del", page: state.page, uid: r.uid, oid: o.id });
+        line.appendChild(x);
+        line.onmouseenter = () => { fl.hotOpen = [k, oi]; draw(); };
+        line.onmouseleave = () => { fl.hotOpen = null; draw(); };
+        od.appendChild(line);
+      });
+      row.appendChild(od);
+    }
     // the fixtures inside this room, each with its own tick: what the
     // engine found, named from the sheet's layers and its size, and what
     // the operator clicked out
@@ -22019,7 +24008,7 @@ function renderFl() {
         lab.className = "fl-obj";
         const ck = document.createElement("input"); ck.type = "checkbox"; ck.checked = !!o.deduct;
         ck.title = "ticked = taken out of this room's flooring";
-        ck.onchange = () => { o.deduct = ck.checked; o.manual = true; flApplyItems(); renderFl(); draw(); };
+        ck.onchange = () => flAct({ kind: "object_toggle", page: state.page, uid: r.uid, oi, on: ck.checked });
         const txt = `${o.kind}${o.guessed ? "?" : ""} ${flFmt(o.area_sf, 1)} SF · ${o.w_ft.toFixed(1)}×${o.h_ft.toFixed(1)} ft` + (o.layer ? ` · ${o.layer}` : "");
         lab.append(ck, document.createTextNode(" " + txt));
         lab.onmouseenter = () => { fl.hotObj = [k, oi]; draw(); };
@@ -22031,7 +24020,7 @@ function renderFl() {
         lab.className = "fl-obj";
         lab.appendChild(document.createTextNode(`${d.name} ${flFmt(d.area_sf, 1)} SF `));
         const x = mk("button", "mini", "×"); x.title = "put this back into the flooring";
-        x.onclick = () => { r.deductions.splice(di, 1); flApplyItems(); renderFl(); draw(); };
+        x.onclick = () => flAct({ kind: "deduct_del", page: state.page, uid: r.uid, did: d.id });
         lab.appendChild(x);
         det.appendChild(lab);
       });
@@ -22044,6 +24033,7 @@ function renderFl() {
   const assigned = tot.filter(t => t.i >= 0 && t.rooms);
   const tr = flTransitions(fl.rooms, fl.types, fl.closures);
   const wallSf = fl.rooms.reduce((a, r) => { const w = flWallSf(r, fl); return a + (w ? w.net : 0); }, 0);
+  renderFlEstimate($("flEst"));
   $("flResult").textContent = fl.rooms.length
     ? `${fl.rooms.length} room${fl.rooms.length === 1 ? "" : "s"} \u00b7 ` + assigned.map(t => `${t.name} ${flFmt(t.sf)} SF / ${flFmt(t.lf)} LF`).join(" \u00b7 ")
       + (wallSf > 0 ? ` \u00b7 wall area ${flFmt(wallSf)} SF` : "")
@@ -22097,6 +24087,16 @@ function drawFlooring(ctx, k) {
   const armed = FL_TOOLS.includes(state.tool);
   if ($("flPanel").hidden && !armed) return;
   const f = IMG_DPI / 72;
+  // where the last pick's fill got out (the server's leak points): a red ring each, numbered
+  if (fl.leak && fl.leak.page === state.page) {
+    fl.leak.pts.forEach((p, i) => {
+      ctx.beginPath();
+      ctx.arc(p[0] * f, p[1] * f, 14 / k, 0, 2 * Math.PI);
+      ctx.lineWidth = 3 / k; ctx.strokeStyle = "#e0242a"; ctx.setLineDash([]); ctx.stroke();
+      ctx.font = `${Math.round(13 / k)}px sans-serif`; ctx.fillStyle = "#e0242a";
+      ctx.fillText(String(i + 1), p[0] * f + 16 / k, p[1] * f - 10 / k);
+    });
+  }
   const rgba = (hex, a) => {
     const n = parseInt(String(hex).slice(1), 16);
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
@@ -22161,6 +24161,63 @@ function drawFlooring(ctx, k) {
     ctx.beginPath(); ctx.moveTo(c[0] * f, c[1] * f); ctx.lineTo(c[2] * f, c[3] * f);
     ctx.lineWidth = 3 / k; ctx.strokeStyle = FL_CLOSE_COLOR; ctx.setLineDash([]); ctx.stroke();
   }
+  for (const c of (fl.wallLines || [])) {
+    ctx.beginPath(); ctx.moveTo(c[0] * f, c[1] * f); ctx.lineTo(c[2] * f, c[3] * f);
+    ctx.lineWidth = 3 / k; ctx.strokeStyle = FL_WALL_LINE_COLOR; ctx.setLineDash([]); ctx.stroke();
+  }
+  // THE BASE ON THE SHEET: each door's opening as drawn (a solid bar, jamb to
+  // jamb, with its two ends) and every edge left out of the base (dashed)
+  fl.rooms.forEach((r, ri) => {
+    // each opening as the base takes it out: along the edge it sits on, its width
+    const pts = r.pts;
+    const bb = pts && pts.length >= 3 ? flBase(r) : null;
+    const fpp2 = +r.perim_pt > 0 && +r.perim_lf > 0 ? +r.perim_lf / +r.perim_pt : null;
+    (bb ? bb.openings : []).forEach((o, oi) => {
+      const e = flNearestEdge(pts, +o.x, +o.y);
+      const hot = fl.hotOpen && fl.hotOpen[0] === ri && fl.hotOpen[1] === oi;
+      if (!e || !o.on_edge) {
+        ctx.beginPath(); ctx.arc(+o.x * f, +o.y * f, 5 / k, 0, Math.PI * 2);
+        ctx.lineWidth = 2 / k; ctx.strokeStyle = FL_OPEN_COLOR; ctx.setLineDash([2 / k, 2 / k]); ctx.stroke(); ctx.setLineDash([]);
+        return;
+      }
+      const a = pts[e.i], b = pts[(e.i + 1) % pts.length];
+      const ux = (b[0] - a[0]) / e.L, uy = (b[1] - a[1]) / e.L;
+      const w = fpp2 ? o.w_lf / fpp2 : 0;
+      const t0 = Math.max(0, e.t - w / 2), t1 = Math.min(e.L, e.t + w / 2);
+      const x0 = a[0] + ux * t0, y0 = a[1] + uy * t0, x1 = a[0] + ux * t1, y1 = a[1] + uy * t1;
+      ctx.beginPath(); ctx.moveTo(x0 * f, y0 * f); ctx.lineTo(x1 * f, y1 * f);
+      ctx.lineWidth = (hot ? 7 : 4) / k; ctx.strokeStyle = FL_OPEN_COLOR; ctx.setLineDash([]); ctx.stroke();
+      for (const [x, y] of [[x0, y0], [x1, y1]]) {
+        ctx.beginPath(); ctx.arc(x * f, y * f, 3 / k, 0, Math.PI * 2); ctx.fillStyle = FL_OPEN_COLOR; ctx.fill();
+      }
+    });
+    // a door that could not be placed: a dashed ring of its leaf about its
+    // hinge, so the estimator sees where to add the opening by hand
+    for (const u of (r.doors_unplaced || [])) {
+      ctx.beginPath(); ctx.arc(+u.cx * f, +u.cy * f, Math.max(+u.r || 0, 4) * f, 0, Math.PI * 2);
+      ctx.lineWidth = 2 / k; ctx.strokeStyle = FL_OPEN_COLOR; ctx.setLineDash([5 / k, 4 / k]); ctx.stroke(); ctx.setLineDash([]);
+    }
+  });
+  // LINES TICKED BY HAND: walls green, "not a wall" grey dashed
+  if ((fl.wallAdd && fl.wallAdd.length) || (fl.wallDrop && fl.wallDrop.length)) {
+    const add = new Set(fl.wallAdd || []), drop = new Set(fl.wallDrop || []);
+    for (const ch of (state.result && state.result.chains) || []) {
+      const on = add.has(ch.chain_id), off = drop.has(ch.chain_id);
+      if (!on && !off) continue;
+      const P = ch.points || [];
+      if (P.length < 2) continue;
+      ctx.beginPath(); ctx.moveTo(P[0][0] * f, P[0][1] * f);
+      for (let i = 1; i < P.length; i++) ctx.lineTo(P[i][0] * f, P[i][1] * f);
+      ctx.lineWidth = 4 / k; ctx.strokeStyle = on ? "#16a34a" : "#9ca3af";
+      ctx.setLineDash(on ? [] : [6 / k, 4 / k]); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  for (const r of fl.rooms) {
+    for (const s of (r.base_off || [])) {
+      ctx.beginPath(); ctx.moveTo(s[0] * f, s[1] * f); ctx.lineTo(s[2] * f, s[3] * f);
+      ctx.lineWidth = 5 / k; ctx.strokeStyle = FL_BASE_OFF_COLOR; ctx.setLineDash([8 / k, 5 / k]); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
   // the editor: every corner of the selected room as a handle, the hovered
   // corner lit, the spot on a hovered edge where a press would add one
   if (state.tool === "fl-edit" && fl.edit && fl.edit.room !== null && fl.rooms[fl.edit.room]) {
@@ -22186,12 +24243,13 @@ function drawFlooring(ctx, k) {
       ctx.lineWidth = 1.2 / k; ctx.strokeStyle = CV_VERTEX_ON_RG; ctx.stroke();
     }
   }
-  if (state.tool === "fl-close" && fl.closeDraft) {
+  if ((state.tool === "fl-close" || state.tool === "fl-stroke") && fl.closeDraft) {
+    const dc = state.tool === "fl-stroke" ? FL_WALL_LINE_COLOR : FL_CLOSE_COLOR;
     ctx.beginPath(); ctx.arc(fl.closeDraft[0] * f, fl.closeDraft[1] * f, 4 / k, 0, Math.PI * 2);
-    ctx.fillStyle = FL_CLOSE_COLOR; ctx.fill();
+    ctx.fillStyle = dc; ctx.fill();
     if (fl.hover) {
       ctx.beginPath(); ctx.moveTo(fl.closeDraft[0] * f, fl.closeDraft[1] * f); ctx.lineTo(fl.hover[0] * f, fl.hover[1] * f);
-      ctx.lineWidth = 2 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.strokeStyle = FL_CLOSE_COLOR; ctx.stroke(); ctx.setLineDash([]);
+      ctx.lineWidth = 2 / k; ctx.setLineDash([6 / k, 4 / k]); ctx.strokeStyle = dc; ctx.stroke(); ctx.setLineDash([]);
     }
   }
   if (state.tool === "fl-draw" && fl.drawPts.length) {
@@ -23430,6 +25488,7 @@ const TOOLS_MENU_ITEMS = [
   ["coBtn", "coPanel"],
   ["flBtn", "flPanel"],
   ["stBtn", "stPanel"],
+  ["wpBtn", "wpPanel"],     // wall panels: its handler and panel live in webui/wallpanels.js
   ["legendBtn", null],
 ];
 // rows: [{id, hidden, panelHidden|null}] ->
@@ -24113,6 +26172,184 @@ function pvDupeNotes(rows) {
 }
 // PROJECTS-PURE-END ----------------------------------------------------------
 
+// INBOUND-PURE-BEGIN ---------------------------------------------------------
+// BIDS BY E-MAIL: the words of the "From e-mail" list (Projects page), of the
+// project card's e-mail note and of Settings -> Bid address. Pure - no DOM, no
+// fetch - so tests/test_inbound_ui.js runs it under node. Every count is the
+// SERVER's (GET /api/inbound, server.py); nothing is worked out here but the
+// sentence. Page numbers arrive 0-based and are SHOWN 1-based, the way the page
+// strip numbers them.
+const INB_SHOWN = 3;          // messages listed before "show all"
+
+function inbPages(n) { return n + " page" + (n === 1 ? "" : "s"); }
+
+// What Detect did by itself on one e-mailed project, and how to do the rest.
+// a = {queued, done, running, failed, wanted, total, cap} from the list reply.
+function inbAutoText(a) {
+  if (!a) return "";
+  const q = a.queued || 0, d = a.done || 0, t = a.total || 0;
+  if (!q)
+    return "Detect did not start by itself: no sheet read as a plan. Open it and press Detect.";
+  const rest = t > q
+    ? (a.wanted > q
+      ? " E-mail detects up to " + a.cap + " pages by itself: open it and press Detect all to do the other " + (t - q) + "."
+      : " The other " + (t - q) + " did not read as plans: open it and press Detect on any you need.")
+    : "";
+  if (a.running)
+    // WAITING is not RUNNING: e-mailed sets detect one sheet at a time, behind every sheet a person asked for
+    return (a.waiting ? "Waiting its turn to detect by itself: " : "Detect is running by itself: ")
+      + d + " of " + inbPages(q) + " done." + rest;
+  if (d >= q)
+    return "Detect ran by itself on " + (q >= t ? "all " + inbPages(q) : q + " of " + inbPages(t)) + "." + rest;
+  return "Detect ran by itself on " + d + " of the " + inbPages(q) + " it started on"
+    + (a.failed ? " (" + a.failed + " failed)" : "") + ". Open it and press Detect all to do the rest.";
+}
+
+// The keyword search of one PDF: which words were found on which pages, and
+// how much of the file could not be searched. "Not found" must never read as
+// "not there": a scan, or lettering drawn as lines, has no text to search.
+// -> { found: [{word, pages (0-based), more}], note } or null (no search made)
+function inbMatch(m) {
+  if (!m) return null;
+  const s = m.searched || 0, notes = [];
+  if ((m.pages || 0) > s)
+    notes.push("only the first " + s + " of " + inbPages(m.pages) + " were searched");
+  // "no text" is the server's count of pages with almost nothing to search AND no keyword in the little there is:
+  // a scan, or a sheet whose lettering is drawn as lines (its title may still be text)
+  if (m.no_text)
+    notes.push(m.no_text >= s
+      ? (s === 1 ? "the page has no" : "none of the " + inbPages(s) + " has")
+        + " text to search (a scan, or lettering drawn as lines), so a keyword cannot be found in it"
+      : m.no_text + " of " + inbPages(s) + " " + (m.no_text === 1 ? "has" : "have")
+        + " no text to search, so a keyword there cannot be found");
+  return {
+    found: (m.found || []).map(f => ({ word: f.word, pages: f.pages || [],
+      more: Math.max(0, (f.count || 0) - (f.pages || []).length) })),
+    note: notes.join("; "),
+  };
+}
+
+// One attached file's line: what became of it, in words.
+// -> { name, cls, text, auto, open (a project to link to), anyway (offer "Open anyway") }
+function inbFileLine(f, heldDays) {
+  const name = f.name + (f.zip ? " (in " + f.zip + ")" : "");
+  const gone = f.gone ? " Its project has been deleted since." : "";
+  if (f.state === "opened")
+    return { name, cls: "ok", open: !!f.job, anyway: false,
+      text: (f.anyway ? "opened by you" : "opened") + (f.pages ? " · " + inbPages(f.pages) : "") + "." + gone,
+      auto: f.job ? inbAutoText(f.auto) : "" };
+  if (f.state === "same")
+    return { name, cls: "same", open: !!f.job, anyway: false, auto: "",
+      text: "not opened again: " + (f.reason || "the same file") + "." + gone };
+  if (f.state === "held")
+    return { name, cls: "held", open: false, anyway: !!f.kept, auto: "",
+      text: "not opened: " + (f.reason || "held by your rules") + "."
+        + (f.kept ? "" : " It is no longer kept (a plan that was not opened is kept "
+          + (heldDays || 7) + " days): forward the message again, or upload the PDF.") };
+  return { name, cls: "no", open: false, anyway: false, auto: "",
+    text: "not opened: " + (f.reason || "no reason was recorded") };
+}
+
+// Files of a message that are not listed one by one: the server lists a message's
+// first files and COUNTS the rest by why they were not opened (e.unlisted).
+// -> "and 4,336 more files were not opened: 4,321 not PDFs, 12 past the limit of 20 PDFs, 3 past the unpacking limit"
+function inbUnlisted(u, L) {
+  if (!u) return "";
+  const n = (k) => (Number.isInteger(u[k]) && u[k] > 0 ? u[k] : 0);
+  const parts = [];
+  if (n("notpdf")) parts.push(n("notpdf").toLocaleString("en-US") + " not PDF" + (n("notpdf") === 1 ? "" : "s"));
+  if (n("pdfs")) parts.push(n("pdfs").toLocaleString("en-US") + " past the limit of " + ((L && L.pdfs) || 20) + " PDFs");
+  if (n("unpack")) parts.push(n("unpack").toLocaleString("en-US") + " past the unpacking limit"
+    + (L && L.unpacked_mb ? " (" + L.unpacked_mb + " MB)" : ""));
+  if (n("other")) parts.push(n("other").toLocaleString("en-US") + " not read");
+  const total = n("notpdf") + n("pdfs") + n("unpack") + n("other");
+  if (!total) return "";
+  return "And " + total.toLocaleString("en-US") + " more file" + (total === 1 ? " was" : "s were")
+    + " not opened: " + parts.join(", ") + ".";
+}
+
+// The lines under a message's heading that are about the MESSAGE, not a file.
+// L = the server's limits (GET /api/inbound `limits`).
+function inbEntryNotes(e, L) {
+  const out = [];
+  if (e.status === "received") out.push("Reading the attachments…");
+  if (e.status === "skipped")
+    out.push("Skipped by your exclusion rule" + (e.excluded ? " (“" + e.excluded + "”)" : "")
+      + ": nothing was opened.");
+  if (e.reason) out.push(e.reason);
+  if (e.unread)
+    out.push("This message had " + (e.attached || 0).toLocaleString("en-US") + " attachments. Only the first "
+      + ((e.attached || 0) - e.unread) + " of a message are looked at: the other "
+      + e.unread.toLocaleString("en-US") + " were not read.");
+  const rest = inbUnlisted(e.unlisted, L);
+  if (rest) out.push(rest);
+  if (e.confirm)
+    out.push("This looks like your mail provider's forwarding confirmation. Its code and link are in Settings, under Bid address.");
+  if (e.again)
+    out.push("The mail service delivered this message " + (e.again + 1) + " times. It was read once.");
+  if (e.more)
+    out.push("And " + e.more + " more message" + (e.more === 1 ? "" : "s") + " over the daily limit "
+      + (e.more === 1 ? "was" : "were") + " not read.");
+  return out;
+}
+
+// files that are simply not PDFs fold into one line; everything else keeps its own
+function inbSplitFiles(files) {
+  const own = [], notPdf = [];
+  for (const f of files || [])
+    (f.state === "refused" && f.reason === "not a PDF" ? notPdf : own).push(f);
+  return { own, notPdf };
+}
+
+// A project card's e-mail note: where the plan set came from, and - when Detect
+// did not run on every page by itself - how many it ran on and how to do the rest.
+function inbCardNote(inb) {
+  if (!inb) return null;
+  const q = inb.queued || 0, t = inb.pages || 0;
+  let more = "";
+  if (t && !q) more = "Detect did not start by itself. Open it and press Detect.";
+  else if (q < t && inb.wanted > q)
+    more = "E-mail detects up to " + inb.cap + " pages by itself: " + q + " of " + t
+      + " here. Open it and press Detect all for the rest.";
+  else if (q < t)
+    more = "Detect started by itself on " + q + " of " + inbPages(t)
+      + ", the ones that read as plans. Open it and press Detect on any other you need.";
+  const found = (inb.found || []).length ? "Your keywords found in it: " + inb.found.join(", ") + "." : "";
+  const text = "from e-mail: " + (inb.subject || "(no subject)");
+  return { text, more, title: [inb.subject || "", more, found].filter(Boolean).join("\n") };
+}
+
+const INB_HOW = "Forward an invitation to bid to this address. Each PDF plan set in it opens as a project here "
+  + "and Detect starts by itself. Only PDF plans are kept: the message text is not stored.";
+function inbLimitsLine(l) {
+  if (!l) return "";
+  return "One message can carry up to " + l.message_mb + " MB and " + l.pdfs + " PDFs; a PDF up to "
+    + l.pdf_pages + " pages; " + l.per_day + " messages a day."
+    + (l.attachments ? " A message's first " + l.attachments + " attachments are looked at" : "")
+    + (l.attachments && l.unpacked_mb ? ", and its zips may unpack to " + l.unpacked_mb + " MB in all." : l.attachments ? "." : "")
+    + " Detect runs by itself on up to "
+    + l.auto_pages + " pages of a set. For anything bigger, upload the PDF with + New project.";
+}
+// What a page's own surfaces (its badge in the page strip, its heading chip, the
+// Detect button) show for one status reply. A sheet WAITING in the e-mail line
+// is not being detected, so it reads as not detected - never "detecting…".
+function inbPageShown(j) {
+  if (!j || j.status === "done") return j ? "done" : "idle";
+  if (j.status === "running") return j.email && j.queued ? "idle" : "running";
+  return "idle";
+}
+// ...and the line under the sheet while it is in the e-mail line.
+function inbLineSays(j) {
+  return j && j.queued
+    ? "This sheet is waiting its turn: a set that came in by e-mail detects one sheet at a time. Press Detect to do it now."
+    : "This sheet is being detected by itself right now. It opens here when it is done.";
+}
+// a text box, one keyword or phrase per line -> the list that is sent
+function inbWords(text) {
+  return String(text == null ? "" : text).split(/\r\n|\r|\n/).map(s => s.trim()).filter(Boolean);
+}
+// INBOUND-PURE-END -----------------------------------------------------------
+
 function pvIsOpen() { return !$("projectsView").hidden; }
 
 // THE HEADER BELONGS TO THE VIEW ON SCREEN. main.pv-open / main.sv-open
@@ -24176,6 +26413,9 @@ async function loadProjects() {
     const r = await fetch("/api/projects");
     if (r.ok) d = await r.json();
   } catch (e) { /* reported below */ }
+  // the "From e-mail" list above the cards: its own route, its own pace - asked for only on a server that takes
+  // bids by e-mail, which this reply says (`inbound`)
+  inbAsk(d ? d.inbound : undefined);
   const dm = await demoP;
   if (!pvIsOpen()) return;           // the operator moved on mid-fetch
   // A demo list that failed to load leaves the tab EMPTY rather than
@@ -24266,6 +26506,7 @@ function pvPaint() {
   const shown = projSort(projFilter(rows, q), mode);
 
   pvSyncTabs(demoRows.length, demoTotal, mineRows.length, mineTotal);
+  inbRender();                       // the e-mail list belongs to "Your projects": hidden on the Demo tab
 
   // #pvCount sits beside the H1 "Projects" and so keeps describing the WHOLE
   // page, unchanged: what the server sent against what it holds. Quoting the
@@ -24504,6 +26745,16 @@ function pvCard(r, sharedBadge, nowS) {
     from.title = (r.bid.title || "") + (r.bid.url ? "\n" + r.bid.url : "");
     card.appendChild(from);
   }
+  // ...and a project that arrived by e-mail carries the message's subject the
+  // same way, with what Detect ran on by itself when that was not every page.
+  if (r.inbound) {
+    const nb = inbCardNote(r.inbound);
+    const from = document.createElement("div");
+    from.className = "pv-shows pv-from-bid pv-from-mail";
+    from.textContent = nb.text + (nb.more ? " · " + nb.more : "");
+    from.title = nb.title;
+    card.appendChild(from);
+  }
 
   if (sharedBadge && r.shared) {
     const b = document.createElement("span");
@@ -24560,6 +26811,280 @@ function pvCard(r, sharedBadge, nowS) {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pvOpenJob(r); }
   };
   return card;
+}
+
+// ---------- FROM E-MAIL: the list on the Projects page --------------------
+// The signed-in account's own messages (GET /api/inbound), newest first: when,
+// the sender, the subject, and each attached file with a link to its project
+// or the reason it was not opened. The words are INBOUND-PURE's; this is the
+// DOM. While the server's e-mail feature is off that route answers 404,
+// inbData stays null, the section stays hidden and nothing polls.
+let inbData;                 // the last reply; undefined = not asked yet, null = off (or the server did not answer)
+let inbShowAll = false;      // the list is short until "show all" is pressed
+let inbTimer = null;
+let inbSig = "";             // what the list last showed: a change means the cards are out of date
+// WHILE BIDS BY E-MAIL IS OFF THE PAGE DOES NOT ASK FOR THE LIST (critic merge-1). GET /api/inbound answers 404 while
+// the feature is off, and the Projects page asked it on every load: one 404 line in the browser's console each
+// time, on every server that does not use the feature. The server now says whether it is on in two replies the page
+// already reads - GET /api/config at the start, GET /api/projects on every Projects load (`inbound`) - and the
+// list is asked for only when it is. Off: nothing is asked, the section stays hidden and nothing polls.
+let inbOn;                   // true / false as the server last said; undefined = not said yet (nothing is asked)
+function inbAsk(on) {
+  if (typeof on === "boolean") inbOn = on;
+  if (inbOn) return inbLoad();
+  if (inbOn === false) {
+    clearTimeout(inbTimer);
+    inbData = null;
+    inbRender();
+    if (typeof renderSvInbound === "function" && !$("settingsView").hidden) renderSvInbound();
+  }
+}
+
+async function inbLoad() {
+  let d = null;
+  try {
+    const r = await fetch("/api/inbound");
+    if (r.ok) d = await r.json();
+  } catch (e) { d = null; }
+  inbData = d && d.enabled ? d : null;
+  inbRender();
+  if (typeof renderSvInbound === "function" && !$("settingsView").hidden) renderSvInbound();
+  // a plan that opened, or a page that finished detecting, since the last look: redraw the cards
+  const sig = inbData ? JSON.stringify((inbData.entries || []).map(e =>
+    [e.id, e.status, (e.files || []).map(f => [f.state, f.job || "", f.auto ? f.auto.done : 0])])) : "";
+  if (inbSig && sig !== inbSig && pvIsOpen()) inbRefreshCards();
+  inbSig = sig;
+  inbSchedule();
+}
+// look again while the Projects page is on screen: often while something is
+// still being read or detected, now and then otherwise (new mail)
+function inbSchedule() {
+  clearTimeout(inbTimer);
+  if (!inbData || !pvIsOpen()) return;
+  inbTimer = setTimeout(() => {
+    if (!pvIsOpen()) return;
+    if (document.visibilityState === "hidden") return inbSchedule();
+    inbLoad();
+  }, inbData.busy ? 3000 : 20000);
+}
+async function inbRefreshCards() {
+  try {
+    const r = await fetch("/api/projects");
+    if (r.ok && pvIsOpen()) renderProjects(await r.json());
+  } catch (e) { /* the next look tries again */ }
+}
+
+// Open a project from the list - on a given page when a keyword's page was
+// pressed. The same route and applyOpened() a card click uses.
+async function inbOpenPage(jobId, page) {
+  const onPage = Number.isInteger(page);
+  if (jobId === state.job) {
+    showProjects(false);
+    if (onPage && page !== state.page && page >= 0 && page < state.kinds.length) {
+      $("pageSel").value = page;
+      selectPage(page);
+    }
+    return;
+  }
+  setStatus("opening…", "busy");
+  try {
+    const resp = await fetch(`/api/job/${jobId}/open`);
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      return setStatus(e.detail || `could not open (${resp.status})`, "err");
+    }
+    applyOpened(await resp.json(), onPage ? page : undefined);
+  } catch (e) {
+    setStatus("could not open — the server did not answer", "err");
+  }
+}
+
+// OPEN ANYWAY: a plan the account's own rules held (no keyword found in it, or
+// an exclusion word in the subject or the sender). n == null opens every held
+// plan of the message.
+async function inbOpenAnyway(entryId, n, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Opening…"; }
+  try {
+    const r = await fetch("/api/inbound/open", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(n == null ? { entry: entryId } : { entry: entryId, n }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) setStatus(j.detail || ("it could not be opened (" + r.status + ")"), "err");
+    else setStatus("opened — Detect starts by itself");
+  } catch (e) {
+    setStatus("it could not be opened — the server did not answer", "err");
+  }
+  await inbLoad();
+  inbRefreshCards();
+}
+
+function inbFileNode(e, f, heldDays) {
+  const ln = inbFileLine(f, heldDays);
+  const li = document.createElement("li");
+  li.className = "inb-file inb-" + ln.cls;
+  let name;
+  if (ln.open) {
+    name = document.createElement("button");
+    name.className = "inb-open";
+    name.title = "Open this project";
+    name.onclick = () => inbOpenPage(f.job);
+  } else {
+    name = document.createElement("span");
+    name.className = "inb-name";
+  }
+  name.textContent = ln.name;
+  const what = document.createElement("span");
+  what.className = "inb-what";
+  what.textContent = ln.text;
+  li.append(name, what);
+  if (ln.anyway) {
+    const b = document.createElement("button");
+    b.className = "mini inb-anyway";
+    b.textContent = "Open anyway";
+    b.title = "Open this plan as a project even though your rules held it";
+    b.onclick = () => inbOpenAnyway(e.id, f.n, b);
+    li.appendChild(b);
+  }
+  if (ln.auto) {
+    const a = document.createElement("div");
+    a.className = "inb-auto";
+    a.textContent = ln.auto;
+    li.appendChild(a);
+  }
+  const m = inbMatch(f.match);
+  if (m && (m.found.length || m.note)) {
+    const box = document.createElement("div");
+    box.className = "inb-found";
+    if (m.found.length) {
+      box.append("Your keywords in it: ");
+      m.found.forEach((w, i) => {
+        if (i) box.append("; ");
+        const b = document.createElement("b");
+        b.textContent = w.word;
+        box.append(b, " ");
+        w.pages.forEach((p, k) => {
+          if (k) box.append(", ");
+          if (ln.open) {
+            const a = document.createElement("button");
+            a.className = "inb-page";
+            a.textContent = "page " + (p + 1);
+            a.title = "Open the project on page " + (p + 1);
+            a.onclick = () => inbOpenPage(f.job, p);
+            box.append(a);
+          } else box.append("page " + (p + 1));
+        });
+        if (w.more) box.append(" and " + w.more + " more");
+      });
+      box.append(".");
+    }
+    if (m.note) {
+      const nt = document.createElement("span");
+      nt.className = "inb-notext";
+      nt.textContent = (m.found.length ? " " : "") + m.note.charAt(0).toUpperCase() + m.note.slice(1) + ".";
+      box.append(nt);
+    }
+    li.appendChild(box);
+  }
+  return li;
+}
+
+function inbRender() {
+  const box = $("pvInbox");
+  if (!box) return;
+  const d = inbData;
+  const rows = d ? (d.entries || []) : [];
+  // nothing to draw: the feature is off, the Demo tab is up, or the account has no messages and may not have an address
+  if (!d || pvTab === "demo" || (!rows.length && !d.can_address)) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "inb-headline";
+  const h = document.createElement("h2");
+  h.textContent = "From e-mail";
+  head.appendChild(h);
+  const sub = document.createElement("span");
+  sub.className = "inb-sub";
+  if (!rows.length) {
+    sub.textContent = d.address
+      ? "Nothing yet. Forward an invitation to bid to your bid address and its plans open here. "
+      : "Plans can come in by e-mail: forward an invitation to bid to your own bid address. ";
+  } else {
+    sub.textContent = nWord(d.total || rows.length, "message") + " · newest first. ";
+  }
+  const set = document.createElement("a");
+  set.href = "#bidaddress";
+  set.textContent = d.address ? "Your bid address" : "Get your bid address";
+  set.onclick = (ev) => { ev.preventDefault(); svGoto("#bidaddress", { smooth: true }); };
+  sub.appendChild(set);
+  head.appendChild(sub);
+  box.appendChild(head);
+  const nowS = Date.now() / 1000;
+  const heldDays = d.limits && d.limits.held_days;
+  const shown = inbShowAll ? rows : rows.slice(0, INB_SHOWN);
+  for (const e of shown) {
+    const row = document.createElement("div");
+    row.className = "inb-entry inb-st-" + e.status;
+    const top = document.createElement("div");
+    top.className = "inb-top";
+    const when = document.createElement("span");
+    when.className = "inb-when";
+    when.textContent = projAgo(nowS, e.at || nowS);
+    when.title = new Date((e.at || nowS) * 1000).toLocaleString();
+    const from = document.createElement("span");
+    from.className = "inb-from";
+    from.textContent = e.from || "(no sender)";
+    const subj = document.createElement("span");
+    subj.className = "inb-subj";
+    subj.textContent = e.subject || "(no subject)";
+    top.append(when, from, subj);
+    row.appendChild(top);
+    for (const note of inbEntryNotes(e, d.limits)) {
+      const n = document.createElement("div");
+      n.className = "inb-note";
+      n.textContent = note;
+      row.appendChild(n);
+    }
+    const parts = inbSplitFiles(e.files);
+    const held = parts.own.filter(f => f.state === "held" && f.kept);
+    if (e.status === "skipped" && held.length > 1) {
+      const all = document.createElement("button");
+      all.className = "mini inb-anyway";
+      all.textContent = "Open all " + held.length + " anyway";
+      all.onclick = () => inbOpenAnyway(e.id, null, all);
+      row.appendChild(all);
+    }
+    if (parts.own.length || (e.pending || []).length) {
+      const ul = document.createElement("ul");
+      ul.className = "inb-files";
+      for (const f of parts.own) ul.appendChild(inbFileNode(e, f, heldDays));
+      for (const name of e.pending || []) {
+        const li = document.createElement("li");
+        li.className = "inb-file inb-wait";
+        li.textContent = name + " — being read…";
+        ul.appendChild(li);
+      }
+      row.appendChild(ul);
+    }
+    if (parts.notPdf.length) {
+      const n = document.createElement("div");
+      n.className = "inb-note inb-notpdf";
+      n.textContent = "Not opened, not a PDF: " + parts.notPdf.map(f => f.name + (f.zip ? " (in " + f.zip + ")" : "")).join(", ") + ".";
+      row.appendChild(n);
+    }
+    box.appendChild(row);
+  }
+  if (rows.length > INB_SHOWN) {
+    const more = document.createElement("button");
+    more.className = "mini inb-more";
+    more.textContent = inbShowAll ? "Show the newest " + INB_SHOWN + " only"
+      : "Show all " + rows.length + (d.total > rows.length ? " (the newest of " + d.total + ")" : "");
+    more.onclick = () => { inbShowAll = !inbShowAll; inbRender(); };
+    box.appendChild(more);
+  }
 }
 
 // THE PULL ITSELF, run by the #bid= boot hook (the CRM's "send to CORE"). One
@@ -25315,7 +27840,8 @@ function svHashTarget(hash) {
   if (h === "settings") return "";
   const g = { company: "svGroupCompany", appearance: "svGroupAppearance",
               theme: "svGroupAppearance", scope: "svGroupScope",
-              pricing: "svGroupPricing", bidsheet: "svGroupBidsheet", account: "svGroupAccount",
+              pricing: "svGroupPricing", bidsheet: "svGroupBidsheet", wallpanels: "svGroupWallpanels", bidaddress: "svGroupInbound",
+              account: "svGroupAccount",
               accounts: "svGroupAccounts", machine: "svGroupMachine" };
   return Object.prototype.hasOwnProperty.call(g, h) ? g[h] : null;
 }
@@ -25689,9 +28215,156 @@ function renderSettings() {
   renderSvBidsheet();
   renderSvColors();
   renderSvFoot();
+  renderSvInbound();
   renderSvAccount();
   renderSvUsers();
 }
+
+// ---------- BID ADDRESS -----------------------------------------------------
+// The account's own address for invitations to bid, and its keyword rules -
+// all the SERVER's (GET /api/inbound; the same reply the Projects page's
+// "From e-mail" list is drawn from, held in inbData). The group, its sections
+// and its nav link stay hidden while the feature is off (the route answers
+// 404) and for an account that may not have an address (view-only).
+// renderSettings() runs on every price keystroke, so nothing here fetches
+// more than once and a box being typed in is never refilled.
+let svInbAsked = false;      // the first look, when Settings opens before Projects ever did
+let svInbRulesDirty = false; // the person has typed in a word box since the last save
+function svInbSay(id, msg, cls) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = msg || "";
+  el.className = "sv-note" + (cls ? " " + cls : "");
+}
+function renderSvInbound() {
+  const sec = $("svInboundSection");
+  if (!sec) return;
+  // (asked only on a server that takes bids by e-mail: inbAsk; while that is not known yet, the next paint asks)
+  if (inbData === undefined && !svInbAsked && inbOn) { svInbAsked = true; inbLoad(); }
+  const d = inbData;
+  const show = !!(d && d.can_address);
+  for (const id of ["svGroupInbound", "svInboundSection", "svInbRulesSection", "svNavInbound"])
+    if ($(id)) $(id).hidden = !show;
+  if (!show) return;
+  const has = !!d.address;
+  const addr = $("svInbAddr");
+  addr.hidden = !has;
+  addr.value = d.address || "";
+  $("svInbCopy").hidden = !has;
+  $("svInbNew").textContent = has ? "New address" : "Get my address";
+  $("svInbNew").title = has
+    ? "Make a different address. The one above stops working at once."
+    : "Make the address you forward invitations to bid to";
+  $("svInbNote").textContent = has
+    ? "This address is yours alone. A PDF plan set sent to it opens as a project on your account."
+    : "You have no bid address yet. Get one, then forward invitations to bid to it.";
+  $("svInbHow").textContent = INB_HOW + " " + inbLimitsLine(d.limits)
+    + " To forward automatically, add this address as a forwarding address in your mail program; "
+    + "if it sends a confirmation here first, its code and its link show below.";
+  // A mail provider's confirmation of the forwarding address. NONE OF ITS WORDS ARE SHOWN (the server keeps
+  // none): a code made of digits, and a link to the provider's own confirmation page. Anybody who knows the
+  // address can send a message that looks like one, so the box says to use it only if you asked for it.
+  const box = $("svInbConfirm");
+  const c = d.confirm && (d.confirm.code || d.confirm.link) ? d.confirm : null;
+  box.hidden = !c;
+  box.innerHTML = "";
+  if (c) {
+    const who = c.provider || "Your mail provider";
+    const lead = document.createElement("div");
+    lead.className = "sv-note";
+    lead.textContent = "A " + who + " forwarding confirmation came in "
+      + projAgo(Date.now() / 1000, c.at || Date.now() / 1000)
+      + ". If you just added this address as a forwarding address in " + who
+      + ", use the code or the link there to finish. If you did not, ignore it.";
+    box.appendChild(lead);
+    const row = document.createElement("div");
+    row.className = "sv-inb-code";
+    if (c.code) {
+      const code = document.createElement("span");
+      code.textContent = who + " confirmation code: " + c.code;
+      row.appendChild(code);
+    }
+    if (c.link) {
+      const a = document.createElement("a");
+      a.href = c.link;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = who + " confirmation link";
+      row.appendChild(a);
+    }
+    box.appendChild(row);
+  }
+  // the keyword rules
+  const r = d.rules || { keywords: [], exclude: [], v: 0 };
+  const kw = $("svInbKeywords"), ex = $("svInbExclude");
+  if (!svInbRulesDirty && document.activeElement !== kw && document.activeElement !== ex) {
+    kw.value = (r.keywords || []).join("\n");
+    ex.value = (r.exclude || []).join("\n");
+  }
+  const L = d.limits || {};
+  $("svInbRulesNote").textContent = (r.keywords || []).length
+    ? "A plan that comes in by e-mail opens only when one of your " + nWord(r.keywords.length, "keyword")
+      + " is found in its text. A plan that is not opened is listed under From e-mail with Open anyway, and kept "
+      + (L.held_days || 7) + " days."
+    : "No keywords are set, so every plan that comes in by e-mail opens. Add keywords to open only the plans "
+      + "that mention your work.";
+  $("svInbRulesFoot").textContent = "Whole words or phrases; capitals do not matter. Up to " + (L.words || 40)
+    + " in each list. The search reads only the text a PDF carries as text: a scan, or lettering drawn as lines, "
+    + "has none, and the list says how many pages could not be searched. These lists are saved on the server "
+    + "for your account.";
+}
+$("svInbCopy").onclick = async () => {
+  const addr = $("svInbAddr");
+  let ok = false;
+  try { await navigator.clipboard.writeText(addr.value); ok = true; } catch (e) { ok = false; }
+  if (!ok) {
+    // no clipboard permission (or plain http): select it so Ctrl+C works
+    addr.focus(); addr.select();
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  }
+  svInbSay("svInbState", ok ? "copied" : "select the address and press Ctrl+C", ok ? "ok" : "");
+};
+$("svInbNew").onclick = async () => {
+  if (inbData && inbData.address && !window.confirm(
+    "Make a new bid address?\n\nThe one you have now stops working right away. Anything that forwards "
+    + "to it has to be changed to the new address.")) return;
+  $("svInbNew").disabled = true;
+  svInbSay("svInbState", "asking the server…");
+  try {
+    const r = await fetch("/api/inbound/address", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: "{}" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+    if (inbData) inbData.address = j.address;
+    renderSvInbound();
+    inbRender();
+    svInbSay("svInbState", j.replaced ? "new address made — the old one no longer works" : "this is your address", "ok");
+  } catch (e) { svInbSay("svInbState", "no address was made: " + ((e && e.message) || e), "err"); }
+  $("svInbNew").disabled = false;
+};
+$("svInbKeywords").oninput = $("svInbExclude").oninput = () => {
+  svInbRulesDirty = true;
+  svInbSay("svInbRulesState", "unsaved");
+};
+$("svInbRulesSave").onclick = async () => {
+  const body = { keywords: inbWords($("svInbKeywords").value), exclude: inbWords($("svInbExclude").value),
+                 v: inbData && inbData.rules ? inbData.rules.v : null };
+  $("svInbRulesSave").disabled = true;
+  svInbSay("svInbRulesState", "saving…");
+  try {
+    const r = await fetch("/api/inbound/rules", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+    if (inbData) inbData.rules = j.rules;
+    svInbRulesDirty = false;
+    renderSvInbound();
+    svInbSay("svInbRulesState", "saved · " + nWord(j.rules.keywords.length, "keyword") + ", "
+      + nWord(j.rules.exclude.length, "exclusion word")
+      + (j.left_out ? " · " + nWord(j.left_out, "line") + " left out (a repeat, a single letter, or past the limit)" : ""), "ok");
+  } catch (e) { svInbSay("svInbRulesState", "not saved: " + ((e && e.message) || e), "err"); }
+  $("svInbRulesSave").disabled = false;
+};
 
 // ---------- COMPANY ---------------------------------------------------------
 // The only setting on this page that leaves the browser. Held here so the

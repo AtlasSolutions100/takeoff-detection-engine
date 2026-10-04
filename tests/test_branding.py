@@ -188,11 +188,20 @@ _sig = inspect.signature(server.report_pdf)
 ok("request" in _sig.parameters,
    "report_pdf takes the Request it needs to resolve WHOSE company to stamp")
 _src = inspect.getsource(server.report_pdf)
-# 7 since the CET port (2026-09-25): the flooring rooms page carries the letterhead too
-ok("_letterhead" in _src and _src.count("_letterhead(tp)") == 7,
+# 7 since the CET port (2026-09-25): the flooring rooms page carries the letterhead too;
+# 9 since the flooring estimate page and its overflow (2026-10-02); 11 since the held estimate's list and
+# the notes under the total each get their own overflow page (critic 2: every continuation is lettered)
+# 7 in report_pdf since 2026-10-02 (critic 3): the estimate's pages moved to _fl_estimate_pages, shared with the
+# customer PDF, which letters its first page and each of its 4 overflows (the held list, the lines, the total, the notes)
+# 8 since critic 4 (M2): the summary's "Flooring estimate" line has its own overflow page
+_est_src = inspect.getsource(server._fl_estimate_pages)
+ok("_letterhead" in _src and _src.count("_letterhead(tp)") == 8 and _est_src.count("_letterhead(tp)") == 5
+   and "_fl_estimate_pages(out, _fl_c, _letterhead)" in _src,
    "report_pdf: every text page it creates gets the letterhead call "
-   "(4, plus the bid-sheet page and its overflow since 2026-09-16)",
-   _src.count("_letterhead(tp)"))
+   "(4, plus the bid-sheet page and its overflow since 2026-09-16; the estimate's pages through _fl_estimate_pages)",
+   (_src.count("_letterhead(tp)"), _est_src.count("_letterhead(tp)")))
+_pdf_src = inspect.getsource(server.flooring_estimate_pdf)
+ok("_fl_letterhead_for(request)" in _pdf_src, "the customer estimate PDF carries the asking account's letterhead")
 ok("if not _bco:" in _src,
    "report_pdf: a blank company draws nothing at all")
 ok("BETA_LONG" in _src and _src.rindex("BETA_LONG") > _src.rindex("_letterhead(tp)"),

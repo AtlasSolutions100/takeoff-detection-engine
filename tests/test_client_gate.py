@@ -3,14 +3,16 @@
 After the deploy, a browser tab still running v1.8.5's JavaScript keeps its session and could WRITE to the new server:
 its approve got `src_marks: 1` stamped over rows it never marked (true old rows stopped counting as old, and the next
 seat's approve dropped them silently); its calcstate save wiped `rows`, `cf`, prices and trades from the page record.
-Every page this app serves loads webui/client.js first, which puts `X-Core-Client: 2` on every state-changing request;
+Every page this app serves loads webui/client.js first, which puts `X-Core-Client: 3` on every state-changing request;
 server.py _client_gate refuses a write without it, after sign-in and ownership, writing nothing:
 "CORE was updated. Reload this page to keep working." (v1.8.5's approve and calcstate save show a 409's `detail` on the
 status line.)
 
   1. EVERY write route of the app and of the cut / fill mount - enumerated from the live route tables, so a route added
      tomorrow is swept the day it lands - is refused without the marker; the sign-in / sign-out / change-password forms
-     are the only exemptions.
+     are the only exemptions. ONE route is not a page's at all (2026-10-03): the mail door, server.INBOUND_DOOR, which
+     the mail service posts to with its own credentials. It is named here, never swept under an exemption: without
+     them it answers for itself (404 while the feature is off, 401 when it is on), and a session does not open it.
   2. A v1.8.5-shaped approve and calcstate save are refused and change nothing on disk; the same with the marker work.
   3. The marker: client.js is the first element of <head> on every page that writes, and under node it marks fetch
      (a Request too), XMLHttpRequest and sendBeacon writes, never reads.
@@ -67,7 +69,7 @@ server.JOBS[JID] = {"path": str(pdf), "pages": 1, "status": {0: "done"}, "owner"
 async def _asgi(method, path, body: bytes, marker: bool):
     headers = [(b"host", b"testserver"), (b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
     if marker:
-        headers.append((b"x-core-client", b"2"))
+        headers.append((b"x-core-client", b"3"))
     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1", "method": method,
              "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"", "root_path": "",
              "headers": headers, "client": ("127.0.0.1", 40000), "server": ("testserver", 80)}
@@ -122,10 +124,12 @@ GATE = "CORE was updated. Reload this page to keep working."
 routes = write_routes()
 api = [(m, t) for m, t in routes if t.startswith("/api/") or t.startswith("/cutfill/api/")]
 exempt = {"/api/login", "/api/logout", "/api/change-password"}
+DOOR = getattr(server, "INBOUND_DOOR", None)        # the mail service's route, not a page's (see 1. above)
+doors = [(m, t) for m, t in api if t == DOOR]
 open_ = []
 refused = 0
 for m, t in api:
-    if t in exempt:
+    if t in exempt or t == DOOR:
         continue
     st, j = call(m, fill(t))
     if st == 409 and j.get("detail") == GATE:
@@ -136,9 +140,22 @@ outside = [(m, t) for m, t in routes if not (t.startswith("/api/") or t.startswi
 n_src = sum(len(re.findall(r'@app\.(?:post|put|delete|patch)\(', (ROOT / f).read_text(encoding="utf-8")))
             for f in ("server.py", "cutfill/server.py"))
 n_cf = sum(1 for _, t in api if t.startswith("/cutfill/"))
-check(not open_ and refused == len(api) - len(exempt) == n_src - len(exempt) and n_cf >= 10 and not outside,
+check(not open_ and refused == len(api) - len(exempt) - len(doors) == n_src - len(exempt) - len(doors)
+      and n_cf >= 10 and not outside,
       f"1: every one of the {refused} write routes (app + cut / fill mount, from the route tables) refuses a write "
       f"without the marker; none answers otherwise: {open_[:5]}; writes outside the APIs: {outside}")
+for _k in ("INBOUND_HOOK_USER", "INBOUND_HOOK_PASS", "INBOUND_ADDRESS"):
+    os.environ.pop(_k, None)
+st_d, j_d = call("POST", DOOR or "/api/inbound/postmark", {"MessageID": "x"}, marker=True)
+os.environ.update({"INBOUND_HOOK_USER": "hook-user-for-tests", "INBOUND_HOOK_PASS": "hook-pass-for-tests",
+                   "INBOUND_ADDRESS": "0123456789abcdef0123456789abcdef@inbound.postmarkapp.com"})
+st_d2, j_d2 = call("POST", DOOR or "/api/inbound/postmark", {"MessageID": "x"}, marker=True)
+for _k in ("INBOUND_HOOK_USER", "INBOUND_HOOK_PASS", "INBOUND_ADDRESS"):
+    os.environ.pop(_k, None)
+check(doors == [("POST", "/api/inbound/postmark")] and st_d == 404 and st_d2 == 401,
+      f"1: the mail door is the one write route that is not a page's: POST only, and with the page's marker but not "
+      f"the mail service's credentials it opens nothing - 404 while the feature is off, 401 when it is on: "
+      f"{doors} {st_d} {st_d2}")
 st_lo, j_lo = call("POST", "/api/logout")
 check(st_lo == 200, f"1: sign-out works without the marker (v1.8.5's tab can still sign out): {st_lo}")
 check(sorted(exempt) == sorted(server._CLIENT_EXEMPT), f"1: the exemptions are exactly the sign-in forms: {server._CLIENT_EXEMPT}")
@@ -159,8 +176,12 @@ after = {f.name: f.read_bytes() for f in D.iterdir()}
 check(st_a == 409 and j_a.get("detail") == GATE and st_c == 409 and j_c.get("detail") == GATE and after == before,
       f"2: a v1.8.5 tab's approve and calcstate save are refused, and nothing on disk changes: {st_a} {j_a} / {st_c}")
 st_a2, j_a2 = call("POST", f"/api/job/{JID}/page/0/approve", dict(old_approve, extra_items=[
-    {"label": "Zone 1 cut", "qty": 100.0, "unit": "CY", "src": "earthwork-old"}],
-    scale_seen=server._scale_stamp(JID, 0)), marker=True)   # this app's page also sends the scale record it loaded
+    {"label": "Zone 1 cut", "qty": 100.0, "unit": "CY", "src": "earthwork-old"},
+    {"label": "Curb", "qty": 10.0, "unit": "EA"}],     # the old row counts nowhere: something in the takeoff (2026-10-03)
+    scale_seen=server._scale_stamp(JID, 0),                 # this app's page also sends the scale record it loaded
+    # ...and, the approval in the bid being an earlier version's, that the person said yes to replacing it (the page
+    # asks first: critic empty-2, MAJOR-1; tests/test_empty_repair2.py)
+    replace_earlier=True), marker=True)
 st_c2, _ = call("POST", f"/api/job/{JID}/page/0/calcstate", dict(cs0, checks={"done": ["a"]}), marker=True)
 check(st_a2 == 200 and st_c2 == 200 and json.loads((D / "p0_calcstate.json").read_text())["checks"] == {"done": ["a"]},
       f"2: the same writes from this app's page (with the marker) work: {st_a2} {j_a2 if st_a2 != 200 else ''} / {st_c2}")
@@ -201,12 +222,12 @@ try:
     seen = json.loads(out.stdout.strip().splitlines()[-1])
 except (ValueError, IndexError):
     seen = out.stderr[:300]
-check(seen == [["fetch", "POST", "2"], ["fetch", "GET", None], ["fetch", "DELETE", "2"], ["xhr", "POST", "2"], ["xhr", "GET", None],
-               ["fetch", "POST", "2"]],
+check(seen == [["fetch", "POST", "3"], ["fetch", "GET", None], ["fetch", "DELETE", "3"], ["xhr", "POST", "3"], ["xhr", "GET", None],
+               ["fetch", "POST", "3"]],
       f"3: client.js marks fetch (a Request too), XMLHttpRequest and sendBeacon writes, and never a read: {seen}")
 # the scripts that write without the page carry the marker too
 seed = (ROOT / "seed-demo.sh").read_text(encoding="utf-8")
-check("-H 'X-Core-Client: 2'" in seed, "3: seed-demo.sh (the one script that writes over HTTP) sends the marker")
+check("-H 'X-Core-Client: 3'" in seed, "3: seed-demo.sh (the one script that writes over HTTP) sends the marker")
 
 print("\n" + (f"{fails} failure(s)" if fails else "all ok"))
 sys.exit(1 if fails else 0)

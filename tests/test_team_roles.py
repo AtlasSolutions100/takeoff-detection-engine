@@ -21,7 +21,11 @@ Pinned:
     included;
   * /api/users rows carry role, last_active, last_login and projects;
     last-active is its own file, throttled, and never rewrites users.json;
-    a failed activity write never fails the request;
+    a failed activity write never fails the request; a users.json that is
+    there and can not be read is not "no accounts" for it either (nobody's
+    stamps are dropped, a viewer stays a viewer, a role change answers 503 -
+    the account-file rules for the role functions and routes are pinned in
+    tests/test_redesign_account_file.py);
   * audit lines for user_add / user_role / user_reset_password / login /
     sheet_detect / sheet_approve / project_delete, with the actor in `user`,
     the target in `name`, and no password anywhere in the log;
@@ -83,7 +87,7 @@ def call(method, path, body=None, cookie=None, raw=None, ctype=None, marker=True
     path, _, query = path.partition("?")
     headers = [(b"host", b"testserver")]
     if marker:
-        headers.append((b"x-core-client", b"2"))
+        headers.append((b"x-core-client", b"3"))
     data = b""
     if raw is not None:
         data = raw
@@ -294,11 +298,26 @@ refused = [
     ("POST", "/api/branding", {"company": "Viewer Co"}),
     ("POST", "/api/users", {"username": "x@t"}),
     ("POST", "/api/users/est%40t/role", {"role": "viewer"}),
+    # the writes of the three features merged 2026-10-04 (the takeoff starts empty, wall panels, bids by e-mail): the
+    # gate is by METHOD, so each is refused before its route runs - feature on or off, shared sheet or not
+    ("POST", "/api/job/%s/page/0/ticks" % SHARED, {"version": 0, "styles": [2]}),
+    ("POST", "/api/job/%s/page/0/withdraw" % SHARED, {}),
+    ("POST", "/api/job/%s/page/0/putback" % SHARED, {}),
+    ("POST", "/api/job/%s/page/0/scale/back" % SHARED, {}),
+    ("POST", "/api/job/%s/wallpanels/act" % SHARED, {"version": 0, "act": {"kind": "room_add", "name": "VIEWER"}}),
+    ("POST", "/api/wallpanels/settings", {"labor_rate": "1.00"}),
+    ("POST", "/api/wallpanels/settings/of", {"account": "est@t"}),
+    ("POST", "/api/inbound/address", {}),
+    ("POST", "/api/inbound/rules", {"keywords": ["viewer"], "exclude": [], "v": None}),
+    ("POST", "/api/inbound/open", {"entry": "x"}),
 ]
 for m, p, b in refused:
     st, js, _ = call(m, p, b, VIEW)
     check(st == 403 and (js or {}).get("detail") == READ_ONLY,
           f"viewer {m} {p.split('?')[0]} -> 403 read-only")
+check(not (JOBS_DIR / SHARED / "p0_ticks.json").exists() and not (JOBS_DIR / SHARED / "wp_est").exists()
+      and not (JOBS_DIR / SHARED / "p0_withdrawn.json").exists() and not (JOBS_DIR / "wallpanels.json").exists(),
+      "no takeoff record, no wall panel job, no withdrawn record and no wall panel rates written for the viewer")
 st, js, _ = upload("Viewer Upload.pdf", pdf_bytes(b"viewer"), VIEW)
 check(st == 403 and js.get("detail") == READ_ONLY, "viewer upload -> 403 read-only")
 check(len(server.JOBS) == n_jobs, "nothing the viewer sent registered a job")
@@ -520,13 +539,69 @@ st, js, _ = call("GET", "/api/me", None, EST)
 check(st == 200 and js["user"] == "est@t", "and a request whose write fails still succeeds")
 _users.activity_path = _real_path
 
+# THE ACCOUNT FILE CAN NOT BE READ (the fork's fix round, merged 2026-10-04): load() no longer answers "no accounts"
+# for a users.json that is there and unreadable. Last-active keeps only accounts that still exist, so it must not
+# take such a file for an empty roster and drop everybody's stamps (the rules themselves, for the role functions and
+# the role routes: tests/test_redesign_account_file.py)
+_users._ACT_WRITTEN.clear()
+check(_users.note_seen("est@t") is True, "fixture: a sighting is written while users.json reads")
+stamps = json.loads(act_file.read_text())
+good_users = _users.store_path().read_bytes()
+_users.store_path().write_bytes(good_users[:len(good_users) // 2])      # cut short; this process has a roster
+_users._ACT_WRITTEN.clear()
+wrote = _users.note_seen("est@t")
+check(wrote is True and set(json.loads(act_file.read_text())) == set(stamps) and len(stamps) >= 4,
+      "users.json cut short, a roster in memory: last-active goes by the roster as last read - every account's "
+      "stamps are still in the file")
+st, js, _ = call("GET", "/api/me", None, VIEW)
+check(st == 200 and js["role"] == "viewer", "... and a viewer is still a viewer")
+st, js, _ = call("POST", "/api/job/%s/page/0/calcstate" % SHARED, {"v": 1}, VIEW)
+check(st == 403 and (js or {}).get("detail") == READ_ONLY, "... whose writes are still refused")
+st, js, _ = call("POST", "/api/users/est2%40t/role", {"role": "viewer"}, ADMIN)
+check(st == 503 and "can not read its accounts" in str((js or {}).get("detail")) and _users.role_of("est2@t") == "estimator",
+      "... and a role change is told the accounts can not be read (503): not made in memory, not written")
+_users._CACHE = (None, None)
+_users._GOOD = (None, None)                                             # as after a restart: no roster in memory
+before = act_file.read_bytes()
+_users._ACT_WRITTEN.clear()
+check(_users.note_seen("est@t") is False and act_file.read_bytes() == before,
+      "with no roster in memory note_seen writes nothing and does not raise: the unreadable file is not taken for "
+      "'no accounts', which dropped every stamp")
+st, js, _ = call("GET", "/api/me", None, EST)
+check(st == 503 and "can not read its accounts" in str((js or {}).get("detail")),
+      "... and a signed-in request is answered 503, not as nobody")
+st, js, _ = call("POST", "/api/job/%s/page/0/calcstate" % SHARED, {"v": 1}, VIEW)
+check(st == 503, "... a viewer's write the same: 503, neither let through nor called read-only")
+_users.store_path().write_bytes(good_users)
+st, js, _ = call("GET", "/api/me", None, EST)
+check(st == 200 and js["role"] == "estimator", "users.json put right: the session and its role are back, nothing restarted")
+
 # ================================================ 8. audit lines
 st, js, _ = call("POST", "/api/job/%s/page/0/detect" % EJOB, {}, EST)
 check(st == 200 and _QUEUED == [(EJOB, 0)], "the estimator's detect is queued")
+# THE TAKEOFF STARTS EMPTY (merged 2026-10-04): the estimator ADDS the style to the page's takeoff first, as the page
+# does, and the approve names the version of that record - an approve of a style the record does not hold, or of
+# another version, is refused (fork: critic empty-1, MAJOR-4)
+st, js, _ = call("GET", "/api/job/%s/page/0/ticks" % EJOB, None, EST)
+check(st == 200 and js.get("styles") == [] and js.get("version") == 0, "the page's takeoff starts empty")
+st, js, _ = call("POST", "/api/job/%s/page/0/approve" % EJOB,
+                 {"labels": {"2": "SEWER"}, "image_dpi": 300, "object_counts": {"SEWER": 1},
+                  "scale_seen": server._scale_stamp(EJOB, 0), "ticks_version": 0}, EST)
+check(st == 409 and (js or {}).get("detail") == server.TICKS_STALE
+      and not (JOBS_DIR / EJOB / "p0_elements.json").exists(),
+      "an approve of a style that was never added to the takeoff is refused in words, nothing exported")
+st, js, _ = call("POST", "/api/job/%s/page/0/ticks" % EJOB, {"version": 0, "styles": [2]}, EST)
+check(st == 200 and js.get("styles") == [2] and js.get("version") == 1, "the estimator adds the style to the takeoff")
+TKV = (js or {}).get("version")
 st, js, _ = call("POST", "/api/job/%s/page/0/approve" % EJOB,
                  {"labels": {"2": "SEWER"}, "image_dpi": 300,
+                  # the fixture's sheet has no scale: the family goes as a count (scale verdict S4 refuses
+                  # measured rows on a page with no scale; counts pass)
+                  "object_counts": {"SEWER": 1},
                   # the page sends the scale record's stamp it loaded (server._scale_seen_check)
-                  "scale_seen": server._scale_stamp(EJOB, 0)}, EST)
+                  "scale_seen": server._scale_stamp(EJOB, 0),
+                  # ...and the version of the takeoff record it shows
+                  "ticks_version": TKV}, EST)
 check(st == 200 and js["exported"] == 1, "the estimator approves their sheet")
 lines = audit_lines()
 by = {}
@@ -604,6 +679,47 @@ st, js, _ = call("GET", "/api/job/%s/activity" % SHARED, None, VIEW)
 check(st == 200 and all("user" not in e for e in js["events"]), "a viewer reads a shared job's history, no names")
 st, js, _ = call("GET", "/api/job/0f0f0f0f0f0f/activity", None, ADMIN)
 check(st == 404 and js == {"detail": "unknown job"}, "no registry row -> 404, even for an admin")
+
+# ================================================ 9b. withdraw and put back are in the log
+# (the takeoff starts empty, merged 2026-10-04) An approval taken out of the bid, and an earlier version's approval
+# put back in it, are said in the activity log as the approve was - or the log's last word on the page stays "approved"
+st, js, _ = call("POST", "/api/job/%s/page/0/withdraw" % EJOB, {}, EST)
+check(st == 200 and js.get("approved") == [], "the estimator withdraws the page's approval")
+sw = [e for e in audit_lines() if e["action"] == "sheet_withdraw"]
+check(len(sw) == 1 and sw[0]["job"] == EJOB and sw[0]["page"] == 0 and sw[0]["user"] == "est@t"
+      and sw[0]["name"] == "Estimator Bid Set.pdf" and sw[0]["detail"] == "1 item",
+      "sheet_withdraw recorded: who, the job, the page, what the approval held")
+st, js, _ = call("POST", "/api/job/%s/page/0/putback" % EJOB, {}, EST)
+check(st == 404 and not [e for e in audit_lines() if e["action"] == "sheet_putback"],
+      "no earlier version's approval is kept for this page: put back is refused and leaves no line")
+# an approval made on an EARLIER VERSION (an export without this build's mark) in the bid, then withdrawn here: it is
+# kept, GET /approved says so (the frame's Plans tiles, Summary and Bid readiness read `earlier` and `kept`), and
+# putting it back is logged with what it holds
+_hist = json.loads((JOBS_DIR / EJOB / "p0_withdrawn.json").read_text(encoding="utf-8"))
+_old = {k: v for k, v in _hist[-1]["export"].items() if k != server.EXPORT_ADDED_KEY}
+(JOBS_DIR / EJOB / "p0_elements.json").write_text(json.dumps(_old, indent=1))
+st, js, _ = call("GET", "/api/job/%s/approved" % EJOB, None, EST)
+ea = (js.get("earlier") or {}).get("0") or {}
+check(st == 200 and js.get("pages") == [0] and ea.get("head") == server.EARLIER_HEAD and ea.get("holds")
+      and "0" not in (js.get("outdated") or {}) and not js.get("kept"),
+      "GET /approved: a page approved on an earlier version is in `earlier` (head, holds), never in `outdated`")
+st, js, _ = call("POST", "/api/job/%s/page/0/withdraw" % EJOB, {}, EST)
+check(st == 200, "that earlier approval is withdrawn")
+st, js, _ = call("GET", "/api/job/%s/approved" % EJOB, None, EST)
+kp = (js.get("kept") or {}).get("0") or {}
+check(st == 200 and js.get("pages") == [] and kp.get("how") == "withdrawn" and kp.get("holds") == ea.get("holds")
+      and "who" not in kp, "GET /approved: it is in `kept` (how it left, what it holds - never who)")
+st, js, _ = call("POST", "/api/job/%s/page/0/putback" % EJOB, {}, EST)
+check(st == 200 and js.get("approved") == [0], "the estimator puts the earlier approval back")
+sp = [e for e in audit_lines() if e["action"] == "sheet_putback"]
+check(len(sp) == 1 and sp[0]["job"] == EJOB and sp[0]["page"] == 0 and sp[0]["user"] == "est@t"
+      and sp[0]["detail"] == ea.get("holds"), "sheet_putback recorded: who, the job, the page, what was put back")
+st, js, _ = call("GET", "/api/job/%s/activity" % EJOB, None, EST)
+acts = [e["action"] for e in (js or {}).get("events", [])]
+check(st == 200 and acts[:3] == ["sheet_putback", "sheet_withdraw", "sheet_withdraw"],
+      "the project's history ends with the put back and the two withdrawals, newest first")
+check(not any(e["user"] == "view@t" and e["action"] in ("sheet_withdraw", "sheet_putback") for e in audit_lines()),
+      "the writes the viewer was refused left no such line")
 
 # ================================================ 10. delete, the team feed
 st, js, _ = call("DELETE", "/api/job/%s" % EJOB, None, EST)

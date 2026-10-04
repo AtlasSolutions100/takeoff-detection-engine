@@ -342,7 +342,7 @@ console.log("\n3. sgPlan puts them in the group, and reports the stakes");
 }
 
 // ===========================================================================
-console.log("\n4. loadResult seeds them OFF - the actual behaviour change");
+console.log("\n4. the engine's picks leave them OUT - and loadResult starts every row out");
 // ===========================================================================
 // The real seeding loop, lifted out of loadResult and run, rather than a
 // grep for the function name: the point is which rows end up false.
@@ -372,7 +372,11 @@ console.log("\n4. loadResult seeds them OFF - the actual behaviour change");
   // the seed rule itself moved into includeSeed (UI verify 2026-10-02 #7: "engine's picks" reuses it)
   const includeSeed = new Function("sgSuggested", fnSrc("includeSeed") + "\nreturn includeSeed;")(F.sgSuggested);
   new Function("state", "sgSuggested", "includeSeed", loop)(state, F.sgSuggested, includeSeed);
-  const inc = state.include;
+  // THE TAKEOFF STARTS EMPTY (2026-10-03): loadResult now starts EVERY row out of the takeoff, and the engine's
+  // picks below are what "Engine's picks" adds (and what the drawing shows until the person adds something)
+  eq([...state.include.values()].every(v => v === false) && state.include.size === styles.length, true,
+    "loadResult starts every row out of the takeoff (nothing is in it until the person adds it)");
+  const inc = new Map(styles.map(s => [s.style_id, includeSeed(s)]));
   eq(inc.get(1), true, "ordinary long solid line work still counts");
   eq(inc.get(2), true,
     "SE-P-SEDIMENT LOG STILL COUNTS — the regression this fix must not cause");

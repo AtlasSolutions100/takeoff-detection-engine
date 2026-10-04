@@ -261,7 +261,9 @@ check(apf.get("ew_removed") == [0, 2] and apf.get("ew_note") == NOTE and elf.get
 
 # ---- R4: approved again by this app - a marked export without old rows; the note goes ---------------------------------
 def approve_ans(jid, page, items):
-    return json.loads(server.approve(jid, page, server.ApproveBody(labels={}, extra_items=items,
+    # (the approval in the bid is v1.8.5's: the page asks before it replaces an earlier version's approval, and the
+    # approve says the person answered yes - critic empty-2, MAJOR-1; tests/test_empty_repair2.py)
+    return json.loads(server.approve(jid, page, server.ApproveBody(labels={}, extra_items=items, replace_earlier=True,
                                                                    scale_seen=server._scale_stamp(jid, page))).body)
 
 

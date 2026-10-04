@@ -53,6 +53,8 @@ for i, (k, name, owner) in enumerate((("S", CARD, None), ("A", "alice-own.pdf", 
 (J / "registry.json").write_text(json.dumps(reg))
 
 import server  # noqa: E402
+# THE TAKEOFF STARTS EMPTY (2026-10-03): an approve with nothing in the takeoff is refused, so the approves here that
+# are about the scale carry one counted row ("Test count", 1 EA - a count needs no scale).
 from takeoff_engine import users as U  # noqa: E402
 
 server._classify_async = lambda *a, **k: None
@@ -69,7 +71,7 @@ def ok(cond, msg, got=None):
 
 
 async def _asgi(method, path, cookie, body=b""):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"), (b"content-type", b"application/json"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3"), (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode()),
                (b"cookie", f"{server.SESSION_COOKIE}={cookie}".encode())]
     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",
@@ -109,12 +111,12 @@ def in_force(who, jid):
 # ---- the host ----------------------------------------------------------------------------------
 ok(in_force("bob", S) == (200, 20.0), "before: bob's review of the shared card reads the engine's 1\" = 20")
 st, d = call("POST", f"/api/job/{S}/page/0/approve", "alice",
-             {"labels": {}, "scale": {"ft_per_paper_inch": 30.0, "text": "1\" = 30'", "picked_by_reviewer": True},
+             {"labels": {}, "extra_items": [{"label": "Test count", "qty": 1, "unit": "EA"}], "scale": {"ft_per_paper_inch": 30.0, "text": "1\" = 30'", "picked_by_reviewer": True, "how": "typed"},
               "scale_seen": call("GET", f"/api/job/{S}/page/0/scale", "alice")[1]["stamp"]})
 ok(st == 200, "HOST RULE: a client (alice) may approve a shared job, with a scale", (st, str(d)[:160]))
 ok((J / S / "p0_scale.json").exists(), "...and the pick is recorded ON THE JOB (p0_scale.json), not per account")
 ok(in_force("bob", S) == (200, 30.0), "...so bob's review now reads alice's 1\" = 30 (one pick for every account)")
-st, d = call("POST", f"/api/job/{A}/page/0/approve", "bob", {"labels": {}})
+st, d = call("POST", f"/api/job/{A}/page/0/approve", "bob", {"labels": {}, "extra_items": [{"label": "Test count", "qty": 1, "unit": "EA"}]})
 ok(st == 404, "a job bob may not open, he may not approve (404)", st)
 st, d = call("POST", "/api/demo/" + CARD.replace(" ", "%20") + "/open", "bob")
 ok(st == 200 and not (J / S / "p0_scale.json").exists(), "opening the demo card sweeps the pick", st)

@@ -97,11 +97,16 @@ def test_scale_rank():
     import server
     auto = {"ft_per_paper_inch": 50.0, "set_by": "auto"}
     picked = {"ft_per_paper_inch": 50.0, "set_by": server._BY_REVIEWER}
-    assert server._cutfill_scale_handoff(None, None, auto) == (50.0, "read in review", None)      # empty: the reading fills it
+    # the words follow the verdict and the record's how (scale verdict S4): an engine reading two kinds confirm is
+    # "read in review", one reading (or no verdict given) "read in review, not confirmed"
+    assert server._cutfill_scale_handoff(None, None, auto) == (50.0, "read in review, not confirmed", None)
+    assert server._cutfill_scale_handoff(None, None, auto, {"state": "CONFIRMED"}) == (50.0, "read in review", None)
     assert server._cutfill_scale_handoff(40.0, "typed", auto) is None                            # set in the engine: stands
     got = server._cutfill_scale_handoff(40.0, "typed", picked)                                  # the reviewer's pick wins, and says so
-    assert got[0] == 50.0 and got[1] == "confirmed in review" and "replaces the one set here" in got[2] and "40" in got[2]
-    assert server._cutfill_scale_handoff(50.0, "read in review", picked) == (50.0, "confirmed in review", None)  # same value: no note
+    # a person's record that is not a confirmation is "set in review"; "confirmed in review" only for `confirmed`
+    assert got[0] == 50.0 and got[1] == "set in review" and "replaces the one set here" in got[2] and "40" in got[2]
+    assert server._cutfill_scale_handoff(50.0, "read in review", picked) == (50.0, "set in review", None)  # same value: no note
+    assert server._cutfill_scale_handoff(None, None, dict(picked, set_how="confirmed"))[1] == "confirmed in review"
     # the reviewer's pick of the number the operator typed in the engine (the Scale card writes its typing into the
     # review): the operator's word stands, its source kept (2026-09-29, round 16)
     assert server._cutfill_scale_handoff(50.0, "typed", picked) is None
@@ -111,7 +116,7 @@ def test_scale_rank():
     # a scale the hand-off itself put there earlier, from another sheet, has no rank: the grading
     # sheet opened now brings its own (a utility sheet's 1" = 20' stood over a 1" = 50' sheet and
     # the volumes came out 6.25x low - the independent check, 2026-09-27)
-    got = server._cutfill_scale_handoff(20.0, "read in review", auto)
+    got = server._cutfill_scale_handoff(20.0, "read in review", auto, {"state": "CONFIRMED"})
     assert got[0] == 50.0 and got[1] == "read in review" and "handed over from another sheet" in got[2] and "20" in got[2], got
     got = server._cutfill_scale_handoff(20.0, "confirmed in review", auto)
     assert got[0] == 50.0 and "handed over from another sheet" in got[2], got

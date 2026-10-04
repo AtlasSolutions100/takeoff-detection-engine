@@ -99,10 +99,14 @@
       acts: ["symBtn", "rollBtn", "xsBtn"],
       primary: ["symBtn", "symPanel"], auto: "tab",
       owns: [["symPanel", "symClose"], ["rollPanel", "rollClose"], ["xsPanel", "xsClose"]] },
+    // WALL PANELS (webui/wallpanels.js, merged 2026-10-04) live in Areas beside Flooring. Its button shows whenever a
+    // plan set is open - typed rooms, sheets and costs need no detection - so it opens BEFORE Detect, while Flooring
+    // (the tab's own panel, needsResult) waits for one. `yields`: while the person has Wall panels open, the tab does
+    // not open Flooring over it; and a Flooring the tab opened by itself steps down when the person opens Wall panels.
     { id: "areas",     label: "Areas",     kind: "canvas",
-      acts: ["flBtn"],
-      primary: ["flBtn", "flPanel"], auto: "always", needsResult: true,
-      owns: [["flPanel", "flClose"]] },
+      acts: ["flBtn", "wpBtn"],
+      primary: ["flBtn", "flPanel"], auto: "always", needsResult: true, yields: ["wpPanel"],
+      owns: [["flPanel", "flClose"], ["wpPanel", "wpClose"]] },
     { id: "earthwork", label: "Earthwork", kind: "canvas",
       acts: ["cfBtn", "stBtn"],
       owns: [["stPanel", "stClose"]] },
@@ -117,9 +121,9 @@
   // which module a panel belongs to - a panel opened any other way (Tools
   // menu, a Questions row, the Analyze banner) brings its tab forward
   const PANEL_MOD = { coPanel: "lines", symPanel: "counts", rollPanel: "counts", xsPanel: "counts",
-                      flPanel: "areas", stPanel: "earthwork", trPanel: "trenching" };
+                      flPanel: "areas", wpPanel: "areas", stPanel: "earthwork", trPanel: "trenching" };
   // the Tools-menu button -> the thing it opens (TOOLS_MENU_ITEMS in app.js)
-  const BTN_PANEL = { cfBtn: "cfStage", flBtn: "flPanel", trBtn: "trPanel", stBtn: "stPanel",
+  const BTN_PANEL = { cfBtn: "cfStage", flBtn: "flPanel", wpBtn: "wpPanel", trBtn: "trPanel", stBtn: "stPanel",
                       symBtn: "symPanel", rollBtn: "rollPanel", xsBtn: "xsPanel", coBtn: "coPanel",
                       aiBtn: "aiBanner", legendBtn: "legendModal" };
   let cur = null;
@@ -350,6 +354,9 @@
       return;
     }
     if (!m.primary) return;
+    // a panel of this module that stands without the tab's own, open because the person opened it (Wall panels in
+    // Areas): the tab does not open its own over it - on a tab press, a page change or a detection landing
+    if ((m.yields || []).some(isOpen)) return;
     // flooring and trench work on detected lines; opening them over an
     // undetected sheet would only say so - the result hook brings them back
     if (m.needsResult && !S().result) return;
@@ -436,6 +443,21 @@
         const want = PANEL_MOD[t.id];
         if (want === "earthwork") { ewSub = "st"; LS.set("core-ew-sub", ewSub); }
         if (cur !== want && MOD[cur] && MOD[cur].kind === "canvas") setModule(want, "follow");
+        // the person opened a panel the tab's own yields to (Wall panels): a Flooring the tab opened by itself, which
+        // nobody has pressed, steps down through its own close button. One the person opened stays.
+        const wm = MOD[want];
+        if (wm && wm.primary && (wm.yields || []).includes(t.id) && autoOpen === wm.primary[1] && isOpen(autoOpen)) {
+          const own = (wm.owns || []).find(([p]) => p === autoOpen);
+          const c = own && byId(own[1]);
+          if (c) c.click();
+          // ...and the panel the person opened is brought to the top of its rail. Its own button scrolled to where
+          // it sat UNDER the panel that just closed, so with that one gone the rail showed its far end (live,
+          // 2026-10-04: Wall panels opened on its Costs table, 1,958px down)
+          const opened = t;
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (!opened.hidden && opened.scrollIntoView) opened.scrollIntoView({ block: "start" });
+          }));
+        }
       }
       if (t.id === "cfStage") {
         if (!t.hidden && cur !== "earthwork" && cur !== "3d") setModule("earthwork", "follow");
@@ -754,6 +776,33 @@
     if (/old calculator was removed/i.test(n)) return { label: "Earthwork", value: "removed" };
     return { label: "Approval", value: "check" };
   }
+  // AN EARLIER VERSION'S APPROVALS (GET /approved `earlier` and `kept`; the takeoff starts empty, merged 2026-10-04).
+  // `earlier`: the pages whose approval in the bid was made on an earlier version. Such an approval is NOT out of date
+  // and NOT a warning - its numbers stay in the bid as they were until the page is approved again or its approval is
+  // withdrawn - so it is never among approvalNotes: one information line a page, the server's own `head`, and what the
+  // approval holds (`detail`) folded behind it. `kept`: the pages whose earlier approval was replaced or withdrawn
+  // here; the server keeps it and the sheet's "Put back earlier approval" puts it back. page null: the job's, by page,
+  // each line naming its page; a page number: that page's own. Nothing here is ever "missing".
+  function earlierNotes(info, page) {
+    if (!info) return [];
+    const out = [];
+    const each = (o, f) => {
+      for (const k of Object.keys(o || {}).sort((a, b) => a - b)) {
+        if (page != null && k !== String(page)) continue;
+        if (o[k] && typeof o[k] === "object") f(+k, o[k]);
+      }
+    };
+    const at = (p) => (page == null ? `Page ${p + 1}: ` : "");
+    each(info.earlier, (p, e) => out.push({ kind: "earlier", page: p, value: "earlier version",
+      text: at(p) + String(e.head || "Approved on an earlier version: its numbers are still in the bid."),
+      detail: String(e.detail || "") }));
+    const LEFT = { replaced: "was replaced by an approve here", withdrawn: "was withdrawn here",
+                   "put back": "gave its place when another was put back" };
+    each(info.kept, (p, k) => out.push({ kind: "kept", page: p, value: "earlier one kept",
+      text: at(p) + `The approval made on an earlier version ${LEFT[k.how] || "left the bid here"}. It is kept and can be put back.`,
+      detail: (k.holds ? `It holds ${k.holds}. ` : "") + "Open the sheet and press Put back earlier approval, beside Approve." }));
+    return out;
+  }
   // THE JOB'S DOWNLOAD LINKS (app.js #dlLink / #reportLink / #bidsheetLink): what each must show and point at, from
   // the server's list of approved pages - never from what an Approve in this tab did, and never another job's. The
   // cross-sheet unticks (app.js xsKey: "<document> p<N> :: <label>") ride along only for THIS document.
@@ -782,6 +831,14 @@
     if (!notes || !notes.length) return null;
     return h("div", { class: "sm-notes", role: "note" }, notes.map((n) =>
       h("div", { class: "rd-verdict missing" }, n)));
+  }
+  // ...and an earlier version's approvals (earlierNotes), as INFORMATION - never the red of a note that costs the bid
+  // money: the line, and what that approval holds folded behind it (click the line; folded, never deleted)
+  function earlierNotesEl(list) {
+    if (!list || !list.length) return null;
+    return h("div", { class: "sm-notes sm-earlier", role: "note" }, list.map((e) => (e.detail
+      ? h("details", { class: "rd-verdict info" }, h("summary", null, e.text), h("div", { class: "sm-earlier-d" }, e.detail))
+      : h("div", { class: "rd-verdict info" }, e.text))));
   }
 
   // F1 / F2 (live proof 2026-10-01): the links were shown by an Approve in this tab and never re-pointed, so after
@@ -943,6 +1000,10 @@
     demo_opened: "Opened (demo, fresh)", job_reset: "Reset", job_deleted: "Deleted", project_delete: "Deleted",
     structure_calc: "Structure computed", check_undone: "Question reopened", scale_pick_retired: "Scale choice replaced",
     login: "Signed in",
+    // the takeoff starts empty (merged 2026-10-04): an approval taken out of the bid, an earlier one put back
+    sheet_withdraw: "Approval withdrawn", sheet_putback: "Earlier approval put back",
+    // bids by e-mail (merged 2026-10-04): the two of its activity lines that name a project (team.js words all ten)
+    inbound_project: "Arrived by e-mail", inbound_file_same: "Sent again by e-mail",
   };
   // anything else reads as a sentence, not as an identifier
   const actWords = (a) => { const t = String(a || "").replace(/_/g, " "); return t.charAt(0).toUpperCase() + t.slice(1); };
@@ -986,6 +1047,9 @@
       // NOT IN THE BID can stand with nothing approved (the job's cut / fill rows on a page not approved yet)
       const n0 = approvalNotesEl(approvalNotes(approvedInfo(), null));
       if (n0) box.append(n0);
+      // ...and so can an earlier version's approval that was withdrawn here and is kept (it can be put back)
+      const k0 = earlierNotesEl(earlierNotes(approvedInfo(), null));
+      if (k0) box.append(k0);
       return;
     }
     const data = await approvedRows();
@@ -1026,6 +1090,10 @@
           ` · ${g.items.length} item${g.items.length === 1 ? "" : "s"}`)));
     }
     if (notesEl) box.append(notesEl);
+    // the pages approved on an earlier version (their numbers are in the tiles above, as they were) and the earlier
+    // approvals kept for a put back: information lines under the tiles
+    const earlyEl = earlierNotesEl(earlierNotes(approvedInfo(), null));
+    if (earlyEl) box.append(earlyEl);
   }
   function renderPlanCards() {
     const box = byId("plGroups");
@@ -1217,22 +1285,76 @@
     const add = (label, state, value, why) => items.push({ label, state, value, why });
     const r = s.result;
     const sc = r && r.scale;
+    // THE SCALE ROW READS THE SCALE VERDICT (scale verdict merge, 2026-10-02; app.js SCALE-VERDICT-UI): a reading the
+    // person only accepted is never "supplied", a measure that agreed is, and a sheet whose readings disagree is missing
+    const v = r && r._verdict;
+    const fn = (typeof svWaiting === "function") && v !== undefined;
+    const val = (x) => `1" = ${fmtN(+x, +x % 1 ? 1 : 0)}'`;
+    const p = v && v.person && +v.person.value > 0 ? v.person : null;
     if (!r) add("Scale", "missing", "sheet not detected", "Detect this sheet first.");
-    else if (!sc || !sc.ft_per_paper_inch) add("Scale", "missing", "none", "No scale on this sheet - type it in the Sheet card.");
+    else if (fn && (r._verdictWaiting || svWaiting(v)) && !(sc && (sc.typed_by_reviewer || sc.picked_by_reviewer)))
+      add("Scale", "assumed", "checking", "checking the scale's readings");
+    else if (fn && v && v.state === "CONFLICT" && !p)
+      add("Scale", "missing", "readings disagree", "the sheet's scale readings disagree ("
+        + (typeof svGroups === "function" ? svGroups(v.choices).map((g) => g.label).join(" or ") : "")
+        + ") - choose one on the sheet");
+    else if (!sc || !sc.ft_per_paper_inch)
+      add("Scale", "missing", "none", (fn && v && typeof svDimOnlyWords === "function" && svDimOnlyWords(v))
+        || "No scale on this sheet - type it in the Sheet card.");
     // the page's scale and the sheet's review record part ways (app.js scaleRecordChip: "not approved yet: the review
     // says ...", or a saved scale dropped): the words beside the scale chip, never "supplied"
     else if (typeof scaleRecordChip === "function" && scaleRecordChip())
-      add("Scale", "assumed", `1" = ${fmtN(sc.ft_per_paper_inch, sc.ft_per_paper_inch % 1 ? 1 : 0)}'`, scaleRecordChip());
+      add("Scale", "assumed", val(sc.ft_per_paper_inch), scaleRecordChip());
+    else if (fn && p && p.how === "accepted" && typeof svMeasureOff === "function" && svMeasureOff(p))
+      add("Scale", "assumed", val(p.value), `accepted; a measure on ${svDate(svMeasureOff(p).at)} said 1 in = `
+        + `${svNum(svMeasureOff(p).ft)} ft`);
+    else if (fn && p && (p.how === "confirmed" || (p.how === "accepted" && p.measure_agrees === true)))
+      add("Scale", "supplied", val(p.value), "checked by measuring");
+    else if (fn && p && p.how === "accepted" && v.state !== "CONFIRMED")
+      add("Scale", "assumed", val(p.value), "accepted without measuring");
+    else if (fn && p && p.how !== "accepted")
+      add("Scale", "supplied", val(p.value), "set by you ("
+        + ({ typed: "typed", calibrated: "measured", picked: "chosen" }[p.how] || "set") + ")");
+    else if (fn && v && v.state === "CONFIRMED")
+      add("Scale", "supplied", val(v.value), `${svKinds(v)} agree`);
+    else if (fn && v && v.state === "UNCHECKED")
+      add("Scale", "assumed", val(v.value), v.dimensions === "failed" ? "the printed dimensions could not be checked"
+        : `not confirmed (one reading: the ${svKinds(v) || "reading"})`);
+    // a page with no verdict (an older server), as before
     else if (sc.picked_by_reviewer || sc.typed_by_reviewer)
-      add("Scale", "supplied", `1" = ${fmtN(sc.ft_per_paper_inch, sc.ft_per_paper_inch % 1 ? 1 : 0)}'`, "set by you");
+      add("Scale", "supplied", val(sc.ft_per_paper_inch), "set by you");
     else if (sc.agrees === true)
-      add("Scale", "supplied", `1" = ${fmtN(sc.ft_per_paper_inch, sc.ft_per_paper_inch % 1 ? 1 : 0)}'`, "printed and drawn agree");
-    else add("Scale", "assumed", `1" = ${fmtN(sc.ft_per_paper_inch, sc.ft_per_paper_inch % 1 ? 1 : 0)}'`,
+      add("Scale", "supplied", val(sc.ft_per_paper_inch), "printed and drawn agree");
+    else add("Scale", "assumed", val(sc.ft_per_paper_inch),
       "one reading (" + ({ text: "printed words", ocr: "OCR of the caption", "graphic-bar": "the drawn bar" }[sc.source]
         || sc.source || "engine") + ") - confirm it in the Sheet card");
     const wz = Array.isArray(s.workZones) ? s.workZones.length : 0;
+    // (the takeoff starts empty, 2026-10-03: with no box drawn it is every line the person ADDED that counts, not
+    // every line on the sheet - CRITIC-empty-1 MINOR-12)
     if (r) add("Work area", wz ? "supplied" : "info", wz ? `${wz} box${wz === 1 ? "" : "es"}` : "whole sheet",
-      wz ? "only length inside your boxes counts" : "every line on the sheet counts");
+      wz ? "only length inside your boxes counts" : "every line you added to the takeoff counts");
+    // THE TAKEOFF (the takeoff starts empty, 2026-10-03; app.js tkReadiness, in its TICKS block): what this page's
+    // takeoff holds - "empty" is missing, in app.js's own words; a page with no detection has no row
+    const tkr = typeof tkReadiness === "function" ? tkReadiness() : null;
+    if (tkr) add(tkr.label, tkr.state, tkr.value, tkr.why);
+    // AN EARLIER VERSION'S APPROVAL OF THIS PAGE (GET /approved `earlier`, `kept`): information, never "missing" and
+    // never OUT OF DATE - such an approval stands in the bid as it was (earlierNotes, in the pure block). The line only:
+    // what the approval holds is folded behind the same line above the Summary's table
+    for (const e of earlierNotes(approvedInfo(), s.page)) add("Approval", "info", e.value, e.text);
+    // THE FLOORING ESTIMATE (flooring merge, 2026-10-03): the job's estimate is the server's (app.js flJobFor, its
+    // computed checks). Held = missing, in the server's own words (an untyped room, a sheet with no scale in force, an
+    // outline off the sheet, a room measured again ...); every check resolved = supplied; a sheet whose scale was only
+    // accepted = assumed (the worksheet's "sheet scale not confirmed")
+    const fj = typeof flJobFor === "function" ? flJobFor() : null;
+    const fc = fj && fj.comp;
+    if (fc && Object.keys(fc.rooms || {}).length) {
+      const fo = fc.open || [];
+      if (fo.length)
+        add("Flooring estimate", "missing", `held: ${fo.length} check${fo.length === 1 ? "" : "s"} open`, String(fo[0].text || ""));
+      else if ((fc.lines || []).length)
+        add("Flooring estimate", "supplied", `$${fc.total}`, "every check resolved: the customer estimate can be issued");
+      for (const f of fc.sheet_flags || []) add("Flooring scale", "assumed", "not confirmed", String(f.text || ""));
+    }
     const extra = Array.isArray(s.extraItems) ? s.extraItems : [];
     const has = (rx) => extra.some((it) => rx.test(it.label || ""));
     const cf = typeof cfState !== "undefined" ? cfState : null;
@@ -1257,10 +1379,13 @@
       if (cfs && !cfs.error) {
         // the source the engine reports: a reading is not a confirmation
         const src = String(cfs.scale_source || "");
-        const st = !src ? "assumed" : src === "read in review" ? "assumed" : "supplied";
+        // the four hand-off words (scale verdict S4): only "read in review, not confirmed" is a single reading
+        const st = !src ? "assumed" : src === "read in review, not confirmed" ? "assumed" : "supplied";
         const why = !src ? "not confirmed in the cut / fill panel"
-          : src === "read in review" ? "read off the sheet, not confirmed by anyone"
-          : src === "confirmed in review" ? "confirmed on the sheet review"
+          : src === "read in review, not confirmed" ? "read off the sheet, not confirmed"
+          : src === "read in review" ? "read off the sheet; two kinds of reading agree"
+          : src === "confirmed in review" ? "checked by measuring on the sheet review"
+          : src === "set in review" ? "set on the sheet review"
           : src === "typed" ? "typed in the cut / fill panel" : "confirmed in the cut / fill panel";
         // two decimals at most in print (the host's cfScaleTxt); the number in force is not rounded
         const cfScale = typeof cfScaleTxt === "function" ? cfScaleTxt(cfs.scale_ft_per_in) : cfs.scale_ft_per_in;
@@ -1390,6 +1515,10 @@
     // fill." where the old calculator's rows were taken out of the numbers below
     const notesEl = approvalNotesEl(smScope === "approved" ? data.notes : approvalNotes(approvedInfo(), s.page));
     if (notesEl) body.append(notesEl);
+    // ...and, as information, the approvals made on an earlier version: still in the bid as they were (their rows are
+    // in "All approved sheets" below, unchanged), or kept for a put back
+    const earlyEl = earlierNotesEl(earlierNotes(approvedInfo(), smScope === "approved" ? null : s.page));
+    if (earlyEl) body.append(earlyEl);
     if (!data.groups.length) {
       body.append(h("div", { class: "rc-empty" }, smScope === "approved"
         ? (data.pages

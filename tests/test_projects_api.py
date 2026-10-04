@@ -89,8 +89,12 @@ r = server.list_projects(_Req())
 # (this box was never seeded) instead of just drawing nothing. The assertion
 # is tightened rather than loosened: the set is still exact, so a fourth key
 # appearing by accident still fails here.
-ok(isinstance(r, dict) and set(r) == {"total", "projects", "demo"},
-   "reply shape is {total, projects, demo}", set(r))
+# CHANGED AGAIN, deliberately (2026-10-04, CRITIC-merge-1): a fourth key, `inbound` - whether bids by e-mail is on on
+# this server. The Projects page asked GET /api/inbound to find out, and got a 404 in its console on every load
+# where the feature is off; it now reads the fact here and asks only when it is on. Still exact: a fifth key fails.
+ok(isinstance(r, dict) and set(r) == {"total", "projects", "demo", "inbound"}
+   and r["inbound"] is (server._inbound.config() is not None),
+   "reply shape is {total, projects, demo, inbound}, and `inbound` is whether the feature's settings are set", set(r))
 rows = {p["job_id"]: p for p in r["projects"]}
 ok(r["total"] == 3 and len(rows) == 3,
    "single-password mode: 3 cards, the vanished PDF dropped", r["total"])

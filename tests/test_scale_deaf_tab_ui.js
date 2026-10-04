@@ -192,8 +192,8 @@ const TYPED40 = Object.assign({}, ENG, { ft_per_paper_inch: 40, text: '1" = 40\'
   const same = Object.values(paths).every((p) => p.sent === p.shown);
   check(same, "S1: on every path the approve sends exactly the scale the screen shows");
   for (const k of ["switch", "restore", "reload"])
-    check(paths[k].shown === 40 && paths[k].sent === 40 && paths[k].ok && /^not approved yet: the review says 1" = 50 ft until you approve$/.test(paths[k].chip || ""),
-      `S1 (${k}): the 40 typed after the record stays on screen, says it is not approved yet, and the approve sends and records `
+    check(paths[k].shown === 40 && paths[k].sent === 40 && paths[k].ok && /^not recorded: the sheet's record says 1" = 50 ft - set the scale again to record this one$/.test(paths[k].chip || ""),
+      `S1 (${k}): the 40 typed after the record stays on screen, says it is not recorded (no word of approving: the takeoff may be empty), and the approve sends and records `
       + `40 - it went back to the record's 50 and exported 50 with nothing flagged: ` + JSON.stringify(paths[k]));
   check(paths.otherBack.shown === 55 && paths.otherBack.sent === 55 && paths.otherBack.ok
     && /^your saved 1" = 40 ft was dropped: the review changed it after you set it$/.test(paths.otherBack.chip || ""),

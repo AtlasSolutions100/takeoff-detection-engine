@@ -38,8 +38,8 @@ check(short({ text: `graphic bar 0-60 ft over 144.0pt (1" = 30', ticks)`, ft_per
 check(short({ text: `graphic bar 0-100 ft over 90.0pt (1" = 80.02', ticks)`, ft_per_paper_inch: 80.0167, source: "graphic-bar" }) === `1" = 80.02'`,
   "B: ...to two decimals when the bar did not land on a whole number");
 check(short(null) === "", "B: no scale, empty");
-check(/scale \$\{scaleShort\(sc\)\} \(\$\{sc\.source\}/.test(fnSrc("sheetFactsText")),
-  "B: sheetFactsText uses it; the source in parentheses is unchanged");
+check(/scale \$\{scaleShort\(sc\)\} \(\$\{_how \|\| sc\.source\}/.test(fnSrc("sheetFactsText")),
+  "B: sheetFactsText uses it; the source in parentheses (a person's scale: how they set it, scale verdict S3)");
 
 // ---- C ----
 const head = fnSrc("renderSheetHead");

@@ -33,6 +33,8 @@ os.environ["TAKEOFF_LEDGER_DIR"] = tempfile.mkdtemp(prefix="cfpick_lg_")
 
 import pymupdf  # noqa: E402
 import server  # noqa: E402
+# THE TAKEOFF STARTS EMPTY (2026-10-03): an approve with nothing in the takeoff is refused, so the approves here that
+# are about the scale or the cut / fill rows carry one counted row ("Test count", 1 EA - a count needs no scale).
 from cutfill.project import Project  # noqa: E402
 from takeoff_engine.detect_page import engine_sig  # noqa: E402
 
@@ -772,7 +774,7 @@ check(server._cf_rows_refused(jid88, 0, items88) is None and "not the engine's n
 code88 = det88 = None
 try:
     server.approve(jid88, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid88, 0), labels={}, extra_items=items88,
-                                                scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+                                                scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 except server.HTTPException as e:
     code88, det88 = e.status_code, e.detail
 pick88 = server._stored_scale_pick(jid88, 0) or {}
@@ -788,7 +790,7 @@ n_led88 = sum(1 for ev, _f in server.ledger.iter_events() if ev.get("event") == 
 code88b = None
 try:
     server.approve(jid88, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid88, 0), labels={}, extra_items=items88,
-                                                scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+                                                scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 except server.HTTPException as e:
     code88b = e.status_code
 pick88b = server._stored_scale_pick(jid88, 0) or {}
@@ -886,8 +888,8 @@ check("Site Fill" in marked90 and code90c and code90c[0] == 409 and (code90c[1] 
       f"row named alike does not: {marked90}, {code90c}")
 # the eleventh critic, r-1: the pick file is written in place again (a temp + replace failed on Windows under a reader);
 # a read caught half way answers with the last whole pick, never "no pick"
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 pk90 = server._stored_scale_pick(jid90, 0) or {}
 fpk90 = d90 / "p0_scale.json"
 whole_pk90 = fpk90.read_text()
@@ -901,7 +903,7 @@ check(pk90.get("ft_per_paper_inch") == 40.0 and pk90_mid.get("ft_per_paper_inch"
 # (an unlink was refused on Windows under a reader, silently, and the old pick stood); read as no pick
 n_ret90 = sum(1 for ev, _f in server.ledger.iter_events() if ev.get("event") == "scale_pick_retired" and ev.get("job") == jid90)
 eng90 = (server._page_scale(jid90, 0, json.loads((d90 / "p0_result.json").read_text(encoding="utf-8"))) or {})
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
                                             scale=server.ApproveScale(ft_per_paper_inch=50.0, text="1\" = 50'", picked_by_reviewer=False)))
 tomb90 = json.loads((d90 / "p0_scale.json").read_text()) if (d90 / "p0_scale.json").exists() else None
 n_ret90b = sum(1 for ev, _f in server.ledger.iter_events() if ev.get("event") == "scale_pick_retired" and ev.get("job") == jid90)
@@ -940,20 +942,20 @@ check(blk_top is None and blk_cg is None,
 # the thirteenth critic, m-c: the same pick on file is not written again - an unwritable file failed every re-approve
 # (503); a new number still fails, said. m-b: a tombstone written is the last whole reading at once
 import stat as _stat  # noqa: E402
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 fpk = d90 / "p0_scale.json"
 os.chmod(fpk, _stat.S_IREAD)
 codes_c = []
 for want in (40.0, 45.0):
     try:
-        server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                                    scale=server.ApproveScale(ft_per_paper_inch=want, text=f"1\" = {want:g}'", picked_by_reviewer=True)))
+        server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                                    scale=server.ApproveScale(ft_per_paper_inch=want, text=f"1\" = {want:g}'", picked_by_reviewer=True, how="typed")))
         codes_c.append(None)
     except server.HTTPException as e:
         codes_c.append(e.status_code)
 os.chmod(fpk, _stat.S_IREAD | _stat.S_IWRITE)
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
                                             scale=server.ApproveScale(ft_per_paper_inch=50.0, text="1\" = 50'", picked_by_reviewer=False)))
 whole_new = json.dumps({"ft_per_paper_inch": 45.0, "set_by": "reviewer", "set_at": "x", "at": 1.0}, indent=1)
 fpk.write_text(whole_new[: len(whole_new) // 2])
@@ -965,18 +967,18 @@ check(codes_c == [None, 503] and half_read is None,
 # the fourteenth critic, WRONG-1: the reviewer's 40, the operator's 40 typed after it (as the refusals ask), then the
 # reviewer back to the engine's 50 - that retire is a reviewer's decision, dated: the typed 40 is refused (it stood, and
 # 576 CY were exported beside the page's 50, 36 % low)
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 with p90._lock:
     s90.update({"scale_ft_per_in": 40.0, "scale_source": "typed", "display_page": "d0p0"})
     p90.page_settings("d0p0").update({"operator_scale": 40.0, "operator_scale_at": time.time() + 1})
 ok14_before = cfpl.foreign_scale(p90) is None
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
                                             scale=server.ApproveScale(ft_per_paper_inch=50.0, text="1\" = 50'", picked_by_reviewer=False)))
 time.sleep(1.2)                          # the tombstone's time must follow the operator's word (set 1 s ahead above)
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
                                             scale=server.ApproveScale(ft_per_paper_inch=50.0, text="1\" = 50'", picked_by_reviewer=False)))
 tomb14 = server._stored_scale_tombstone(jid90, 0) or {}
 live14 = server._cf_review_scale_live(p90, "d0p0") or {}
@@ -984,8 +986,8 @@ w14 = cfpl.foreign_scale(p90) or ""
 # RISK-1: a pick with no time at all, approved again with the same number, is dated by that approve
 (d90 / "p0_scale.json").write_text(json.dumps({"ft_per_paper_inch": 45.0, "set_by": "reviewer"}, indent=1))
 server._PICK_LAST.pop(str(d90 / "p0_scale.json"), None)
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=45.0, text="1\" = 45'", picked_by_reviewer=True)))
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=45.0, text="1\" = 45'", picked_by_reviewer=True, how="typed")))
 dated14 = server._stored_scale_pick(jid90, 0) or {}
 with p90._lock:
     p90.page_settings("d0p0").pop("operator_scale", None)
@@ -1002,28 +1004,31 @@ with p90._lock:
     s90.update({"scale_ft_per_in": 40.0, "scale_source": "typed", "display_page": "d0p0"})
     p90.page_settings("d0p0").update({"operator_scale": 40.0, "operator_scale_at": time.time()})
 time.sleep(1.1)
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
                                             scale=server.ApproveScale(ft_per_paper_inch=50.0, text="1\" = 50'", picked_by_reviewer=False)))
 scaled(d90, 0, 45.0)                                                   # detected again: the engine now reads 45
 live15 = server._cf_review_scale_live(p90, "d0p0") or {}
 w15 = cfpl.foreign_scale(p90) or ""
 scaled(d90, 0, 50.0)
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 at_pick15 = (server._stored_scale_pick(jid90, 0) or {}).get("at")
 scaled(d90, 0, 40.0)                                                   # the engine comes round to the reviewer's 40
-server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[],
+server.approve(jid90, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid90, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
                                             scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=False)))
-tomb15 = server._stored_scale_tombstone(jid90, 0) or {}
+# scale verdict S2 (rulings 9 / 10): the reviewer's own 40 now STANDS as their record (no tombstone, which reads as "no
+# person"), with its time kept - m1's "no new decision" holds
+tomb15 = server._stored_scale_pick(jid90, 0) or {}
 scaled(d90, 0, 50.0)
 with p90._lock:
     p90.page_settings("d0p0").pop("operator_scale", None)
     p90.page_settings("d0p0").pop("operator_scale_at", None)
 check(live15.get("ft") == 45.0 and live15.get("reviewer") is True
       and w15.startswith('Sheet 3.0\'s review says 1" = 45 ft, but the cut / fill is set to 1" = 40 ft')
-      and isinstance(at_pick15, float) and tomb15.get("at") == at_pick15,
+      and isinstance(at_pick15, float) and tomb15.get("at") == at_pick15 and tomb15.get("ft_per_paper_inch") == 40.0,
       f"critic 15, RISK-2 / RISK-1 / m1: the go-back holds after a re-detect and the refusal names the review's number; "
-      f"an engine that came round to the pick keeps its time: {w15} / {tomb15.get('at')} vs {at_pick15}")
+      f"an engine that came round to the pick leaves the reviewer's record standing, its time kept: {w15} / "
+      f"{tomb15.get('at')} vs {at_pick15}")
 server._cutfill._results.pop(pid90, None)
 
 # ---- round 16 (Koby, 2026-09-29): THE REVIEW WINS, and a scale read wrong is typed right in either place. The Scale
@@ -1041,8 +1046,11 @@ class _Req:
 
 
 def typed(pid, ft, sheet, source="typed"):
+    # with the stamp of the sheet's review record, as the Scale card sends it (none is refused, CRITIC-scale-3 MINOR 4)
+    from cutfill import placement as _pl
+    seen = _pl.review_stamps(server._cutfill.get_project(pid)).get(sheet)
     return asyncio.run(server._cutfill.patch_settings(pid, _Req({"scale_ft_per_in": ft, "scale_source": source,
-                                                                 "scale_sheet": sheet})))
+                                                                 "scale_sheet": sheet, "scale_seen": seen})))
 
 
 settle()
@@ -1073,15 +1081,19 @@ check(set_ok and s96["display_page"] == "d0p0" and pk96.get("ft_per_paper_inch")
       and (sm96.get("review_scales") or {}).get("d0p0") == 40.0 and "d0p0" not in (sm96.get("scale_refused") or {}),
       f"typed in the Scale card on the sheet shown, 40 is the sheet's review pick (what its Approve exports at) and the "
       f"scale in force, the operator's word: {pk96} / {s96['scale_ft_per_in']} {s96['scale_source']} / {exported96(0)}")
-# the engine's own reading typed back: the pick is retired (a dated tombstone); the review, the export and the cut / fill
+# the engine's own reading typed back: since scale verdict S2 a person's record of 50, how "typed" (typed in the card,
+# whatever it equals: CRITIC-scale-1 M2), dated - no longer a tombstone (ruling 10); the review, the export and the cut / fill
 # read 50
 typed(pid96, 50.0, "d0p0")
-tomb96 = server._stored_scale_tombstone(jid96, 0) or {}
+tomb96 = server._stored_scale_pick(jid96, 0) or {}
 live96 = server._cf_review_scale_live(p96, "d0p0") or {}
-check(server._stored_scale_pick(jid96, 0) is None and tomb96.get("ft_per_paper_inch") == 50.0 and live96.get("ft") == 50.0
+check(tomb96.get("how") == "typed" and isinstance(tomb96.get("at"), float)
+      and tomb96.get("ft_per_paper_inch") == 50.0 and live96.get("ft") == 50.0
       and live96.get("reviewer") is True and s96["scale_ft_per_in"] == 50.0 and exported96(0) == 50.0
       and cfpl.foreign_scale(p96) is None,
-      f"the engine's own reading typed back retires the pick, dated; review, export and cut / fill read 50: {tomb96}, {live96}")
+      f"the engine's own reading typed back is a person's dated record of it (typed: CRITIC-scale-1 M2); review, "
+      f"export and cut / fill "
+      f"read 50: {tomb96}, {live96}")
 # typed with 3.1 on screen (not the sheet shown): 3.1's review alone; the scale in force measures 3.0 still, and the page
 # is told each sheet's review scale (the card shows 3.1's own there)
 typed(pid96, 30.0, "d0p1")
@@ -1116,8 +1128,8 @@ check(codes96 == [(400, True), (400, True)] and after96 == before96 and bool(cod
       f"typing, said: {codes96} / {code96w}")
 # the reviewer's correction in the review (an Approve at 40) refuses the cut / fill's 50 on the sheet shown, saying where
 # to type; the operator types 40 there, and review, export and cut / fill hold one scale
-server.approve(jid96, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid96, 0), labels={}, extra_items=[],
-                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True)))
+server.approve(jid96, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid96, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}],
+                                            scale=server.ApproveScale(ft_per_paper_inch=40.0, text="1\" = 40'", picked_by_reviewer=True, how="typed")))
 w96 = cfpl.foreign_scale(p96) or ""
 typed(pid96, 40.0, "d0p0")
 check(w96.startswith('Sheet 3.0\'s review says 1" = 40 ft, but the cut / fill is set to 1" = 50 ft')
@@ -1436,7 +1448,7 @@ ok21_typed = typed_row.get("qty") == fill21 + 50 and server.approved_pages(jid21
 # compute first
 typed(pid21, 40.0, "d0p0")
 why21_scale = (server.approved_pages(jid21).get("outdated") or {}).get("0", "")
-server.approve(jid21, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid21, 0), labels={}, extra_items=[]))
+server.approve(jid21, 0, server.ApproveBody(scale_seen=server._scale_stamp(jid21, 0), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}]))
 why21_none = (server.approved_pages(jid21).get("outdated") or {}).get("0", "")
 server._cutfill._results.pop(pid21, None)
 check(ok21_typed and "compute in the Cut / fill panel, then approve page 1 again with its cut / fill rows" in why21_scale
@@ -1528,7 +1540,7 @@ scaled(d22b, 1, 50.0)
 server.cutfill_open(jid22b, server.CutfillOpenBody(page=0, pages=[0, 1]))
 settle()
 server.cutfill_rows(jid22b, 0, server.CutfillRowsBody(added=True, pid=pid22b))    # rows added on page 1, not approved
-server.approve(jid22b, 1, server.ApproveBody(scale_seen=server._scale_stamp(jid22b, 1), labels={}, extra_items=[]))           # page 2 approved, without them
+server.approve(jid22b, 1, server.ApproveBody(scale_seen=server._scale_stamp(jid22b, 1), labels={}, extra_items=[{"label": "Test count", "qty": 1, "unit": "EA"}]))           # page 2 approved, without them
 ap22b = server.approved_pages(jid22b)
 csv22b = server.bidsheet_csv(jid22b, REQ0, ignore=[]).body.decode("utf-8-sig")
 check((ap22b.get("outdated") or {}).get("0", "").startswith("NOT IN THE BID: page 1 holds the job's cut / fill rows, but it is not approved")

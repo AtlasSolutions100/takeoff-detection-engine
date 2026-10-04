@@ -77,6 +77,9 @@ def make_job(jid, schedule_rows):
     res = {"page": {"width_pt": 612, "height_pt": 792}, "scale": {"ft_per_paper_inch": FPP * 72, "text": "test"},
            "styles": styles, "chains": chains, "engine_sig": "t"}
     (d / "p0_result.json").write_text(json.dumps(res))
+    # both families are ADDED to the page's takeoff, as the page does before an approve (the takeoff starts empty,
+    # and the server holds an approve to its record: critic empty-1, MAJOR-4) - version 1
+    server.ticks_post(jid, 0, server.TicksBody(version=0, styles=[5, 6]))
     # stamped like the reader writes it: an unstamped cache (from before the
     # 1-20 ft range check, 2026-09-26) is recomputed, not served
     (d / "footing_schedule.json").write_text(json.dumps(
@@ -116,7 +119,7 @@ check(abs(tot - 148.0) < 2.0 and abs(drawn - 280.0) < 2.0, f"one run {tot} ft, a
 
 
 def items(once):
-    r = server.approve("twr1", 0, server.ApproveBody(scale_seen=server._scale_stamp("twr1", 0), labels={5: "FOOTING", 6: "WALL"}, count_once_style_ids=once))
+    r = server.approve("twr1", 0, server.ApproveBody(scale_seen=server._scale_stamp("twr1", 0), ticks_version=1, labels={5: "FOOTING", 6: "WALL"}, count_once_style_ids=once))
     j = json.loads(bytes(r.body)) if hasattr(r, "body") else r
     exp = json.loads(Path(j["file"]).read_text()) if j.get("file") else {}
     return {x["label"]: x for x in j["items"]}, exp
@@ -145,7 +148,8 @@ check(abs(it2["WALL"]["length_ft"] - 274.0) < 1, "an id that is not a twin famil
 make_job("twr2", {})
 tw2 = json.loads(bytes(server.page_twins("twr2", 0).body))
 check(tw2["families"] == {} and "no footing schedule" in tw2["reason"], f"no schedule, no switch ({tw2['reason']})")
-it3 = server.approve("twr2", 0, server.ApproveBody(scale_seen=server._scale_stamp("twr2", 0), labels={6: "WALL"}, count_once_style_ids=[6]))
+tk3 = server.ticks_post("twr2", 0, server.TicksBody(version=1, styles=[6]))   # the footing is taken out of the takeoff first: the export is exactly the record (critic empty-2, MINOR-2)
+it3 = server.approve("twr2", 0, server.ApproveBody(scale_seen=server._scale_stamp("twr2", 0), ticks_version=tk3["version"], labels={6: "WALL"}, count_once_style_ids=[6]))
 j3 = json.loads(bytes(it3.body))
 check(abs({x["label"]: x for x in j3["items"]}["WALL"]["length_ft"] - 274.0) < 1,
       "count-once asked for on such a set bills as drawn")

@@ -92,7 +92,7 @@ trap 'rm -f "$JAR"' EXIT INT TERM
 
 # X-Core-Client: the marker every page of the app sends with a write (webui/client.js); the server refuses a write
 # without it (server.py _client_gate), so this script says it too
-CURL=(curl -sS $K -b "$JAR" -c "$JAR" --max-time 1800 -H 'X-Core-Client: 2')
+CURL=(curl -sS $K -b "$JAR" -c "$JAR" --max-time 1800 -H 'X-Core-Client: 3')
 
 # ---- sign in ---------------------------------------------------------------
 # /api/login reads a JSON BODY - `body = await request.json()` - not a form.

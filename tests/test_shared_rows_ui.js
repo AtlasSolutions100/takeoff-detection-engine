@@ -30,7 +30,7 @@ const mkState = (shared, saved) => ({
   labels: new Map(), extraItems: [{ label: "Curb", qty: 120, unit: "LF" }], workZones: [[1, 2, 3, 4]], once: null,
   ckDone: null, tr: null, st: null, fl: null, cfFacts: null, ewDropped: false });
 const payload = (st) => new Function("state", "store", "priceKey", "tradeKey", "TRADES", "flScreenScale", "calcNum", "flSavePayload",
-  "const CF_ROW_RE = /x/;\n" + fnSrc(js, "cfIsRow") + "\n" + fnSrc(js, "calcStatePayload") + "\nreturn calcStatePayload;")(
+  "const CF_ROW_RE = /x/;\n" + fnSrc(js, "cfIsRow") + "\n" + fnSrc(js, "flIsRowLabel") + "\n" + fnSrc(js, "calcStatePayload") + "\nreturn calcStatePayload;")(
   st, store, (l) => "price:" + l, (l) => "trade::" + l, ["Concrete"], () => null, (v) => v, () => null)();
 
 {
@@ -45,12 +45,12 @@ const payload = (st) => new Function("state", "store", "priceKey", "tradeKey", "
   // a shared record that (from an older server) still carries someone's rows and prices fills nothing in
   const st = mkState(true, { job_shared: true, rows: [{ label: "Theirs", qty: 5, unit: "EA" }], prices: { Theirs: 77 },
     trades: { Theirs: "Concrete" } });
-  new Function("state", "store", "priceKey", "tradeKey", "TRADES", fnSrc(js, "rowsApplySaved") + "\nreturn rowsApplySaved;")(
+  new Function("state", "store", "priceKey", "tradeKey", "TRADES", fnSrc(js, "flIsRowLabel") + "\n" + fnSrc(js, "rowsApplySaved") + "\nreturn rowsApplySaved;")(
     st, store, (l) => "price:" + l, (l) => "trade::" + l, ["Concrete"])();
   check(st.extraItems.length === 1 && st.extraItems[0].label === "Curb" && !local.has("price:Theirs") && !local.has("trade::Theirs")
     && st.calcRowsLoaded === true, "shared job: this browser's rows stand, nobody else's rows or prices are filled in");
   const own = mkState(false, { rows: [{ label: "Mine", qty: 5, unit: "EA" }], prices: { Mine: 12 } });
-  new Function("state", "store", "priceKey", "tradeKey", "TRADES", fnSrc(js, "rowsApplySaved") + "\nreturn rowsApplySaved;")(
+  new Function("state", "store", "priceKey", "tradeKey", "TRADES", fnSrc(js, "flIsRowLabel") + "\n" + fnSrc(js, "rowsApplySaved") + "\nreturn rowsApplySaved;")(
     own, store, (l) => "price:" + l, (l) => "trade::" + l, ["Concrete"])();
   check(own.extraItems.length === 1 && own.extraItems[0].label === "Mine" && local.get("price:Mine") === "12",
     "own job: the record's rows and prices come back as before");

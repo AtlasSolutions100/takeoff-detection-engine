@@ -125,8 +125,20 @@ PINNED = sorted([
     ("POST", J + "/legend-sheet-upload"),
     ("GET", J + "/page/{page}/scale"),
     ("GET", J + "/page/{page}/scale/dimensions"),
+    # a person's scale decision recorded now (scale verdict S2): confirm / pick / type / calibrate
+    ("POST", J + "/page/{page}/scale/confirm"),
     ("GET", J + "/page/{page}/calcstate"),
     ("POST", J + "/page/{page}/calcstate"),
+    # the takeoff starts empty (2026-10-03): what the person added to the page's takeoff, the server's record
+    ("GET", J + "/page/{page}/ticks"),
+    ("POST", J + "/page/{page}/ticks"),
+    # ...and the act that takes a page's approval out of the bid (an empty approve is refused)
+    ("POST", J + "/page/{page}/withdraw"),
+    # ...and the act that puts an earlier version's approval, replaced or withdrawn here, back in the bid (critic
+    # empty-2, MAJOR-1)
+    ("POST", J + "/page/{page}/putback"),
+    # the Scale card's "put it back" to the engine's reading, recorded without an approve
+    ("POST", J + "/page/{page}/scale/back"),
     ("GET", J + "/page/{page}/elements"),
     ("GET", J + "/report.pdf"),
     ("POST", J + "/page/{page}/analyze"),
@@ -148,6 +160,25 @@ PINNED = sorted([
     # engine's click-in-room fill
     ("GET", J + "/approved"),
     ("POST", J + "/page/{page}/rooms/pick"),
+    # flooring round 3 (2026-10-02): the scale of a traced room, the doors on its edges, the job's flooring estimate
+    ("POST", J + "/page/{page}/rooms/scale"),
+    ("POST", J + "/page/{page}/rooms/openings"),
+    ("GET", J + "/flooring_estimate.csv"),
+    ("GET", J + "/flooring_worksheet.csv"),
+    ("GET", J + "/flooring"),
+    ("PUT", J + "/flooring"),
+    # flooring, critic 3 (2026-10-02): the job document takes acts; a room's scale and openings are acknowledged
+    # on their own routes; the customer estimate as its own PDF
+    ("POST", J + "/flooring/act"),
+    ("POST", J + "/page/{page}/rooms/{uid}/scale/acknowledge"),
+    ("POST", J + "/page/{page}/rooms/{uid}/openings/acknowledge"),
+    ("POST", J + "/page/{page}/rooms/{uid}/measure/acknowledge"),
+    ("GET", J + "/flooring_estimate.pdf"),
+    # the wall panel job (2026-10-03): one document per job and account, acts, its worksheet and its proposal
+    ("GET", J + "/wallpanels"),
+    ("POST", J + "/wallpanels/act"),
+    ("GET", J + "/wallpanels_worksheet.csv"),
+    ("GET", J + "/wallpanels_proposal.pdf"),
     ("GET", J + "/page/{page}/twins"),
     ("GET", J + "/page/{page}/callouts"),
     ("GET", J + "/page/{page}/footings"),
@@ -166,6 +197,8 @@ PINNED = sorted([
     ("GET", J + "/page/{page}/symbols/suggest"),
     ("GET", J + "/marks-rollup"),
     ("POST", J + "/page/{page}/structure"),
+    # 2026-10-03: the e-mail a project arrived in and its keyword match record (which pages a keyword is on)
+    ("GET", J + "/keywords"),
     # readable by whoever may open the job (tests/test_team_roles.py) - the redesign's audit log
     ("GET", J + "/activity"),
 ])
@@ -175,6 +208,7 @@ PINNED = sorted([
 BODIES = {
     J + "/page/{page}/approve": {"labels": {}, "image_dpi": 300,
                                  "notes": ["BOB-WAS-HERE"]},
+    J + "/page/{page}/ticks": {"version": 0, "styles": [1]},
     J + "/page/{page}/calcstate": {"v": 1, "marker": "BOB-OVERWROTE",
                                    "client": "Bob Rival LLC"},
     J + "/cutfill": {"page": 0},
@@ -183,12 +217,17 @@ BODIES = {
     J + "/cutfill/link": {"job": "0000000000ab"},
     J + "/page/{page}/cutfill/grade": {"pts": [[100.0, 100.0]], "surface": "existing"},
     J + "/page/{page}/structure": {"structures": []},
+    J + "/flooring/act": {"version": 0, "act": {"kind": "type_add", "name": "BOB-WAS-HERE"}},
+    J + "/wallpanels/act": {"version": 0, "act": {"kind": "room_add", "name": "BOB-WAS-HERE"}},
+    J + "/page/{page}/rooms/{uid}/scale/acknowledge": {"version": 0, "fpi": 4.0, "digest": "x"},
+    J + "/page/{page}/rooms/{uid}/openings/acknowledge": {"version": 0, "count": 0, "digest": "x"},
+    J + "/page/{page}/rooms/{uid}/measure/acknowledge": {"version": 0, "digest": "x"},
 }
 
 
 # ------------------------------------------------------------ ASGI driver
 async def _asgi(method, path, body: bytes, cookie):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3"),
                (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode())]
     if cookie is not None:
@@ -257,7 +296,7 @@ def test_0_every_job_route_is_enumerated():
             f"{m} {p}" for m, p in sorted(set(live) - set(PINNED)))
         + "\n  -" + "\n  -".join(
             f"{m} {p}" for m, p in sorted(set(PINNED) - set(live))))
-    assert len(live) == 44, len(live)   # +activity (redesign), +scale/at, +scale/dimensions, +earthwork/progress, +footings, +datum, +footings/split, +bidsheet.csv, +watchlist, +pipesizes, +twins, +profile, +runs, +trench-details, +cutfill/link, +cutfill/grade, +cutfill/sheets, +cutfill/state
+    assert len(live) == 66, len(live)   # +activity (redesign), +keywords (bids by e-mail), +putback, +scale/back, +withdraw, +ticks (GET, POST: the takeoff starts empty), +wallpanels (GET), +wallpanels/act, +wallpanels_worksheet.csv, +wallpanels_proposal.pdf, +scale/confirm (dev), +measure/acknowledge, +flooring/act, +scale/acknowledge, +openings/acknowledge, +flooring_estimate.pdf, +flooring (GET, PUT), +flooring_worksheet.csv, +rooms/scale, +rooms/openings, +flooring_estimate.csv, +scale/at, +scale/dimensions, +earthwork/progress, +footings, +datum, +footings/split, +bidsheet.csv, +watchlist, +pipesizes, +twins, +profile, +runs, +trench-details, +cutfill/link, +cutfill/grade, +cutfill/sheets, +cutfill/state
 
 
 def test_1_gate_fails_closed_on_a_missing_row():

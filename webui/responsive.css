@@ -518,7 +518,15 @@ html.shell-on.rsp-on #ribbon:where(.rb-fit-3) .rsp-tog .rsp-tog-t { display: non
      strips are scroll containers (automatic minimum 0), so auto rows let
      the search box ride up over the tabs */
   html.shell-on .projects-view { grid-template-columns: minmax(0, 1fr); column-gap: 0; grid-auto-rows: max-content;
-    grid-template-areas: "head" "tabs" "filters" "controls" "reach" "selbar" "grid" "empty"; }
+    grid-template-areas: "head" "tabs" "filters" "controls" "reach" "inbox" "selbar" "grid" "empty"; }
+  /* From e-mail (bids by e-mail, merged 2026-10-04): the list's 84px indent under each message (the width of its
+     "when" column on a desk) is given back on a phone, where it left the file names 200px; the sender takes a line */
+  html.shell-on .projects-view > .pv-inbox { padding: 12px; }
+  html.shell-on .inb-note, html.shell-on .inb-files, html.shell-on .inb-entry > .inb-anyway { margin-left: 0; }
+  html.shell-on .inb-top { gap: 2px 10px; }
+  html.shell-on .inb-subj { flex: 1 1 100%; }
+  html.shell-on .inb-what { display: block; margin-left: 0; }
+  html.shell-on .inb-anyway { margin-left: 0; }
   html.shell-on .projects-view > .pv-head { flex-wrap: wrap; row-gap: 8px; margin-bottom: 12px; }
   html.shell-on .projects-view > .pv-head #pvBack { margin-left: 0; }
   html.shell-on .projects-view > .pv-tabs, html.shell-on .projects-view > .pv-filters {
@@ -552,6 +560,8 @@ html.shell-on.rsp-on #ribbon:where(.rb-fit-3) .rsp-tog .rsp-tog-t { display: non
   html.shell-on .sv-book-table { min-width: 520px; }
   html.shell-on .sv-addrow, html.shell-on .sv-io, html.shell-on .sv-form { flex-wrap: wrap; }
   html.shell-on .sv-addrow input { min-width: 0; flex: 1 1 140px; }
+  /* the bid address (one long word) takes a whole line; Copy and New address sit under it */
+  html.shell-on #svInbAddr { flex: 1 1 100%; max-width: none; }
 
   /* Plans (project overview): two sheet thumbnails a row */
   html.shell-on .pl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

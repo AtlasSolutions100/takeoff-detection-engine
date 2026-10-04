@@ -18,6 +18,7 @@ import contextvars
 import math
 import multiprocessing
 import os
+import queue
 import re
 import sys
 import urllib.parse
@@ -39,6 +40,7 @@ from takeoff_engine import audit as _audit_log
 from takeoff_engine import bids as _bids
 from takeoff_engine import branding as _branding
 from takeoff_engine import bidsheet as _bidsheet
+from takeoff_engine import inbound as _inbound
 from takeoff_engine import ledger
 from takeoff_engine.chain import build_chains
 from takeoff_engine.classify_page import classify_page
@@ -347,10 +349,15 @@ def _read_session(token: str):
 
 # the page's own marker on every write (webui/client.js; _client_gate): its absence means a page from before this one
 CLIENT_HEADER = "X-Core-Client"
-CLIENT_MIN = 2
+CLIENT_MIN = 3     # 3 since scale verdict S4 (CRITIC-scale-2 MINOR 2): a 2.0-build tab sends 2
 CLIENT_OLD_WORDS = "CORE was updated. Reload this page to keep working."
 # the forms that must work without the page's scripts (and v1.8.5's sign-out still has to sign out)
 _CLIENT_EXEMPT = {"/api/login", "/api/logout", "/api/change-password"}
+# THE MAIL DOOR (takeoff_engine/inbound.py). The one route no browser calls: the mail service POSTs each inbound
+# message to it with HTTP Basic credentials, so it carries no session and no page marker, and the middleware lets it
+# through to the route, which answers by itself - 404 while the feature is off, 401 on wrong credentials. Every
+# other e-mail route is an ordinary signed-in one.
+INBOUND_DOOR = "/api/inbound/postmark"
 
 
 # Added ALWAYS, not only when a password is set. If it were conditional,
@@ -578,10 +585,31 @@ if True:
             return None
         return _StarJSON({"detail": CLIENT_OLD_WORDS, "client": "old"}, status_code=409)
 
+    # THE ACCOUNT FILE CAN NOT BE READ (2026-10-04, CRITIC-merge-1). A users.json that is there and can not be read
+    # used to count as "no accounts": on a box with a site password that is single-password mode (everybody's bids
+    # to whoever holds the one word), on a box without one it is no sign-in at all. users.load() now serves the
+    # last roster it read; when it has none it raises, and every request that needs the roster is refused HERE -
+    # sign-in, every signed-in route, the mail door - with the same 503 this server gives when it has nothing to
+    # sign anybody in against. users.Busy is a change to the accounts that could not be written because another
+    # program held the file. Neither is ever an open answer, and neither changes anything on disk.
+    _ACCOUNTS_UNREADABLE = "This server can not read its accounts right now. Nothing was changed. Try again in a moment."
+    _ACCOUNTS_BUSY = "The accounts are being saved by another program. Nothing was changed. Try again in a moment."
+
     class _SessionAuth(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
+            try:
+                return await self._gate(request, call_next)
+            except _users.Unreadable:
+                return _StarJSON({"detail": _ACCOUNTS_UNREADABLE}, status_code=503, headers={"Retry-After": "30"})
+            except _users.Busy:
+                return _StarJSON({"detail": _ACCOUNTS_BUSY}, status_code=503, headers={"Retry-After": "5"})
+
+        async def _gate(self, request, call_next):
             path = request.url.path
             if path in _PUBLIC:
+                return await call_next(request)
+            if path == INBOUND_DOOR and request.method == "POST":
+                # not a browser route: the mail service's credentials are checked by the route itself
                 return await call_next(request)
 
             # FAIL CLOSED. No accounts and no site password on a reachable box
@@ -638,7 +666,12 @@ if True:
             # The role, once per request: admin is what staff always was, so
             # tk_staff is read through it (users.is_staff says the same).
             # None in single-password mode - there is no account to have one.
-            _role = _users.role_of(user) if user else None
+            # Read from THE ROSTER THE SESSION WAS JUST CHECKED AGAINST (_accounts), not from the file a second
+            # time: an account removed between the two reads had no role at the second, and "no role" is not
+            # "viewer", so a viewer's last request went through as a write (2026-10-04: its upload answered 200
+            # and registered a job; tests/test_redesign_account_file.py g3). One read, one answer: 401 when the
+            # account is gone at that read, its own role when it is there.
+            _role = _users.role_of(user, _accounts) if user else None
             request.scope["tk_role"] = _role
             request.scope["tk_staff"] = _role == "admin"
             if user:
@@ -831,7 +864,10 @@ def _audit(request, action: str, *, job=None, page=None, detail=None,
         pass
 
 
-def _n(n, word: str) -> str:
+def _audit_n(n, word: str) -> str:
+    """A count with its word, for an audit line's detail: 1 file, 3 files. Named for what it is: it was `_n` until the
+    merge of 2026-10-04, where the fork's delete_job brought a loop variable `_n` of its own - a local of the whole
+    function - and the audit line at its end then failed (UnboundLocalError) after the project was already deleted."""
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
@@ -1162,7 +1198,14 @@ def _save_registry() -> None:
                    "sizes": j.get("sizes"), "owner": j.get("owner"),
                    # where the plan came from when Open bids pulled it
                    # (/api/bids/{id}/pull); None for an upload
-                   "bid": j.get("bid")}
+                   "bid": j.get("bid"),
+                   # ...or when it arrived by e-mail (_inbound_open): the subject for the card, what Detect ran on
+                   # by itself, and the keyword match record. Written only for such a project, so every other row
+                   # is byte for byte what it was.
+                   **({"inbound": j["inbound"]} if j.get("inbound") else {}),
+                   # ...and WHILE an e-mail is still opening it: which message (_inbound_open), so a restart in the
+                   # middle can tell its own half-opened project from one the account already had
+                   **({"inbound_opening": j["inbound_opening"]} if j.get("inbound_opening") else {})}
              for jid, j in JOBS.items()}, indent=1))
     except OSError:
         pass
@@ -1194,6 +1237,10 @@ def _load_registry() -> None:
                      "mtime": j.get("mtime"), "kinds": j.get("kinds"),
                      "sizes": j.get("sizes"), "owner": j.get("owner"),
                      "bid": j.get("bid"), "status": status}
+        if isinstance(j.get("inbound"), dict):
+            JOBS[jid]["inbound"] = j["inbound"]
+        if isinstance(j.get("inbound_opening"), str):
+            JOBS[jid]["inbound_opening"] = j["inbound_opening"]
 
 
 _load_registry()
@@ -1263,6 +1310,7 @@ def recent_documents(request: Request):
             "shared": _shared_for_all(j),
             "deletable": staff or (owner == me),
             "bid": j.get("bid"),
+            "inbound": _inbound_card(j),
         })
     out.sort(key=lambda r: -r["when"])
     return out[:60]
@@ -1408,6 +1456,817 @@ def pull_bid(lid: str, request: Request, detect: int = 1, file: int = -1):
     reg.update({"bid": meta, "file": stem, "size": len(raw), "linked": linked,
                 "detect": "core pages, after triage" if detect else "off"})
     return reg
+
+
+# ---- BIDS BY E-MAIL ---------------------------------------------------------------------------------------------
+# An invitation to bid forwarded to an account's own address opens as a project and detects by itself. The rules,
+# the three settings and everything that needs no part of this file are in takeoff_engine/inbound.py; here are the
+# door the mail service posts to, the worker that reads a message after the door has answered, and the signed-in
+# routes behind the "From e-mail" list and Settings -> Bid address.
+#
+# THE ORDER OF A MESSAGE. The door checks the credentials, reads the body up to a ceiling, finds the account from
+# the tag (MailboxHash), writes the record and spools the PDF / zip attachments, and answers 200 - fast, so the
+# mail service never re-sends a slow job. ONE worker thread then reads the spooled message: unpacks its zips to
+# disk, tells drawings from text, applies the account's keyword rules, opens each plan as the account's own project
+# exactly as an upload of the same file would, and queues Detect in the e-mail line (_SCHED_BG), which never costs
+# a person a worker. Nothing here sends anything to an AI provider, and the message text is never stored (of a
+# mail provider's forwarding confirmation only a code and a link are: inbound.confirmation).
+#
+# WHAT A MESSAGE CAN COST THIS PROCESS (2026-10-04; the rules are at the top of inbound.py). Anybody who knows a bid
+# address can send one, so: the door takes in DOOR_SLOTS messages at a time; it looks at a message's first
+# MAX_ATTACHMENTS attachments, measures them before it decodes any, and decodes them one at a time straight into
+# the spool; the reader works from those FILES - a zip member goes to disk in pieces, a PDF is profiled, searched
+# and opened from its file - with one count of unpacked bytes for the whole message; a record lists MAX_LISTED
+# files and counts the rest; and a message that stopped the server READ_TRIES times is not read again.
+#
+# WHO SEES WHAT. A project opened here belongs to the account (the registry row's owner), so the one visibility
+# rule (_can_open) keeps it from every other account. The list route serves the caller's own records only, and
+# every reply below is built field by field: a record on disk also holds file hashes and the account's name, and
+# none of that is sent.
+_INBOUND_Q: "queue.Queue" = queue.Queue()   # (account, record id): messages spooled and waiting to be read
+_INBOUND_THREAD: list = []                  # [Thread] once the worker is up
+_INBOUND_LOCK = threading.RLock()           # a record is read, changed and written back by one thread at a time
+_INBOUND_OPENING: set = set()               # (record id, file number) being opened anyway right now
+_INBOUND_KINDS_WAIT_S = 600.0               # an e-mailed set's pages are classified before the next set is opened
+_INBOUND_NO_PDF = ("No PDF was attached. If the plans are behind a link, download them and upload the PDF "
+                   "with + New project.")
+_INBOUND_FILE_KEYS = ("name", "zip", "size", "sha", "pages", "sheet_pages", "text_pages", "hint", "match")
+_INBOUND_DOOR_SLOTS = threading.BoundedSemaphore(_inbound.DOOR_SLOTS)   # messages being taken in at this moment
+_INBOUND_DOOR_WAIT_S = 90.0                 # a POST that gets no slot in this long is told to come back (503)
+_INBOUND_STOPPED = ("This message was not read: the server stopped while reading it, more than once. Forward it "
+                    "again, or upload the plans with + New project.")
+# ATTACHMENTS OF A MESSAGE THE DOOR NEVER ANSWERED FOR DO NOT WAIT FOR A LATER RESTART (critic merge-1, MINOR-3). A
+# spool folder with no manifest is a message whose door was stopped before it could answer. It was cleared only at a
+# start, and only when older than ten minutes - the age that protects a message being taken in at that moment - so
+# after the usual crash-and-restart up to 35 MB a message stayed until some later start. Now: at a start, every such
+# folder made BEFORE this process began goes, whatever its age (its door died with the process before); and while
+# the service runs the ten-minute sweep is made each time a message is recorded and in the reader's hourly pass.
+_INBOUND_STARTED = time.time()              # when this process began: no door of its own is older
+
+
+def _inbound_card(j: dict) -> "dict | None":
+    """What a project's card says about the e-mail its plan set arrived in, field by field: the subject, how many
+    pages Detect ran on by itself (of how many), and which of the account's keywords were found in it. None while
+    the feature is off: off means nothing of it shows on screen, an earlier project's note included (the project
+    keeps the record, and the note is back when the feature is)."""
+    m = j.get("inbound")
+    if not isinstance(m, dict) or _inbound.config() is None:
+        return None
+    a = m.get("auto") if isinstance(m.get("auto"), dict) else {}
+
+    def n(v) -> int:
+        try:
+            return max(0, int(v))
+        except (TypeError, ValueError):
+            return 0
+
+    match = m.get("match") if isinstance(m.get("match"), dict) else {}
+    found = [f["word"] for f in match.get("found") or [] if isinstance(f, dict) and isinstance(f.get("word"), str)]
+    return {"subject": str(m.get("subject") or "")[:_inbound.SUBJECT_MAX], "at": m.get("at"),
+            "queued": n(a.get("queued")), "wanted": n(a.get("wanted")), "pages": n(a.get("pages")),
+            "cap": n(a.get("cap")), "found": found[:_inbound.RULE_WORDS_MAX]}
+
+
+@app.post(INBOUND_DOOR)
+async def inbound_postmark(request: Request):
+    """THE DOOR: the mail service POSTs one inbound message here as JSON.
+
+    404 while the feature is off (the three settings; inbound.config) - the same answer a route that does not
+    exist gives. 401 on wrong credentials, checked before a byte of the body is read. Otherwise 200 as soon as the
+    message is on record and its PDFs are spooled; the reading happens afterwards (_inbound_read). The 200 is the
+    same {"ok": true} whether the address is anybody's or not, so the reply never says which addresses exist. A
+    body that is not a message answers 400, one past the ceiling 413: neither can come from the mail service."""
+    cfg = _inbound.config()
+    if cfg is None:
+        raise HTTPException(404, "Not Found")
+    if not _inbound.authorized(request.headers.get("authorization"), cfg):
+        return JSONResponse({"detail": "wrong credentials"}, status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="inbound"'})
+    limit = _inbound.MAX_BODY_BYTES
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > limit:
+        _inbound.audit("inbound_refused", detail=f"a POST of more than {limit // (1024 * 1024)} MB was not read")
+        return JSONResponse({"detail": "too large"}, status_code=413)
+    import asyncio
+    from starlette.concurrency import run_in_threadpool
+    # DOOR_SLOTS AT A TIME. A message is held whole while it is taken in (its body, then the same again parsed), so
+    # how many are taken in at once is what bounds this process when many arrive together. The wait is BEFORE the
+    # body is read: a POST that is waiting holds nothing here. No slot in _INBOUND_DOOR_WAIT_S: 503, and the mail
+    # service delivers the message again later.
+    waited = time.monotonic()
+    while not _INBOUND_DOOR_SLOTS.acquire(blocking=False):
+        if time.monotonic() - waited > _INBOUND_DOOR_WAIT_S:
+            return JSONResponse({"detail": "busy, send it again"}, status_code=503, headers={"Retry-After": "60"})
+        await asyncio.sleep(0.05)
+    try:
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                break
+            chunks.append(chunk)
+        if size > limit:
+            _inbound.audit("inbound_refused", detail=f"a POST of more than {limit // (1024 * 1024)} MB was not read")
+            return JSONResponse({"detail": "too large"}, status_code=413)
+        box = [b"".join(chunks)]
+        del chunks                       # _inbound_accept takes the only copy out of the box, and lets go of it
+        # off the event loop: parsing and spooling a 35 MB message must not hold up anybody else's request
+        status_code, reply = await run_in_threadpool(_inbound_accept, box)
+    finally:
+        _INBOUND_DOOR_SLOTS.release()
+    return JSONResponse(reply, status_code=status_code)
+
+
+def _inbound_refused_log(acct, refused: list, more: dict = None) -> None:
+    """The log lines for files that were not opened: the first LOG_FILES_MAX one by one, the rest in ONE line that
+    counts them - a message with twenty thousand files writes eleven lines, not twenty thousand."""
+    cap = _inbound.LOG_FILES_MAX
+    for r in refused[:cap]:
+        _inbound.audit("inbound_file_refused", user=acct, name=r["name"], detail=r["reason"])
+    rest = _inbound.add_counts(_inbound.fold(refused, cap)[1], more)
+    if rest:
+        words = {_inbound.NOT_PDF: "not PDFs", _inbound.OVER_PDFS: f"past the limit of {_inbound.MAX_PDFS} PDFs",
+                 _inbound.OVER_UNPACK: "past the unpacking limit", _inbound.OTHER: "not read for another reason"}
+        n = sum(rest.values())
+        _inbound.audit("inbound_file_refused", user=acct, name=f"and {n} more file" + ("" if n == 1 else "s"),
+                       detail="not opened: " + ", ".join(f"{rest[w]} {words[w]}" for w in _inbound.WHYS if w in rest))
+
+
+def _inbound_accept(box: list) -> tuple:
+    """Everything the door does before it answers: (status, reply). `box` holds the POST's body and nothing else
+    does. On record before the 200: when, the sender, the subject, the attachments' names (the first MAX_LISTED;
+    the rest counted), and - spooled - the PDFs and zips among its first MAX_ATTACHMENTS attachments. A crash
+    anywhere in here means no 200 was sent, so the mail service delivers the message again and nothing is lost."""
+    try:
+        body = box.pop()
+        text = body.decode(json.detect_encoding(body), "surrogatepass")     # what json.loads does with bytes
+        del body                         # ... done by hand so the body is let go of BEFORE it is parsed
+        payload = json.loads(text)
+    except (ValueError, RecursionError, IndexError):     # not JSON, not text, or nested past what can be parsed
+        payload = None
+    text = None
+    msg = _inbound.message(payload)
+    if msg is None:
+        _inbound.audit("inbound_refused", detail="a POST that is not an inbound message (no MessageID); nothing was read")
+        return 400, {"detail": "not an inbound message"}
+    if msg["clash"]:
+        # MailboxHash says one address and the recipient line another: it is opened for neither
+        _inbound.audit("inbound_unknown_address",
+                       detail=f"message {msg['id'][:80]}: its MailboxHash and its recipient address name two "
+                              "different bid addresses; nothing was opened")
+        return 200, {"ok": True}
+    acct = _inbound.account_for(msg["tag"])
+    if acct is None:
+        # nothing is created, and nothing of the message is kept: it is nobody's
+        _inbound.audit("inbound_unknown_address",
+                       detail=f"message {msg['id'][:80]}: no account has this address; nothing was opened")
+        return 200, {"ok": True}
+    now = time.time()
+    looked = msg["attachments"]          # the message's first MAX_ATTACHMENTS; msg["attached"] is how many it had
+    names = [_inbound.clean_name(a.get("name")) for a in looked]
+
+    def unread_all(reason: str) -> tuple:
+        """Every looked-at attachment as a line that says it was not read, listed up to the cap and counted past it."""
+        return _inbound.fold([{"name": n, "state": "refused", "reason": reason, "why": _inbound.OTHER} for n in names],
+                             _inbound.MAX_LISTED)
+
+    with _INBOUND_LOCK:
+        prev = _inbound.find_message(acct, msg["id"])
+        if prev is not None:
+            # ONCE ONLY: the same MessageID again opens nothing, and its record says it came again
+            prev["again"] = int(prev.get("again") or 0) + 1
+            prev["again_at"] = now
+            _inbound.save_entry(acct, prev)
+            _inbound.audit("inbound_again", user=acct, name=prev.get("subject"),
+                           detail=f"the same message was delivered again (now {prev['again'] + 1} times); "
+                                  "nothing new was opened")
+            return 200, {"ok": True}
+        entry = _inbound.new_entry(acct, msg, now)
+        if _inbound.read_today(acct, now) >= _inbound.MAX_PER_DAY:
+            over = _inbound.over_cap_today(acct, now)
+            if len(over) >= _inbound.OVER_CAP_KEPT:
+                # a flood: counted on the newest such record instead of one record each (every one has its log line)
+                over[0]["more"] = int(over[0].get("more") or 0) + 1
+                _inbound.save_entry(acct, over[0])
+            else:
+                listed, more = unread_all("not read: over the daily limit")
+                entry.update(status="over", counted=False, files=listed, unlisted=more,
+                             reason=f"Over the limit of {_inbound.MAX_PER_DAY} messages a day, so this one was not "
+                                    "read. Upload its plans yourself, or forward it again tomorrow.")
+                _inbound.save_entry(acct, entry)
+            _inbound.audit("inbound_refused", user=acct, name=msg["subject"],
+                           detail=f"over the limit of {_inbound.MAX_PER_DAY} messages a day; nothing was read")
+            return 200, {"ok": True}
+        # MEASURED BEFORE ANYTHING IS DECODED: each attachment's size comes from the length of its base64 text - a
+        # figure that is never under the real one, then (only when that is over the limit) the exact one
+        total = sum(_inbound.b64_bound(a.get("content")) for a in looked)
+        if total > _inbound.MAX_MESSAGE_BYTES:
+            total = sum(_inbound.b64_size(a.get("content")) for a in looked)
+        if total > _inbound.MAX_MESSAGE_BYTES:
+            mb = _inbound.MAX_MESSAGE_BYTES // (1024 * 1024)
+            listed, more = unread_all("not read: the message is over the size limit")
+            entry.update(status="refused", files=listed, unlisted=more,
+                         reason=f"The attachments add up to {total / 1048576:.0f} MB, over the limit of {mb} MB a "
+                                "message, so nothing was read. Upload the plans with + New project.")
+            _inbound.save_entry(acct, entry)
+            _inbound.audit("inbound_refused", user=acct, name=msg["subject"],
+                           detail=f"attachments over {mb} MB; nothing was read")
+            return 200, {"ok": True}
+        # ONE AT A TIME. What is not a PDF or a zip (by its name and its first bytes) is never decoded. A PDF or a
+        # zip is decoded, written to the spool and let go of before the next one is touched.
+        eid, refused, spooled = entry["id"], [], []
+        try:
+            for a, name in zip(looked, names):
+                content = a.get("content")
+                kind = _inbound.kind_of(name, _inbound.b64_head(content)) if isinstance(content, str) else None
+                if kind == "other":
+                    refused.append({"name": name, "state": "refused", "reason": "not a PDF", "why": _inbound.NOT_PDF})
+                    continue
+                raw = _inbound.decode(content) if kind else None
+                if raw is None:
+                    refused.append({"name": name, "state": "refused", "why": _inbound.OTHER,
+                                    "reason": "could not be read out of the message"})
+                    continue
+                spooled.append({"n": len(spooled), "name": name, "kind": kind,
+                                "size": _inbound.spool_add(eid, len(spooled), raw)})
+                raw = None
+            if spooled:
+                _inbound.spool_commit(acct, eid, spooled)
+        except Exception:
+            _inbound.spool_drop(eid)     # no 200 goes out, so the mail service delivers the message again
+            raise
+        # the plans' own lines come from the reader: MAX_PDFS places on the record are left for them
+        listed, more = _inbound.fold(refused, _inbound.MAX_LISTED - _inbound.MAX_PDFS)
+        entry["confirm"] = _inbound.confirmation(payload)
+        entry.update(files=listed, unlisted=more, pending=[f["name"] for f in spooled])
+        if not spooled:
+            entry["status"] = "done"
+            if entry["confirm"] is None:
+                entry["reason"] = _INBOUND_NO_PDF
+        _inbound.save_entry(acct, entry)
+    _inbound.audit("inbound_message", user=acct, name=msg["subject"],
+                   detail=f"from {msg['from']}; {msg['attached']} file(s) attached"
+                          + (f"; only the first {len(looked)} were looked at" if entry["unread"] else ""))
+    _inbound_refused_log(acct, refused)
+    if spooled:
+        _inbound_enqueue(acct, eid)
+    _inbound_spool_sweep(now)            # the message is on record: what an earlier, stopped door left goes now
+    return 200, {"ok": True}
+
+
+def _inbound_spool_sweep(now: float, older_s: float = 600.0) -> None:
+    """Clear spooled attachments that belong to no message (inbound.spool_sweep). Best effort: never the caller's
+    problem."""
+    try:
+        _inbound.spool_sweep(now, older_s)
+    except Exception:                    # noqa: BLE001
+        pass
+
+
+def _inbound_reader_start() -> None:
+    with _INBOUND_LOCK:
+        if not _INBOUND_THREAD:
+            t = threading.Thread(target=_inbound_loop, name="inbound-mail", daemon=True)
+            t.start()
+            _INBOUND_THREAD.append(t)
+
+
+def _inbound_enqueue(account: str, eid: str) -> None:
+    _INBOUND_Q.put((account, eid))
+    _inbound_reader_start()
+
+
+def _inbound_idle() -> None:
+    """The reader's hourly pass: held plans whose days ran out, and spooled attachments that belong to no message."""
+    try:
+        _inbound.held_prune_all(time.time())
+    except Exception:                    # noqa: BLE001
+        pass
+    _inbound_spool_sweep(time.time())
+
+
+def _inbound_loop() -> None:
+    """The one reader: messages are read one after another, in the order they arrived. Every hour it has nothing
+    to read it sweeps the held plans, so none outlives its days on disk, and the spool (_inbound_idle)."""
+    while True:
+        try:
+            account, eid = _INBOUND_Q.get(timeout=3600)
+        except queue.Empty:
+            _inbound_idle()
+            continue
+        try:
+            _inbound_read(account, eid)
+        except _users.Unreadable:
+            # the account file can not be read, so whose message this is can not be decided: it stays spooled and
+            # is read at the next start (it used to count as "the account was removed": spool and records dropped)
+            pass
+        except Exception as e:           # noqa: BLE001 - one message's failure must not end the reader
+            _inbound_failed(account, eid, e)
+        finally:
+            _INBOUND_Q.task_done()
+
+
+class _InboundStopped(Exception):
+    """A spooled message that has already been started READ_TRIES times: each time the server stopped before the
+    read was over (a restart, or the message itself brought it down). It is not read again."""
+
+
+def _inbound_failed(account: str, eid: str, err: Exception) -> None:
+    """A message the reader could not get through: its record says so, in words, and nothing stays spooled."""
+    try:
+        stopped = isinstance(err, _InboundStopped)
+        with _INBOUND_LOCK:
+            entry = _inbound.load_entry(account, eid)
+            if entry is not None:
+                base = list(entry.get("files") or [])
+                why = "not read: the server stopped while reading it" if stopped else "not read: an error on the server"
+                listed, more = _inbound.fold(
+                    [{"name": n, "state": "refused", "reason": why, "why": _inbound.OTHER}
+                     for n in entry.get("pending") or []], _inbound.MAX_LISTED - len(base))
+                entry.update(files=base + listed, unlisted=_inbound.add_counts(entry.get("unlisted"), more),
+                             pending=[], status="done",
+                             reason=_INBOUND_STOPPED if stopped else
+                             "This message could not be read (an error on the server). Forward it again, "
+                             "or upload the plans with + New project.")
+                _inbound.save_entry(account, entry)
+        _inbound.spool_drop(eid)
+        _inbound.audit("inbound_refused", user=account,
+                       detail="a message was not read: the server stopped while reading it, more than once" if stopped
+                       else f"a message could not be read ({type(err).__name__})")
+    except Exception:                    # noqa: BLE001
+        pass
+
+
+def _inbound_wait_kinds(jid: str) -> None:
+    """ONE E-MAILED SET AT A TIME in this process: opening a set classifies every page on a thread here, and a
+    message with twenty PDFs would otherwise start twenty at once and slow every request while they ran."""
+    end = time.time() + _INBOUND_KINDS_WAIT_S
+    while time.time() < end:
+        with JOBS_LOCK:
+            j = JOBS.get(jid)
+            if j is None or j.get("kinds") is not None:
+                return
+        time.sleep(0.2)
+
+
+def _inbound_plan_check(src: Path, name: str) -> None:
+    """The refusals an upload of the same file gets (_upload_check, then _pdf_or_400), in their words and their
+    order, made FROM THE FILE: an e-mailed plan is never loaded whole into this process. Raises HTTPException(400)."""
+    try:
+        with open(src, "rb") as fh:
+            head = fh.read(1024)
+    except OSError:
+        head = b""
+    if not head:
+        raise HTTPException(400, "that file was empty")
+    if not name.lower().endswith(".pdf"):
+        raise HTTPException(400, f"{name} is not a PDF - plans have to be a PDF")
+    if head[:5] != b"%PDF-":
+        raise HTTPException(400, "that is not a PDF - plans have to be a PDF")
+    try:
+        doc = pymupdf.open(str(src), filetype="pdf")
+        try:
+            if not doc.is_pdf or int(doc.page_count) < 1:
+                raise ValueError("no pages")
+            doc[0].rect                  # the first page must at least open
+        finally:
+            doc.close()
+    except Exception:                    # noqa: BLE001
+        raise HTTPException(400, "that PDF could not be opened - the file is damaged "
+                                 "or incomplete; export it again and upload that")
+
+
+def _inbound_job_alive(jid, account) -> bool:
+    """A project that is still there and still this account's (inbound.same_file asks: a project deleted since is
+    no reason to refuse the same file)."""
+    with JOBS_LOCK:
+        j = JOBS.get(jid) if isinstance(jid, str) else None
+        return j is not None and j.get("owner") == account and Path(j.get("path", "")).exists()
+
+
+def _inbound_open(account: str, entry: dict, rec: dict, src: Path, anyway: bool = False) -> dict:
+    """One plan - a FILE at `src` - becomes the account's own project, by the path an upload of the same file
+    takes: the same refusals (_inbound_plan_check), the same content-addressed name, the same _register - so the
+    same bytes sent twice land on one project. The file is copied into the job store, never read into memory. A
+    project that was ALREADY the account's (it uploaded this file itself) is left as it is: no note, no Detect.
+    Returns the file's line for the record: opened (with what Detect was queued on by itself), same, or refused
+    with the reason."""
+    name = rec["name"]
+    try:
+        _inbound_plan_check(src, name)
+    except HTTPException as e:
+        return dict(rec, state="refused", reason=str(e.detail))
+    dest = JOBS_DIR / f"upload_{rec['sha'][:12]}_{name}"
+    with JOBS_LOCK:
+        had = {jid for jid, j in JOBS.items() if j.get("path") == str(dest) and j.get("owner") == account}
+    try:
+        if not dest.exists() or dest.stat().st_size != Path(src).stat().st_size:
+            import shutil
+            shutil.copyfile(str(src), str(dest))
+        # the row is marked with the message that is opening it, in the same save that makes it (see below)
+        reg = _register(dest, classify=True, owner=account, mark={"inbound_opening": entry["id"]})
+    except Exception:                    # noqa: BLE001
+        return dict(rec, state="refused",
+                    reason="could not be opened as a project (an error on the server). Upload it instead.")
+    jid = reg["job_id"]
+    # A PROJECT AN E-MAIL WAS STILL OPENING WHEN THE SERVER STOPPED IS FINISHED, NOT CALLED "ALREADY YOURS" (critic
+    # merge-1, MINOR-2). Opening takes a while - every page is sorted before the note is written and Detect is
+    # queued - and a restart in the middle left the project registered and nothing else. The message was then read
+    # again, found the project there and said "already one of your projects; nothing new was opened": false (this
+    # message opened it), its card had no "from e-mail" note and Detect never ran on it. A row carries
+    # `inbound_opening` from the save that creates it until its note is written, so it is recognised: by the same
+    # message read again after the restart, or by the same file forwarded again. Only a project with no such mark
+    # and no note of this message - one the account uploaded itself, or an earlier message opened - is "same".
+    with JOBS_LOCK:
+        j = JOBS.get(jid)
+        note = j.get("inbound") if isinstance(j, dict) else None
+        unfinished = isinstance(j, dict) and (bool(j.get("inbound_opening"))
+                                              or (isinstance(note, dict) and note.get("entry") == entry["id"]))
+        resort = jid in had and unfinished and j.get("kinds") is None
+    if jid in had and not unfinished:
+        return dict(rec, state="same", job=jid, reason="already one of your projects; nothing new was opened")
+    if resort:
+        _classify_async(jid, str(dest), int(reg.get("pages") or 0))     # the sorting died with the server: again
+    _inbound_wait_kinds(jid)
+    try:
+        tri = job_triage(jid)            # the text layer only: which pages this product works on
+    except Exception:                    # noqa: BLE001
+        tri = {}
+    auto = _inbound.auto_pages(tri.get("pages") if isinstance(tri, dict) else None)
+    pages = int(reg.get("pages") or 0)
+    with JOBS_LOCK:
+        j = JOBS.get(jid)
+        if j is None:
+            return dict(rec, state="refused", reason="its project was deleted while it was being opened")
+        # the note the card prints, what Detect runs on by itself, and the keyword match record a calculator can
+        # link pages from (GET /api/job/{id}/keywords) - with the project, in its registry row, like a bid's note
+        j["inbound"] = {"entry": entry["id"], "subject": str(entry.get("subject") or ""), "at": entry.get("received"),
+                        "auto": {"queued": len(auto["pages"]), "wanted": auto["wanted"], "pages": pages,
+                                 "cap": auto["cap"]},
+                        "match": _inbound.match_record(rec.get("match"))}
+        j.pop("inbound_opening", None)   # opened: the note stands for it from here on
+        _save_registry()
+    for p in auto["pages"]:
+        # (a page Detect finished before a restart is not detected again: its result is on disk)
+        if not (JOBS_DIR / jid / f"p{int(p)}_result.json").exists():
+            _enqueue_detect_bg(jid, int(p))
+    _inbound.audit("inbound_project", user=account, job=jid, name=name,
+                   detail=("opened anyway by the account" if anyway else "opened from e-mail")
+                          + f"; Detect queued on {len(auto['pages'])} of {pages} page(s)")
+    return dict(rec, state="opened", job=jid, anyway=bool(anyway),
+                auto={"pages": auto["pages"], "wanted": auto["wanted"], "total": pages, "cap": auto["cap"]})
+
+
+def _inbound_read(account: str, eid: str) -> None:
+    """Read one spooled message: what each attached file is, and what becomes of it.
+
+    not a PDF / unreadable / over a limit / reads as text  -> listed with the reason, not kept
+    the same bytes as a plan of the last 24 hours          -> "same": nothing new, a link to that project
+    an exclusion word in the subject or the sender         -> every plan HELD (kept, offered as "Open anyway")
+    keywords set and none found in the plan's text         -> that plan HELD the same way
+    otherwise                                              -> opened as the account's project (_inbound_open)
+
+    EVERY FILE STAYS A FILE. The attachments are on disk in the spool; a zip's PDFs are unpacked beside them, with
+    one count of unpacked bytes for the whole message (inbound.gather); each PDF is hashed, profiled, searched and
+    opened from its file. Nothing here grows with what the sender packed into the message.
+    """
+    got = _inbound.spool_list(eid)
+    with _INBOUND_LOCK:
+        entry = _inbound.load_entry(account, eid)
+    if got is None or entry is None or got[0] != account or not _inbound.account_exists(account):
+        # a spool with no record: the door never answered 200 for it, so the mail service sends the message again.
+        # A spool whose account has been removed since: nobody's.
+        _inbound.spool_drop(eid)
+        return
+    if entry.get("status") != "received":
+        # ALREADY READ: the server stopped after the record was written and before the spool was emptied. Reading
+        # it again would list every file twice.
+        _inbound.spool_drop(eid)
+        return
+    if _inbound.spool_try(eid) > _inbound.READ_TRIES:
+        raise _InboundStopped()          # it is still spooled after READ_TRIES reads: the server stopped each time
+    now = time.time()
+    rules = _inbound.rules_of(account)
+    keywords = rules["keywords"]
+    excluded = _inbound.excluded_by(rules["exclude"], entry.get("subject"), entry.get("from"))
+    plans, refused, _unpacked = _inbound.gather(got[1], _inbound.spool_work(eid))
+    recs = []                            # one per plan, in order: (what is known of it, its file, why it is unreadable)
+    for f in plans:
+        path = f["path"]
+        prof = _inbound.profile(path)
+        rec = {"name": f["name"], "zip": f["zip"], "size": path.stat().st_size, "sha": _inbound.file_sha(path),
+               "pages": prof["pages"], "sheet_pages": prof["sheet_pages"], "text_pages": prof["text_pages"],
+               "hint": prof["hint"], "match": None}
+        if prof["ok"] and keywords:
+            rec["match"] = _inbound.match_record(_inbound.search_pdf(path, keywords))
+        recs.append((rec, path, None if prof["ok"] else prof["why"]))
+    readable = [k for k, r in enumerate(recs) if r[2] is None]
+    picks = {readable[i] for i in _inbound.choose([recs[k][0] for k in readable])}
+    out = []                             # one line per plan, in the order the plans were attached
+    holds = []                           # (position in `out`, file): held once the record's file numbers are known
+    seen = {}                            # sha -> job, for the same file twice in ONE message
+    for k, (rec, path, bad) in enumerate(recs):
+        if bad is not None:
+            out.append(dict(rec, state="refused", reason=bad))
+            continue
+        if k not in picks:
+            out.append(dict(rec, state="refused", reason=_inbound.why_not_opened(rec)))
+            continue
+        if rec["pages"] > _inbound.MAX_PDF_PAGES:
+            out.append(dict(rec, state="refused",
+                            reason=f"{rec['pages']} pages: over the limit of {_inbound.MAX_PDF_PAGES} for a PDF "
+                                   "sent by e-mail. Upload it instead."))
+            continue
+        if rec["sha"] in seen:
+            out.append(dict(rec, state="same", job=seen[rec["sha"]],
+                            reason="the same file is in this message twice; it was opened once"))
+            continue
+        # ONCE ONLY: the same bytes within a day open nothing new - while the project they opened is still there
+        prev = _inbound.same_file(account, rec["sha"], now, skip=eid,
+                                  alive=lambda jid: _inbound_job_alive(jid, account))
+        if prev is not None:
+            out.append(dict(rec, state="same", job=prev[1].get("job"),
+                            reason="the same file came in less than a day ago; nothing new was opened"))
+        elif excluded is not None:
+            holds.append((len(out), path))
+            out.append(dict(rec, state="held", why="exclude", reason="skipped by your exclusion rule"))
+        elif keywords and not (rec["match"] or {}).get("found"):
+            holds.append((len(out), path))
+            out.append(dict(rec, state="held", why="keywords", reason="none of your keywords found"))
+        else:
+            done = _inbound_open(account, entry, rec, path)
+            seen[rec["sha"]] = done.get("job")
+            out.append(done)
+    with _INBOUND_LOCK:
+        if not _inbound.account_exists(account):
+            # removed while its message was being read: nothing of it is written back
+            _inbound.forget_account(account)
+            _inbound.spool_drop(eid)
+            return
+        cur = _inbound.load_entry(account, eid) or entry       # the door may have noted "delivered again" meanwhile
+        base = list(cur.get("files") or [])
+        for pos, path in holds:
+            _inbound.held_put(account, eid, len(base) + pos, path)
+        # the plans' own lines are always listed (at most MAX_PDFS); the other files fill what is left of the list
+        listed, more = _inbound.fold([dict(r, state="refused") for r in refused],
+                                     _inbound.MAX_LISTED - len(base) - len(out))
+        cur.update(files=base + out + listed, unlisted=_inbound.add_counts(cur.get("unlisted"), more), pending=[],
+                   excluded=excluded, status="skipped" if excluded is not None else "done")
+        if not plans and cur.get("confirm") is None:
+            cur["reason"] = _INBOUND_NO_PDF
+        _inbound.save_entry(account, cur)
+    _inbound.spool_drop(eid)
+    _inbound.held_prune(account, time.time())
+    for f in out:                        # an opened plan has its own line (inbound_project)
+        if f["state"] in ("held", "same"):
+            _inbound.audit("inbound_file_held" if f["state"] == "held" else "inbound_file_same",
+                           user=account, job=f.get("job"), name=f["name"], detail=f.get("reason"))
+    # a PDF that was not opened first, then the files that are not plans: one line each up to the cap, then one line
+    _inbound_refused_log(account, [f for f in out if f["state"] == "refused"] + refused)
+
+
+def _inbound_file_view(account: str, eid: str, n: int, f: dict, me, staff) -> dict:
+    """One file's line in a reply, field by field. A project is named only while the caller may still open it;
+    Detect's progress is read live (results on disk, pages still waiting), never from the record."""
+    def num(v):
+        return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
+
+    state = f.get("state") if f.get("state") in ("opened", "same", "held", "refused") else "refused"
+    out = {"n": n, "name": str(f.get("name") or "")[:_inbound.NAME_MAX], "zip": f.get("zip") or None,
+           "state": state, "reason": str(f.get("reason") or "")[:300] or None,
+           "pages": num(f.get("pages")), "anyway": bool(f.get("anyway"))}
+    jid = f.get("job")
+    if state in ("opened", "same"):
+        with JOBS_LOCK:
+            j = JOBS.get(jid) if isinstance(jid, str) else None
+            status = dict(j.get("status") or {}) if j is not None else {}
+            ok = j is not None and _can_open(j, me, staff) and Path(j.get("path", "")).exists()
+        if ok:
+            out["job"] = jid
+            auto = f.get("auto") if isinstance(f.get("auto"), dict) else None
+            if auto is not None:
+                pages = [p for p in auto.get("pages") or [] if isinstance(p, int)]
+                pend = [p for p in pages if status.get(p) == "running"]
+                out["auto"] = {"queued": len(pages),
+                               "done": sum(1 for p in pages if (JOBS_DIR / jid / f"p{p}_result.json").exists()),
+                               "running": bool(pend),
+                               # every page still to do is WAITING its turn in the line: none is being detected now
+                               "waiting": bool(pend) and all(_is_queued(jid, p) for p in pend),
+                               "failed": sum(1 for p in pages if str(status.get(p) or "").startswith("error")),
+                               "wanted": num(auto.get("wanted")), "total": num(auto.get("total")),
+                               "cap": num(auto.get("cap"))}
+        else:
+            out["gone"] = True           # the project was deleted since
+    if state == "held":
+        out["why"] = "exclude" if f.get("why") == "exclude" else "keywords"
+        out["kept"] = _inbound.held_has(account, eid, n)       # False once its days ran out: no "Open anyway"
+    m = _inbound.match_record(f.get("match"))
+    if m is not None:
+        out["match"] = m
+    return out
+
+
+def _inbound_view(account: str, e: dict, me, staff) -> dict:
+    """One message's record in a reply, field by field (never the file hashes, the account or the message id). At
+    most MAX_LISTED files are sent, whatever the record holds; `unlisted` counts the files that are not listed, by
+    why they were not opened, and `unread` the attachments past MAX_ATTACHMENTS that were never looked at."""
+    def count(v) -> int:
+        return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+    eid = str(e.get("id") or "")
+    status = e.get("status") if e.get("status") in ("received", "done", "over", "refused", "skipped") else "done"
+    on_file = e.get("files") if isinstance(e.get("files"), list) else []
+    files = [_inbound_file_view(account, eid, n, f, me, staff)
+             for n, f in enumerate(on_file[:_inbound.MAX_LISTED]) if isinstance(f, dict)]
+    unlisted = _inbound.add_counts(e.get("unlisted"), {_inbound.OTHER: max(0, len(on_file) - _inbound.MAX_LISTED)})
+    return {"id": eid, "at": e.get("received"), "from": str(e.get("from") or "")[:_inbound.SENDER_MAX],
+            "subject": str(e.get("subject") or "")[:_inbound.SUBJECT_MAX], "status": status,
+            "reason": str(e.get("reason") or "")[:400] or None,
+            "excluded": str(e.get("excluded") or "")[:_inbound.RULE_WORD_MAX] or None,
+            "again": int(e.get("again") or 0), "more": int(e.get("more") or 0),
+            "confirm": _inbound.confirm_view(e.get("confirm")) is not None,
+            "pending": [str(n)[:_inbound.NAME_MAX] for n in e.get("pending") or []][:_inbound.MAX_PDFS],
+            "attached": count(e.get("attached")), "unread": count(e.get("unread")), "unlisted": unlisted,
+            "files": files}
+
+
+def _inbound_gate(request: Request, write: bool = False) -> tuple:
+    """(settings, account) for a signed-in e-mail route. 404 while the feature is off - what a route that does not
+    exist answers; a write from an account that may not have an address (view-only, or a box with no accounts) is
+    refused in words."""
+    cfg = _inbound.config()
+    if cfg is None:
+        raise HTTPException(404, "Not Found")
+    me = _who(request)
+    if write and not _inbound.may_have_address(me):
+        raise HTTPException(403, "This account can look at plans but cannot add them, so it has no bid address.")
+    return cfg, me
+
+
+def _inbound_rules_view(me) -> dict:
+    r = _inbound.rules_of(me)
+    return {"keywords": r["keywords"], "exclude": r["exclude"], "v": r["v"]}
+
+
+@app.get("/api/inbound")
+def inbound_list(request: Request):
+    """The signed-in account's own e-mail page: its address (once it has asked for one), its keyword rules, the
+    limits in force, the newest forwarding confirmation, and its messages, newest first. Reading changes nothing:
+    an account has no address until it asks for one (POST /api/inbound/address)."""
+    cfg, me = _inbound_gate(request)
+    staff = _is_staff(request)
+    can = _inbound.may_have_address(me)
+    # the NEWEST messages only (LIST_ENTRIES), each with at most MAX_LISTED files: the reply cannot grow with the mail
+    rows = [_inbound_view(me, e, me, staff)
+            for e in (_inbound.entries(me, limit=_inbound.LIST_ENTRIES) if me else [])]
+    conf = _inbound.latest_confirmation(me) if me else None
+    return {"enabled": True, "can_address": can,
+            "address": _inbound.address_of(me, cfg) if can else None,
+            "rules": _inbound_rules_view(me) if can else None,
+            "limits": {"message_mb": _inbound.MAX_MESSAGE_BYTES // (1024 * 1024), "pdf_pages": _inbound.MAX_PDF_PAGES,
+                       "per_day": _inbound.MAX_PER_DAY, "pdfs": _inbound.MAX_PDFS, "auto_pages": _inbound.AUTO_PAGES,
+                       "held_days": _inbound.HELD_DAYS, "words": _inbound.RULE_WORDS_MAX,
+                       "word_max": _inbound.RULE_WORD_MAX, "attachments": _inbound.MAX_ATTACHMENTS,
+                       "unpacked_mb": _inbound.MAX_UNPACKED_BYTES // (1024 * 1024)},
+            # a mail provider's forwarding confirmation: a code and a link, never the message's words
+            "confirm": ({"provider": conf["provider"], "code": conf["code"], "link": conf["link"], "at": conf.get("at")}
+                        if conf else None),
+            "entries": rows, "total": _inbound.count_entries(me) if me else 0,
+            "busy": any(r["status"] == "received" or any((f.get("auto") or {}).get("running") for f in r["files"])
+                        for r in rows)}
+
+
+@app.post("/api/inbound/address")
+def inbound_new_address(request: Request):
+    """Give the signed-in account a NEW bid address: its first, or a replacement - the old one stops working at
+    once (inbound.new_address)."""
+    cfg, me = _inbound_gate(request, write=True)
+    had = _inbound.tag_of(me) is not None
+    _inbound.new_address(me)
+    _inbound.audit("inbound_address_new", user=me,
+                   detail="a new bid address; the old one stopped working" if had else "a first bid address")
+    return {"address": _inbound.address_of(me, cfg), "replaced": had}
+
+
+class InboundRulesBody(BaseModel):
+    keywords: list = []
+    exclude: list = []
+    v: int | None = None                 # the version the page read: a save over a list changed since is refused
+
+
+@app.post("/api/inbound/rules")
+def inbound_save_rules(body: InboundRulesBody, request: Request):
+    """Save the account's keyword and exclusion lists (both replaced). The lists come back as kept - cleaned,
+    repeats folded, cut to the limit - with how many entries were left out, so nothing is dropped unsaid."""
+    _cfg, me = _inbound_gate(request, write=True)
+    try:
+        saved = _inbound.save_rules(me, body.keywords, body.exclude, body.v)
+    except _inbound.StaleRules:
+        raise HTTPException(409, "Your keyword lists were changed in another window. Reload this page to see them, "
+                                 "then change them again.")
+    sent = sum(1 for w in list(body.keywords) + list(body.exclude) if isinstance(w, str) and w.strip())
+    _inbound.audit("inbound_rules", user=me,
+                   detail=f"{len(saved['keywords'])} keyword(s), {len(saved['exclude'])} exclusion word(s)")
+    return {"rules": _inbound_rules_view(me),
+            "left_out": max(0, sent - len(saved["keywords"]) - len(saved["exclude"]))}
+
+
+class InboundOpenBody(BaseModel):
+    entry: str
+    n: int | None = None                 # one held plan of the message; None = every held plan of it
+
+
+@app.post("/api/inbound/open")
+def inbound_open_anyway(body: InboundOpenBody, request: Request):
+    """OPEN ANYWAY: a plan the account's own rules held (no keyword found in it, or an exclusion word in the
+    subject or the sender) opens as its project after all. Only the account's own records are reachable, and only
+    plans still kept (inbound.HELD_DAYS)."""
+    _cfg, me = _inbound_gate(request, write=True)
+    staff = _is_staff(request)
+    with _INBOUND_LOCK:
+        entry = _inbound.load_entry(me, body.entry) if _inbound.is_entry_id(body.entry) else None
+        if entry is None:
+            raise HTTPException(404, "That message is not in your list.")
+        eid = entry["id"]
+        files = entry.get("files") or []
+        want = [n for n, f in enumerate(files)
+                if isinstance(f, dict) and f.get("state") == "held" and (body.n is None or n == body.n)
+                and (eid, n) not in _INBOUND_OPENING]
+        if not want:
+            raise HTTPException(409, "Nothing there is waiting to be opened. It may have been opened already.")
+        kept = {n: _inbound.held_path(me, eid, n) for n in want}      # where each one is: opened from its file
+        want = [n for n in want if kept[n] is not None]
+        if not want:
+            raise HTTPException(410, f"That plan is no longer kept (a held plan is kept {_inbound.HELD_DAYS} days). "
+                                     "Forward the message again, or upload the PDF with + New project.")
+        _INBOUND_OPENING.update((eid, n) for n in want)
+    done = {}
+    try:
+        for n in want:
+            rec = {k: files[n].get(k) for k in _INBOUND_FILE_KEYS}
+            done[n] = _inbound_open(me, entry, rec, kept[n], anyway=True)
+    finally:
+        with _INBOUND_LOCK:
+            _INBOUND_OPENING.difference_update((eid, n) for n in want)
+            cur = _inbound.load_entry(me, eid) or entry
+            for n, rec in done.items():
+                # a plan that did not open stays held (and kept), so the person can try again
+                if rec.get("state") in ("opened", "same") and n < len(cur.get("files") or []):
+                    cur["files"][n] = rec
+                    _inbound.held_drop(me, eid, n)
+            _inbound.save_entry(me, cur)
+    failed = [r for r in done.values() if r.get("state") not in ("opened", "same")]
+    if failed and len(failed) == len(done):
+        raise HTTPException(422, "Not opened: " + str(failed[0].get("reason") or "it could not be opened."))
+    return {"entry": _inbound_view(me, cur, me, staff)}
+
+
+@app.get("/api/job/{job_id}/keywords")
+def job_keywords(job_id: str):
+    """The e-mail a project arrived in and its KEYWORD MATCH RECORD, for anything that wants to link to the pages
+    a keyword is on: {"from_email", "subject", "at", "match": {"found": [{"word", "pages", "count"}], "searched",
+    "no_text", "pages"}}. `pages` are 0-based page indexes (the first inbound.FOUND_PAGES_KEPT; `count` is how many
+    pages the word is on). `match` is null when the account had no keywords when it arrived; `no_text` is how
+    many of the searched pages carry no text and could not be searched. Built field by field. 404 while the e-mail
+    feature is off, like every other route of it: off means nothing of it answers."""
+    if _inbound.config() is None:
+        raise HTTPException(404, "Not Found")
+    j = JOBS.get(job_id) or _404()
+    m = j.get("inbound") if isinstance(j.get("inbound"), dict) else None
+    if m is None:
+        return {"from_email": False, "subject": None, "at": None, "match": None}
+    return {"from_email": True, "subject": str(m.get("subject") or "")[:_inbound.SUBJECT_MAX], "at": m.get("at"),
+            "match": _inbound.match_record(m.get("match"))}
+
+
+def _inbound_resume() -> None:
+    """After a restart: read the messages that were spooled and not yet read, sweep the held plans whose days ran
+    out, and put back in the e-mail line the pages of recent e-mailed projects that Detect had not reached (the
+    line lives in memory). Best effort."""
+    try:
+        _inbound_reader_start()
+        now = time.time()
+        # attachments of a message the door never answered for: every folder with no manifest that was made before
+        # this process began (not only the ones older than ten minutes: see _INBOUND_STARTED)
+        _inbound.spool_sweep(now, max(0.0, now - _INBOUND_STARTED))
+        for account, eid in _inbound.spool_waiting():
+            _inbound_enqueue(account, eid)
+        _inbound.held_prune_all(now)
+        for account in _inbound.accounts():
+            for e in _inbound.entries(account, limit=_inbound.KEEP_ENTRIES, since=now - 2 * 86400):
+                for f in e.get("files") or []:
+                    jid = f.get("job") if isinstance(f, dict) and f.get("state") == "opened" else None
+                    j = JOBS.get(jid) if isinstance(jid, str) else None
+                    if j is None or j.get("owner") != account:
+                        continue
+                    for p in ((f.get("auto") or {}).get("pages") or []):
+                        if isinstance(p, int) and not (JOBS_DIR / jid / f"p{p}_result.json").exists():
+                            _enqueue_detect_bg(jid, p)
+    except Exception:                    # noqa: BLE001 - a resume that fails costs the resume, never the start
+        pass
 
 
 @app.get("/api/job/{job_id}/open")
@@ -1563,6 +2422,9 @@ def list_projects(request: Request):
             # made the job: {id, title, agency, due, url}. The card prints
             # it under the name; an upload has none.
             "bid": j.get("bid"),
+            # the e-mail this plan set arrived in, when one did: the subject and how many pages Detect ran on by
+            # itself (_inbound_card). The card prints "from e-mail: <subject>" the way it prints a bid's line.
+            "inbound": _inbound_card(j),
         }
         (demos if dm is not None else out).append(row)
 
@@ -1577,6 +2439,8 @@ def list_projects(request: Request):
         "demo": {"expected": len(DEMO_PLANS),
                  "present": len(have),
                  "missing": sorted(n for n in DEMO_PLANS if n not in have)},
+        # whether bids by e-mail is on: the page asks for its "From e-mail" list only then (see /api/config)
+        "inbound": _inbound.config() is not None,
     }
 
 
@@ -1745,7 +2609,10 @@ def ui_config():
     return {"hosted": HOSTED,
             "auth": bool(_UI_PASSWORD),
             "workers": TAKEOFF_WORKERS,
-            "page_budget_s": TAKEOFF_PAGE_BUDGET_S}
+            "page_budget_s": TAKEOFF_PAGE_BUDGET_S,
+            # whether bids by e-mail is on (its three settings; inbound.config). The page asks for the e-mail list
+            # only then: GET /api/inbound answers 404 while it is off, and the page asked it on every load
+            "inbound": _inbound.config() is not None}
 
 
 @app.get("/api/samples")
@@ -2391,14 +3258,18 @@ def demo_open(name: str, request: Request = None):
             "demo": True}
 
 
-def _register(path: Path, classify: bool = True, owner=None) -> dict:
+def _register(path: Path, classify: bool = True, owner=None, mark: "dict | None" = None) -> dict:
     """classify=False skips per-page vector/raster classification, which
     reads every drawing on every page. Rasterisation callers do not need it,
     and on a large package it dominates the cost of simply opening the file.
 
     Re-opening the SAME file (path + mtime) reuses its job: detect results,
     images, and the pinned AI verdict all live in the job dir, and a takeoff
-    must come back identical when the same plan is opened twice."""
+    must come back identical when the same plan is opened twice.
+
+    `mark`: fields written into a NEW row with the row itself (one save), so
+    there is no moment at which the row exists without them. A reused row is
+    not touched. Bids by e-mail marks which message is opening the project."""
     doc = pymupdf.open(path)
     mtime = round(path.stat().st_mtime, 2)
     with JOBS_LOCK:
@@ -2439,6 +3310,8 @@ def _register(path: Path, classify: bool = True, owner=None) -> dict:
     with JOBS_LOCK:
         JOBS[job_id] = {"path": str(path), "pages": doc.page_count,
                         "mtime": mtime, "owner": owner, "status": {}}
+        if mark:
+            JOBS[job_id].update(mark)
         _save_registry()
     # Page RECTS are free; classification is not. classify_page reads every
     # drawing on every page, and on a dense package that dominated the cost of
@@ -2472,7 +3345,7 @@ def open_path(body: OpenPathBody, request: Request):
     reg = _register(_client_pdf(body.path), owner=_who(request))
     # the display name only: a filesystem path is not the audit log's business
     _audit(request, "project_open_path", job=reg.get("job_id"),
-           name=reg.get("name"), detail=_n(reg.get("pages") or 0, "page"))
+           name=reg.get("name"), detail=_audit_n(reg.get("pages") or 0, "page"))
     return reg
 
 
@@ -2573,7 +3446,7 @@ async def upload(file: UploadFile, request: Request, classify: int = 1):
         owner = None
     reg = _register(dest, classify=bool(classify), owner=owner)
     _audit(request, "project_upload", job=reg.get("job_id"),
-           name=reg.get("name"), detail=_n(reg.get("pages") or 0, "page"))
+           name=reg.get("name"), detail=_audit_n(reg.get("pages") or 0, "page"))
     return reg
 
 
@@ -2624,28 +3497,99 @@ TAKEOFF_WORKERS = max(1, int(os.environ.get("TAKEOFF_WORKERS")
                              or min(4, max(1, (os.cpu_count() or 2) - 1))))
 TAKEOFF_PAGE_BUDGET_S = float(os.environ.get("TAKEOFF_PAGE_BUDGET_S") or 900)
 _MP = multiprocessing.get_context("spawn")
-_SCHED = threading.Condition()          # guards the two containers below
-_SCHED_QUEUE: deque = deque()           # (job_id, page) FIFO, not started yet
-_SCHED_RUNNING: dict = {}               # (job_id, page) -> {"proc", "t0"}
+_SCHED = threading.Condition()          # guards the three containers below
+_SCHED_QUEUE: deque = deque()           # (job_id, page) FIFO, not started yet: pages a PERSON asked for
+_SCHED_RUNNING: dict = {}               # (job_id, page) -> {"proc", "t0", "bg"}
 _SCHED_THREAD: list = []                # [Thread] once the watcher is up
+# THE E-MAIL LINE (2026-10-03). A project that arrived by e-mail detects by itself, and nobody is waiting on it;
+# a person who presses Detect is. So its pages wait in a line of their own, and three rules keep that line from
+# ever costing a person anything (_sched_fill_locked):
+#   1. ONE e-mailed page runs at a time - so one e-mailed project at a time, in the order they arrived;
+#   2. it starts only when no person's page is waiting AND a worker is free;
+#   3. the moment a person's page needs a worker and every one is busy, the running e-mailed page is STOPPED and put
+#      back at the FRONT of this line (_sched_preempt_locked): the person's page starts at once, on any worker count
+#      down to TAKEOFF_WORKERS=1, and the e-mailed page starts over later.
+# A person who presses Detect on an e-mailed page moves it out of this line into the people's (_sched_promote).
+_SCHED_BG: deque = deque()              # (job_id, page) FIFO: e-mailed sets' pages, behind every person's page
+_SCHED_PREEMPTED: list = [0]            # how many times rule 3 stopped an e-mailed page (measured in tests)
 
 
-def _sched_start_locked(job_id: str, page: int) -> None:
+def _sched_start_locked(job_id: str, page: int, bg: bool = False) -> None:
     job = JOBS[job_id]
     proc = _MP.Process(
         target=run_detect, args=(job["path"], page, str(_job_dir(job_id))),
         name=f"detect-{job_id}-p{page}", daemon=True)
     proc.start()
-    _SCHED_RUNNING[(job_id, page)] = {"proc": proc, "t0": time.time()}
+    _SCHED_RUNNING[(job_id, page)] = {"proc": proc, "t0": time.time(), "bg": bool(bg)}
+
+
+def _sched_try_start_locked(key: tuple, bg: bool = False) -> bool:
+    """Start one queued page; False when nothing was started. A page whose project was DELETED while it waited is
+    dropped here: `JOBS[job_id]` used to raise for it, inside the handler too, and that ended the watcher thread -
+    after which no page on the box was reaped or started until a restart."""
+    job_id, page = key
+    job = JOBS.get(job_id)
+    if job is None:
+        return False
+    try:
+        _sched_start_locked(job_id, page, bg)
+        return True
+    except Exception as e:  # spawn itself failed; surface like any error
+        job["status"][page] = f"error: could not start worker: {e}"
+        return False
+
+
+def _sched_preempt_locked(key: tuple) -> None:
+    """Stop the e-mailed page that holds a worker a person's page needs, and put it back at the FRONT of the
+    e-mail line. Its half-written files go (a kill mid-write leaves a truncated result); its status stays
+    "running", which is what a waiting page reads as. A child that had already exited is finished normally."""
+    info = _SCHED_RUNNING[key]
+    proc = info["proc"]
+    if not proc.is_alive():
+        proc.join()
+        _sched_finish_locked(key)
+        return
+    _SCHED_RUNNING.pop(key)
+    try:
+        proc.terminate()
+        proc.join(5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(5)
+    except Exception:
+        pass
+    try:
+        proc.close()
+    except Exception:
+        pass
+    job_id, page = key
+    d = JOBS_DIR / job_id               # not _job_dir(): a deleted project's folder must not come back
+    for f in (result_path(d, page), error_path(d, page)):
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            pass
+    _SCHED_PREEMPTED[0] += 1
+    if job_id in JOBS:
+        _SCHED_BG.appendleft(key)
 
 
 def _sched_fill_locked() -> None:
+    # people first, in the order they asked, up to the worker count
     while _SCHED_QUEUE and len(_SCHED_RUNNING) < TAKEOFF_WORKERS:
-        job_id, page = _SCHED_QUEUE.popleft()
-        try:
-            _sched_start_locked(job_id, page)
-        except Exception as e:  # spawn itself failed; surface like any error
-            JOBS[job_id]["status"][page] = f"error: could not start worker: {e}"
+        _sched_try_start_locked(_SCHED_QUEUE.popleft())
+    # a person's page still waiting while an e-mailed page holds a worker: the e-mailed page gives it up
+    while _SCHED_QUEUE:
+        bg = next((k for k, i in _SCHED_RUNNING.items() if i.get("bg")), None)
+        if bg is None:
+            break
+        _sched_preempt_locked(bg)
+        while _SCHED_QUEUE and len(_SCHED_RUNNING) < TAKEOFF_WORKERS:
+            _sched_try_start_locked(_SCHED_QUEUE.popleft())
+    # the e-mail line: one page at a time, only when nobody's page waits and a worker is free
+    while (_SCHED_BG and not _SCHED_QUEUE and len(_SCHED_RUNNING) < TAKEOFF_WORKERS
+           and not any(i.get("bg") for i in _SCHED_RUNNING.values())):
+        _sched_try_start_locked(_SCHED_BG.popleft(), bg=True)
 
 
 def _sched_finish_locked(key: tuple, reason: str | None = None) -> None:
@@ -2670,7 +3614,7 @@ def _sched_finish_locked(key: tuple, reason: str | None = None) -> None:
             except OSError:
                 fresh = False
         if fresh:
-            st = "done"
+            st = "checking"       # the dimension check runs next (_after_detect), then "done"
         elif ef.exists():
             try:
                 st = f"error: {ef.read_text()}"
@@ -2688,7 +3632,13 @@ def _sched_finish_locked(key: tuple, reason: str | None = None) -> None:
         pass
     job = JOBS.get(job_id)
     if job is not None:
-        job["status"][page] = st
+        if st == "checking":
+            # still "running" to every reader until the check has run: the page is not opened half-done
+            job["status"][page] = "running"
+            threading.Thread(target=_after_detect, args=(job_id, page), name=f"dimcheck-{job_id}-p{page}",
+                             daemon=True).start()
+        else:
+            job["status"][page] = st
 
 
 def _sched_loop() -> None:
@@ -2715,23 +3665,96 @@ def _enqueue_detect(job_id: str, page: int) -> bool:
     running (so a double-click / a detect-all pass never runs a page twice)."""
     key = (job_id, page)
     with _SCHED:
-        if key in _SCHED_RUNNING or key in _SCHED_QUEUE:
+        if key in _SCHED_RUNNING:
+            _SCHED_RUNNING[key]["bg"] = False      # a person asked for it: it is theirs now, never stopped for another
             return True
+        if key in _SCHED_QUEUE:
+            return True
+        if key in _SCHED_BG:
+            _SCHED_BG.remove(key)                  # out of the e-mail line, into the people's
         JOBS[job_id]["status"][page] = "running"
         _SCHED_QUEUE.append(key)
-        if not _SCHED_THREAD:
-            t = threading.Thread(target=_sched_loop, name="detect-scheduler",
-                                 daemon=True)
-            t.start()
-            _SCHED_THREAD.append(t)
+        _sched_watch_locked()
         _sched_fill_locked()
         _SCHED.notify()
         return False
 
 
+def _sched_watch_locked() -> None:
+    if not _SCHED_THREAD:
+        t = threading.Thread(target=_sched_loop, name="detect-scheduler",
+                             daemon=True)
+        t.start()
+        _SCHED_THREAD.append(t)
+
+
+def _enqueue_detect_bg(job_id: str, page: int) -> bool:
+    """Queue a page of an E-MAILED set in the e-mail line (see _SCHED_BG): behind every person's page, one at a
+    time. Returns True when the page was already queued or running, or its project is gone."""
+    key = (job_id, page)
+    with _SCHED:
+        job = JOBS.get(job_id)
+        if job is None or key in _SCHED_RUNNING or key in _SCHED_QUEUE or key in _SCHED_BG:
+            return True
+        job["status"][page] = "running"
+        _SCHED_BG.append(key)
+        _sched_watch_locked()
+        _sched_fill_locked()
+        _SCHED.notify()
+        return False
+
+
+def _sched_promote(job_id: str, page: int) -> None:
+    """A person pressed Detect on a page that waits, or runs, in the e-mail line: from now on it is a person's page
+    (queued with the people's pages; if it is already running it is no longer one that gets stopped)."""
+    key = (job_id, page)
+    with _SCHED:
+        if key in _SCHED_RUNNING:
+            _SCHED_RUNNING[key]["bg"] = False
+        elif key in _SCHED_BG:
+            _SCHED_BG.remove(key)
+            _SCHED_QUEUE.append(key)
+            _sched_fill_locked()
+            _SCHED.notify()
+
+
+def _sched_drop_bg(job_id: str) -> None:
+    """A project is being deleted: its pages leave the e-mail line, and an e-mailed page of it that is running is
+    stopped, so nothing of the project is written after it is gone."""
+    with _SCHED:
+        for key in [k for k in _SCHED_BG if k[0] == job_id]:
+            _SCHED_BG.remove(key)
+        for key, info in list(_SCHED_RUNNING.items()):
+            if key[0] != job_id or not info.get("bg"):
+                continue
+            proc = info["proc"]
+            _SCHED_RUNNING.pop(key)
+            try:
+                proc.terminate()
+                proc.join(5)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(5)
+            except Exception:
+                pass
+            try:
+                proc.close()
+            except Exception:
+                pass
+        _SCHED.notify()
+
+
 def _is_queued(job_id: str, page: int) -> bool:
     with _SCHED:
-        return (job_id, page) in _SCHED_QUEUE
+        return (job_id, page) in _SCHED_QUEUE or (job_id, page) in _SCHED_BG
+
+
+def _in_email_line(job_id: str, page: int) -> bool:
+    """True while a page waits in the e-mail line or runs as one of its pages (the page says so, and that pressing
+    Detect does it now)."""
+    key = (job_id, page)
+    with _SCHED:
+        return key in _SCHED_BG or bool((_SCHED_RUNNING.get(key) or {}).get("bg"))
 
 
 def _detect_worker(job_id: str, page: int):
@@ -2740,6 +3763,7 @@ def _detect_worker(job_id: str, page: int):
     job = JOBS[job_id]
     try:
         run_detect(job["path"], page, str(_job_dir(job_id)))
+        _after_detect(job_id, page)          # the dimension check as part of detect (CRITIC-scale-3 M3)
         job["status"][page] = "done"
     except Exception as e:  # surfaced to the UI
         job["status"][page] = f"error: {e}"
@@ -2772,6 +3796,7 @@ def _result_stale(job_id: str, page: int) -> bool:
 def detect(job_id: str, page: int, request: Request = None):
     job = JOBS.get(job_id) or _404()
     if job["status"].get(page) == "running":
+        _sched_promote(job_id, page)    # a page waiting in the e-mail line: a person asked, so it is a person's now
         _audit(request, "sheet_detect", job=job_id, page=page,
                detail="already running")
         return {"status": "running", "queued": _is_queued(job_id, page)}
@@ -2804,6 +3829,8 @@ def status(job_id: str, page: int):
     out = {"status": st or "idle"}
     if st == "running" and _is_queued(job_id, page):
         out["queued"] = True
+    if st == "running" and _in_email_line(job_id, page):
+        out["email"] = True             # it detects by itself, behind people's pages; pressing Detect does it now
     return out
 
 
@@ -3118,9 +4145,13 @@ def reset_job(job_id: str, preview: bool = False, request: Request = None):
             return "detection"
         if name.endswith(".png"):
             return "render"
+        if name.endswith("_ticks.json"):
+            return "takeoff"                # what the person added to each page's takeoff: their WORK
+        if name.endswith("_withdrawn.json"):
+            return "withdrawn"              # a withdrawn approval's record: the only copy of that export (critic empty-1, MINOR-9)
         return "other"
 
-    counts = {"approved": 0, "report": 0, "detection": 0, "render": 0, "other": 0}
+    counts = {"approved": 0, "report": 0, "detection": 0, "render": 0, "takeoff": 0, "withdrawn": 0, "other": 0}
     freed = 0
     files = [f for f in sorted(d.iterdir()) if f.is_file()]
     for f in files:
@@ -3157,7 +4188,7 @@ def reset_job(job_id: str, preview: bool = False, request: Request = None):
                   None, pdf_path=(JOBS.get(job_id) or {}).get("path"))
     # the preview above changes nothing and is not recorded; this is
     _audit(request, "project_reset", job=job_id,
-           detail=_n(removed, "file") + " removed")
+           detail=_audit_n(removed, "file") + " removed")
     return out
 
 
@@ -3204,6 +4235,9 @@ def delete_job(job_id: str, request: Request):
 
     src = Path(j.get("path", ""))
     name = _display_name(src)
+    # an e-mailed project still detecting by itself: its pages leave the e-mail line and its running page is
+    # stopped FIRST, or a result would be written into the folder after it was emptied
+    _sched_drop_bg(job_id)
     removed = 0
     if d.is_dir():
         for f in sorted(d.iterdir()):
@@ -3211,6 +4245,31 @@ def delete_job(job_id: str, request: Request):
                 try:
                     f.unlink()
                     removed += 1
+                except OSError:
+                    pass
+        # THE PER-ACCOUNT DOCUMENTS GO WITH THE JOB (2026-10-03): the flooring estimates (fl_est/) and the wall panel
+        # jobs (wp_est/) are folders, which the loop above does not enter - so a deleted job left every account's
+        # estimate of it on disk, and its directory with them (the rmdir below failed on a folder that was not empty)
+        for _sub in ("fl_est", "wp_est"):
+            _sd = d / _sub
+            if _sd.is_dir() and not _sd.is_symlink():
+                # everything under it, deepest first: a folder made by hand inside it kept the job's directory on
+                # disk (critic wp-1, minor 16). Links are removed as links, never followed.
+                for _root, _dirs, _files in os.walk(_sd, topdown=False, followlinks=False):
+                    for _n in _files:
+                        try:
+                            (Path(_root) / _n).unlink()
+                            removed += 1
+                        except OSError:
+                            pass
+                    for _n in _dirs:
+                        _p = Path(_root) / _n
+                        try:
+                            _p.unlink() if _p.is_symlink() else _p.rmdir()
+                        except OSError:
+                            pass
+                try:
+                    _sd.rmdir()
                 except OSError:
                     pass
         try:
@@ -3260,7 +4319,7 @@ def delete_job(job_id: str, request: Request):
                   None)
     # the row is gone by now, so the name is passed rather than looked up
     _audit(request, "project_delete", job=job_id, name=name,
-           detail=_n(removed, "file") + " removed"
+           detail=_audit_n(removed, "file") + " removed"
                   + ("; PDF removed" if pdf_removed else ""))
     return {"ok": True, "name": name, "files_removed": removed,
             "pdf_removed": pdf_removed, "pdf_why": pdf_why,
@@ -3454,6 +4513,10 @@ def _stored_scale_pick(job_id: str, page: int) -> dict | None:
     # older build - the approve route refuses to write one. Ignoring it
     # drops the page back to the engine's reading, which the chip, the
     # banner and the export all state as `auto`: visible, not silent.
+    # A PERSON'S RECORD SAYS SO (CRITIC-scale-1 MINOR 3): a file without `set_by: "reviewer"` - hand-edited, or written
+    # by something other than the review - is not a person's decision and is read as no pick.
+    if d.get("set_by") != _BY_REVIEWER:
+        return None
     return d if _sane_ft(d.get("ft_per_paper_inch")) is not None else None
 
 
@@ -3478,19 +4541,66 @@ def _stored_scale_raw(job_id: str, page: int) -> dict | None:
     return d if isinstance(d, dict) else None
 
 
+_RES_DIGEST: dict = {}   # result file path -> ((mtime_ns, size), digest of its scale block)
+
+
+def _scale_detection_digest_of(res: "dict | None") -> str:
+    """A digest of what the DETECTION says about the scale: the promoted reading (value, source, candidates, bar), the
+    abstained readings, and the engine signature. Part of the record's stamp (CRITIC-scale-1 M1): a re-detect that
+    reads another number changes the stamp, so a tab that saw the old reading is refused at Approve and at Confirm."""
+    if not isinstance(res, dict):
+        return "nodetection"
+
+    def blk(b):
+        b = b if isinstance(b, dict) else {}
+        vals = []
+        for c in b.get("candidates") or []:
+            try:
+                vals.append(round(float((c or {}).get("ft_per_paper_inch")), 6))
+            except (TypeError, ValueError):
+                continue
+        return {"ft": b.get("ft_per_paper_inch"), "src": b.get("source"), "bar": b.get("bar_ft_per_paper_inch"),
+                "c": sorted(vals)}
+    raw = json.dumps({"s": blk(res.get("scale")), "g": blk(res.get("scale_suggestions")), "e": res.get("engine_sig")},
+                     sort_keys=True, default=str)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _scale_detection_digest(job_id: str, page: int) -> str:
+    """_scale_detection_digest_of for the stored result, parsed once per file version (its time and size); a read
+    caught mid-write answers with the last whole version's digest."""
+    f = _job_dir(job_id) / f"p{page}_result.json"
+    try:
+        st = f.stat()
+    except OSError:
+        return "nodetection"
+    ver = (st.st_mtime_ns, st.st_size)
+    hit = _RES_DIGEST.get(str(f))
+    if hit and hit[0] == ver:
+        return hit[1]
+    try:
+        res = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return hit[1] if hit else "nodetection"
+    dg = _scale_detection_digest_of(res)
+    _RES_DIGEST[str(f)] = (ver, dg)
+    return dg
+
+
 def _scale_stamp(job_id: str, page: int) -> str:
     """The stamp of the page's scale record as it reads now (a pick, a tombstone, or none): any change to the record changes
     it. The review page loads it with the scale (GET .../scale) and sends it back with Approve (`scale_seen`), so an approve
     from a page that never saw a newer record - the Scale card typed in a tab of its own, another tab, another seat - is
     refused instead of writing its old number over the review's (critic 23, RISK-1)."""
-    return _scale_stamp_of(_stored_scale_raw(job_id, page))
+    return _scale_stamp_of(_stored_scale_raw(job_id, page), _scale_detection_digest(job_id, page))
 
 
-def _scale_stamp_of(d) -> str:
-    """_scale_stamp of a record already read (one read gives the number and its stamp together)."""
-    if d is None:
-        return "none"
-    return "r" + hashlib.sha1(json.dumps(d, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+def _scale_stamp_of(d, detection: str = "nodetection") -> str:
+    """_scale_stamp of a record already read (one read gives the number and its stamp together), with the digest of the
+    detection it was read against. Never a constant: the old "none" for a page with no record let a tab opened before a
+    re-detect approve the engine's OLD number as a person's pick (CRITIC-scale-1 M1)."""
+    return "s" + hashlib.sha1((json.dumps(d, sort_keys=True, default=str) + "|" + str(detection))
+                              .encode("utf-8")).hexdigest()[:16]
 
 
 _SCALE_LOCKS: dict = {}
@@ -3569,7 +4679,31 @@ def _scale_offered(sugg: dict | None) -> list:
 
 
 def _page_scale(job_id: str, page: int, res: dict,
-                sent: "ApproveScale | None" = None) -> dict | None:
+                sent: "ApproveScale | None" = None, who=None, unhidden: bool = False) -> dict | None:
+    """The scale in force on this page: `_page_scale_record`'s answer, except that a page whose FULL scale verdict is
+    "readings disagree" with no person's record has NO scale in force (scale verdict S4, DESIGN section 2): every
+    caller then behaves as on a page with no scale - structure, footings, twins, trench, rooms, the export, the cut /
+    fill hand-off. The dimension check that decides it is computed here when it is not on file for this detection
+    (0.04-4.3 s measured): a number that may be withdrawn is never handed out on a verdict still waiting for it.
+    `unhidden=True` answers the record and the engine's reading as before - for the record's own bookkeeping (the
+    stamp check, a confirmation, the export's OUT OF DATE comparison), never for a quantity."""
+    det = _page_scale_record(job_id, page, res, sent, who)
+    if unhidden or det is None or det.get("set_by") == _BY_REVIEWER:
+        return det
+    if _scale_disagrees(job_id, page, res, det):
+        return None
+    return det
+
+
+def _scale_disagrees(job_id: str, page: int, res: dict, det: "dict | None") -> bool:
+    """Is this page's FULL verdict "readings disagree", with no person's record? When the dimension check cannot be made,
+    the other kinds decide (a caption and a bar that disagree still do)."""
+    v = _scale_verdict_full(job_id, page, res, det)
+    return bool(v) and v.get("state") == "CONFLICT" and not (v.get("person") or {}).get("value")
+
+
+def _page_scale_record(job_id: str, page: int, res: dict,
+                       sent: "ApproveScale | None" = None, who=None) -> dict | None:
     """The scale this page's quantities are computed from, and who set it.
 
     Returns the engine's scale dict with `set_by` added ("auto" or
@@ -3624,7 +4758,13 @@ def _page_scale(job_id: str, page: int, res: dict,
         # it writes a sidecar where the rule below says to retire one.
         # Found by Gate 1 on the live UI. Value only.
         same_as_engine = eng_ft is not None and abs(eng_ft - want) < 1e-9
-        if not same_as_engine:
+        # A PERSON'S RECORD OF THIS VERY NUMBER STANDS (scale verdict, coordinator rulings 9 / 10, 2026-10-02): an
+        # approve of the number a person already set - or confirmed, which can equal the engine's - is no new decision,
+        # and an engine that came round to it does not retire it into a tombstone ("no person"): the review wins, and
+        # the record says who set it and how. Until this, the engine coming round to the pick wrote a tombstone.
+        _held = _stored_scale_pick(job_id, page)
+        _held_same = bool(_held) and abs(float(_held.get("ft_per_paper_inch") or 0) - want) < 1e-9
+        if not same_as_engine or _held_same:
             # WHEN the reviewer set this number: an approve that sends the same number again is no new decision and
             # keeps the first one's time (every approve rewrote it, and the cut / fill read each re-approve as a
             # correction made after the operator's typed scale: critic 9, WRONG-2). `at` is that moment in epoch
@@ -3632,11 +4772,27 @@ def _page_scale(job_id: str, page: int, res: dict,
             # and the fall-back hour read an hour late (critic 9, r-6)
             _prev = _stored_scale_pick(job_id, page)
             _same_pick = bool(_prev) and abs(float(_prev.get("ft_per_paper_inch") or 0) - want) < 1e-9
-            pick = {"ft_per_paper_inch": want,
-                    "text": (sent.text or "").strip() or None,
-                    "set_by": _BY_REVIEWER,
-                    "set_at": (_prev.get("set_at") if _same_pick and _prev.get("set_at")
-                               else time.strftime("%Y-%m-%dT%H:%M:%S"))}
+            if _same_pick:
+                pick = dict(_prev)      # the person's own record, how / who / when kept as they were
+                if not pick.get("set_at"):
+                    # ...but a pick with no time at all is dated by this approve (critic 14, RISK-1)
+                    pick["set_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            else:
+                pick = {"ft_per_paper_inch": want,
+                        "text": (sent.text or "").strip() or None,
+                        "set_by": _BY_REVIEWER,
+                        "set_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "how": _scale_how(sent, res, want)}
+                if pick["how"] is None:
+                    # NOT A PERSON'S ACT (CRITIC-scale-1 M1): a number that is none of the sheet's readings, sent with
+                    # no `how` (typed / calibrated) - a page from before this build, or a tab that kept an old reading.
+                    # It does not become a person's record; nothing is saved, and the page is told to reload.
+                    raise HTTPException(409, f'Nothing was saved: this page shows 1" = {_ft(want)} ft, which is none '
+                                             f"of the sheet's readings and was not typed or measured on this page. "
+                                             f"Reload the page, then set the scale with the scale box or the Measure "
+                                             f"tool.")
+                if who:
+                    pick["who"] = who
             _at = _prev.get("at") if _same_pick else time.time()
             _timeless = _same_pick and not _prev.get("at") and not _prev.get("set_at")
             if _timeless:
@@ -3684,7 +4840,7 @@ def _page_scale(job_id: str, page: int, res: dict,
                                "text": (eng or {}).get("text"),
                                "source": (eng or {}).get("source"),
                                "abstained": bool(sugg)},
-                              dict(pick),
+                              {k: v for k, v in pick.items() if k != "who"},   # no names in the training ledger
                               {"offered": _scale_offered(sugg),
                                "accepted_suggestion": _sug is not None}
                               if sugg else None,
@@ -3736,6 +4892,14 @@ def _page_scale(job_id: str, page: int, res: dict,
         "set_at": pick.get("set_at"),
         # the same moment in epoch seconds, exact (a pick written before it was kept has the text only)
         "set_at_epoch": pick.get("at"),
+        # HOW and WHO, as the record says them (scale verdict); None on a record from before them. `set_by_user` is a
+        # name: never served to another account (_scale_who_shown), never put in an export
+        "set_how": pick.get("how"),
+        "set_by_user": pick.get("who"),
+        # the measure behind a confirmation, or the one that disagreed with an acceptance (CRITIC-scale-2 M1)
+        "set_measured": pick.get("measured_ft"),
+        "set_measure_disagreed": pick.get("measure_disagreed"),
+        "set_measure": pick.get("measure"),
         # read off the CURRENT result, so the comparison printed next to the
         # human's number is what the engine thinks NOW, not a stale copy
         "engine_ft_per_paper_inch": eng_ft,
@@ -3762,12 +4926,375 @@ def _page_scale(job_id: str, page: int, res: dict,
     return out
 
 
+# ---------- the scale verdict: a person's record, and the verdict served --------------------------------------------
+# (docs/fable/TOOLS-MISSION.md Part 1; out/verify/2026-10-02/scale-verdict/DESIGN.md, slices S1 / S2 and the
+# coordinator's rulings of 2026-10-02.) A scale is a verdict from witnesses (takeoff_engine/scale_verdict.py); the
+# person's record is the review record above (_page_scale), now carrying HOW (typed | calibrated | picked |
+# confirmed) and WHO. Nothing here changes which number is in force: S1 / S2 only record and serve.
+
+# the text the Measure tool's "should be ___ ft, set scale" sends (webui/app.js applyTypedScale call at :18458)
+_SCALE_CALIBRATED_SUFFIX = "over a measured line"
+
+
+def _scale_readings(res: dict) -> list:
+    """Every number the engine read on this page: its promoted reading's candidates, the drawn bar, its suggestions."""
+    out = []
+    for blk in (res.get("scale") or {}, res.get("scale_suggestions") or {}):
+        for v in [blk.get("ft_per_paper_inch"), blk.get("bar_ft_per_paper_inch")] + [
+                c.get("ft_per_paper_inch") for c in (blk.get("candidates") or []) if isinstance(c, dict)]:
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f > 0:
+                out.append(f)
+    return out
+
+
+def _scale_is_reading(want: float, readings: list) -> bool:
+    """Is `want` exactly one of these readings (relative 1e-6)? A `picked` number is one the sheet reads, not one near it
+    (CRITIC-scale-2 MINOR 1)."""
+    return any(r > 0 and abs(want - r) <= 1e-6 * max(want, r) for r in readings)
+
+
+def _scale_matches_reading(want: float, readings: list) -> bool:
+    """Is `want` one of these readings, within 2 % (the verdict's own rule, scale_verdict.agree)?"""
+    from takeoff_engine.scale_verdict import agree as _agree
+    return any(r > 0 and _agree(want, r) for r in readings)
+
+
+def _scale_how(sent, res: dict, want: float) -> "str | None":
+    """HOW a number on an approve was set, derived on the SERVER (CRITIC-scale-1 M2): one of the sheet's readings
+    (within 2 %) is `picked`; otherwise what the page says it did, `typed` or `calibrated` (both a person entering a
+    value; the Measure tool's text is read as calibrated for a page that does not send `how`). Never `confirmed` from
+    an approve: a confirmation has its own route, on a full verdict. None = no person act at all: the approve must not
+    record it (M1)."""
+    h = getattr(sent, "how", None)
+    readings = _scale_readings(res) + _scale_cached_dim_reading(res, sent)
+    # `picked` only when the page says picked AND the number IS one of the readings (CRITIC-scale-2 MINOR 1)
+    if h == "picked":
+        return "picked" if _scale_is_reading(want, readings) else "typed"
+    if h in ("typed", "calibrated"):
+        return h
+    if _scale_is_reading(want, readings):
+        return "picked"           # an older page's pick of a printed reading (it sends no how)
+    if str(getattr(sent, "text", None) or "").strip().endswith(_SCALE_CALIBRATED_SUFFIX):
+        return "calibrated"
+    return None
+
+
+def _scale_cached_dim_reading(res: dict, sent=None) -> list:
+    """No dimension reading is used to label an approve: computing the check there costs up to 4.3 s, and a value the
+    dimensions alone suggest is chosen through the confirm route, which computes it. Kept as a named hook."""
+    return []
+
+
+def _scale_who_shown(who, request) -> "str | None":
+    """A person's name on a scale record, as THIS caller may see it (coordinator ruling 7): staff (the admins) and the
+    person themself see it; every other account - a shared sheet's other users - sees no name, only "set by hand" and
+    the date. An in-process call with no request sees none."""
+    if not who or request is None:
+        return None
+    if _is_staff(request) or _who(request) == who:
+        return who
+    return None
+
+
+def _scale_record_shown(rec, request):
+    """A stored scale record as THIS caller may see it: the name taken out unless _scale_who_shown allows it."""
+    if not isinstance(rec, dict) or "who" not in rec:
+        return rec
+    out = dict(rec)
+    shown = _scale_who_shown(rec.get("who"), request)
+    if shown is None:
+        out.pop("who", None)
+    return out
+
+
+def _scale_dimcheck_cached(job_id: str, page: int, res: dict) -> "dict | None":
+    """The dimension check on file for THIS detection (p<N>_dimcheck.json, written by get_scale_dimensions), or None.
+    Its consensus does not depend on the scale in force, so any scale's cache of this engine signature serves.
+    Never computed here: it costs up to 4.3 s on a dense sheet (measured 2026-10-02 with stored chains on 9 pages:
+    0.04-0.69 s on eight, 4.1-4.3 s on a 4,679-chain sheet), so the verdict says "pending" and the lazy route
+    (GET .../scale/dimensions) completes it."""
+    try:
+        c = json.loads((_job_dir(job_id) / f"p{page}_dimcheck.json").read_text())
+        sig = res.get("engine_sig")
+        key = c.get("key") or {}
+        # both signatures present and equal (CRITIC-scale-1 MINOR 6), the SAME detection's scale block
+        # (CRITIC-scale-2 MINOR 4), and a well-formed check (MINOR 3); anything else is recomputed, never trusted
+        if (sig and key.get("engine_sig") == sig and key.get("detection") == _scale_detection_digest_of(res)
+                and _scale_dimcheck_usable(c.get("check"))):
+            return c["check"]
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def _scale_verdict(job_id: str, page: int, res: dict, request=None, det=None, dimcheck=None) -> dict:
+    """The page's scale verdict (takeoff_engine.scale_verdict) from what is stored: the detection, the review record
+    and the dimension check when one is on file. The profile witness is OFF (ruling 2). Read-only."""
+    from takeoff_engine import scale_verdict as _sv
+    if det is None:
+        det = _page_scale(job_id, page, res, unhidden=True)
+    failed = dimcheck is _DIM_FAILED
+    dim = None if failed else (dimcheck if dimcheck is not None else _scale_dimcheck_cached(job_id, page, res))
+    try:
+        v = _sv.verdict_from_app(res.get("scale") or None, res.get("scale_suggestions") or None, dim, None,
+                                 review=det, use_profile=False)
+    except (ValueError, TypeError, KeyError) as e:
+        # The verdict is ADVISORY in S1 / S2: a record it cannot read (a scale source it does not know) must never fail
+        # the route that carries it. It says so, with no state, and the scale in force is untouched.
+        v = {"state": None, "value": None, "why": f"the scale verdict could not be worked out from this page's "
+                                                  f"record: {e}", "agree": [], "disagree": [], "choices": [],
+             "other_printed": [], "offered": [], "ignored": [], "person": None}
+    v["dimensions"] = "failed" if failed else ("checked" if dim is not None else "pending")
+    if failed and v.get("state") == "CONFIRMED" and not v.get("person"):
+        # A CHECK THAT COULD NOT BE MADE never lets two agreeing kinds read as confirmed (CRITIC-scale-2 M2): the one
+        # page where caption and bar agree and only the dimensions catch it is exactly the page this would hide
+        v["would_be"] = "CONFIRMED"
+        v["state"] = "UNCHECKED"
+        v["why"] += " - not confirmed: the printed dimensions could not be checked"
+    if dim is None and not failed and v.get("state") == "CONFIRMED" and not v.get("person"):
+        # NEVER CONFIRMED BEFORE EVERY WITNESS HAS SPOKEN. Measured on the live proof (a structural sheet): caption 4
+        # and bar 3.965 agree, so with the dimension check still pending the verdict read CONFIRMED at 4 - and the
+        # check, once run, says 7.93 (CONFLICT; FACTS A2 truth 8). A wrong number in CONFIRMED is the one
+        # failure the contract does not allow, so until the check has run the page is UNCHECKED, with its value, and
+        # says what it waits for. The review page asks for the check on every sheet it shows (app.js dimCheckFor).
+        v["would_be"] = "CONFIRMED"
+        v["state"] = "UNCHECKED"
+        v["why"] += " - not called confirmed until the printed-dimension check has run, which can still disagree"
+    v["profile"] = "off"
+    if v.get("person"):
+        v["person"] = dict(v["person"], who=_scale_who_shown(v["person"].get("who"), request))
+    return v
+
+
+_DIM_LOCKS: dict = {}
+_DIM_LOCKS_GUARD = threading.Lock()
+
+
+def _dimcheck_lock(job_id: str, page: int) -> "threading.Lock":
+    """One page's dimension-check lock (CRITIC-scale-3 M3): the check runs at most once per detection - every caller
+    that needs it while it runs waits on that one computation and then reads its cache. Not the scale record's lock
+    (_scale_lock): the check takes seconds, and no record write waits on it."""
+    k = (str(job_id), int(page))
+    with _DIM_LOCKS_GUARD:
+        lk = _DIM_LOCKS.get(k)
+        if lk is None:
+            lk = _DIM_LOCKS[k] = threading.Lock()
+        return lk
+
+
+def _dimcheck_single(job_id: str, page: int, res: dict, ft, exact_scale: bool = False) -> tuple:
+    """(check, None) or (None, why): the dimension check for THIS detection, from its cache when it holds one, else
+    computed once under the page's lock and cached (p<N>_dimcheck.json, keyed on the scale it was checked at, the
+    engine signature and the detection's scale-block digest). `exact_scale`: the cache must also be for this scale (the
+    route's own agrees / disagrees is about the scale in force; the verdict's witness is not, and takes any).
+    A failure is returned with its reason and never cached: the next caller tries again."""
+    from takeoff_engine.dimcheck import dimension_check
+    job = JOBS.get(job_id)
+    if not job:
+        return None, "no such job"
+    cache = _job_dir(job_id) / f"p{page}_dimcheck.json"
+    key = {"scale": ft, "engine_sig": res.get("engine_sig"), "detection": _scale_detection_digest_of(res)}
+
+    def from_cache():
+        c = _scale_dimcheck_cached(job_id, page, res)
+        if c is None:
+            return None
+        if exact_scale:
+            try:
+                if (json.loads(cache.read_text()).get("key") or {}).get("scale") != ft:
+                    return None
+            except (OSError, ValueError, AttributeError):
+                return None
+        return c
+
+    c = from_cache()
+    if c is not None:
+        return c, None
+    with _dimcheck_lock(job_id, page):
+        c = from_cache()           # the computation this caller waited on has written it
+        if c is not None:
+            return c, None
+        chains = res.get("chains")
+        try:
+            if not isinstance(chains, list) or not chains:
+                raise ValueError("the detection holds no lines to pair dimensions with")
+            doc = pymupdf.open(job["path"])
+            try:
+                words = page_words(doc[page])
+            finally:
+                doc.close()
+            check = dimension_check(words, chains, ft)
+        except Exception as e:     # noqa: BLE001 - said, never raised
+            return None, type(e).__name__
+        try:
+            cache.write_text(json.dumps({"key": key, "check": check}))
+        except OSError:
+            pass
+        return check, None
+
+
+def _scale_dimcheck_compute(job_id: str, page: int, res: dict, det: "dict | None") -> "dict | None":
+    """The dimension check for this detection (single-flight, _dimcheck_single), at the scale in force unhidden - the
+    same scale the route checks at, so the two share one cache and one computation. None when it cannot be made."""
+    if det is None:
+        det = _page_scale(job_id, page, res, unhidden=True)
+    ft = None
+    try:
+        ft = float((det or {}).get("ft_per_paper_inch") or 0) or None
+    except (TypeError, ValueError):
+        ft = None
+    return _dimcheck_single(job_id, page, res, ft)[0]
+
+
+def _after_detect(job_id: str, page: int) -> None:
+    """THE CHECK RUNS AS PART OF DETECT (CRITIC-scale-3 M3): a freshly detected page opens with its full verdict, no
+    "checking" phase. The page's status turns "done" only after it, and only if no newer detect of the page has been
+    queued meanwhile. A check that cannot be made leaves the lazy path to try (and say) again."""
+    try:
+        res = json.loads((_job_dir(job_id) / f"p{page}_result.json").read_text())
+        det = _page_scale_record(job_id, page, res)
+        ft = float((det or {}).get("ft_per_paper_inch") or 0) or None
+        _dimcheck_single(job_id, page, res, ft, exact_scale=True)
+    except Exception:              # noqa: BLE001 - the detection stands; the lazy path remains
+        pass
+    finally:
+        with _SCHED:
+            key = (job_id, page)
+            job = JOBS.get(job_id)
+            if job is not None and key not in _SCHED_RUNNING and key not in _SCHED_QUEUE:
+                job["status"][page] = "done"
+
+
+def _scale_verdict_full(job_id: str, page: int, res: dict, det: "dict | None") -> "dict | None":
+    """The verdict with EVERY witness heard: the dimension check from its cache for this detection, else computed now
+    (0.04-4.3 s measured). For decisions only (CRITIC-scale-1 B1: a Confirm accepted while the check was pending wrote
+    "confirmed" at 4 on a sheet whose dimensions say 7.93). When the check cannot be made (an error, no stored chains)
+    the verdict is worked out with the dimensions FAILED (CRITIC-scale-2 M2): not confirmed at most, the other kinds
+    still decide a disagreement, and it is never a stand-in for "checking". A failure is not cached: the next call
+    tries again."""
+    dim = _scale_dimcheck_cached(job_id, page, res)
+    if dim is None:
+        dim = _scale_dimcheck_compute(job_id, page, res, det)
+    return _scale_verdict(job_id, page, res, None, det, _DIM_FAILED if dim is None else dim)
+
+
+def _scale_full_readings(res: dict, full: "dict | None") -> list:
+    """Every reading on the page for matching a pick: the engine's (_scale_readings) and the verdict's own lists (the
+    dimension consensus among them)."""
+    out = list(_scale_readings(res))
+    for key in ("agree", "disagree", "choices", "offered", "other_printed"):
+        for w in (full or {}).get(key) or []:
+            try:
+                out.append(float(w.get("value")))
+            except (TypeError, ValueError, AttributeError):
+                continue
+    return [r for r in out if r > 0]
+
+
+# a dimension check that could not be made (an error, unreadable or missing stored chains): a state of its own
+# (CRITIC-scale-2 M2): never "checking" for good, never "no dimensions on this sheet"
+_DIM_FAILED = {"__failed__": True}
+
+
+def _scale_dimcheck_usable(check) -> bool:
+    """A dimension check is used only when it is well-formed: a dict with a list of witnesses (CRITIC-scale-2 MINOR 3)."""
+    return isinstance(check, dict) and isinstance(check.get("witnesses"), list) and not check.get("__failed__")
+
+
+_SCALE_NO_CHECK = ("Nothing was saved: the sheet's printed dimensions could not be checked yet. Try again, or set the "
+                   "scale by measuring something you know.")
+
+
+def _scale_person_how(job_id: str, page: int, res: dict, det: "dict | None", want: float, chosen: bool) -> str:
+    """How the Cut / fill Scale card's number was set (CRITIC-scale-1 M2). A number TYPED there is `typed`, whatever it
+    equals. A printed reading CHOSEN there (its choose control) is `confirmed` only on a full verdict that has the same
+    number in force and does not disagree; else `picked` when it is one of the sheet's readings (within 2 %); else
+    `typed`."""
+    if not chosen:
+        return "typed"
+    full = _scale_verdict_full(job_id, page, res, det)
+    now = float((det or {}).get("ft_per_paper_inch") or 0)
+    if (full is not None and full.get("state") in ("CONFIRMED", "UNCHECKED") and now > 0
+            and abs(want - now) <= 1e-6 * now):
+        return "accepted"         # a click on the number in force is not a measurement (CRITIC-scale-2 M1)
+    if _scale_is_reading(want, _scale_full_readings(res, full)):
+        return "picked"
+    return "typed"
+
+
+def _scale_person_write(job_id: str, page: int, res: dict, want: float, text, how: str, who,
+                        extra: "dict | None" = None) -> dict:
+    """Write a person's scale record NOW (not at Approve), under the caller's _scale_lock. A record of this very number
+    already on file stands as it is (ruling 9: tied to the value; its who / when are the first decision's). Returns
+    the record on file. 503 when the file cannot be written - the caller says nothing was saved."""
+    held = _stored_scale_pick(job_id, page)
+    # the same number set the same way stands as it is (its who / when are the first decision's); the same number set
+    # ANOTHER way is a new decision (a measure that now confirms what was accepted as read, say) and is written
+    if (held and abs(float(held.get("ft_per_paper_inch") or 0) - want) < 1e-9 and held.get("how") == how
+            and not extra):
+        return held
+    sugg = res.get("scale_suggestions") or None
+    eng = res.get("scale") or None
+    pick = {"ft_per_paper_inch": want, "text": (text or "").strip() or None, "set_by": _BY_REVIEWER,
+            "set_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "at": time.time(), "how": how}
+    if extra:
+        pick.update(extra)
+    if who:
+        pick["who"] = who
+    _sug = _scale_suggestion_for(sugg, want)
+    if _sug is not None:
+        pick["basis"] = _BASIS_SUGGESTION
+        pick["suggestion_text"] = _sug.get("text")
+        pick["suggestion_origin"] = _sug.get("origin")
+        pick["engine_source"] = (sugg or {}).get("source")
+    try:
+        _pf = _scale_pick_path(job_id, page)
+        _pf.write_text(json.dumps(pick, indent=1))
+        _PICK_LAST[str(_pf)] = dict(pick)
+    except OSError:
+        raise HTTPException(503, "Nothing was saved: the scale could not be recorded on disk. Try again.")
+    try:
+        eng_ft = float((eng or {}).get("ft_per_paper_inch") or 0) or None
+    except (TypeError, ValueError):
+        eng_ft = None
+    ledger.record("scale_set", job_id, page,
+                  {"ft_per_paper_inch": eng_ft, "text": (eng or {}).get("text"),
+                   "source": (eng or {}).get("source"), "abstained": bool(sugg)},
+                  {k: v for k, v in pick.items() if k != "who"},          # no names in the training ledger
+                  {"how": how, "offered": _scale_offered(sugg), "accepted_suggestion": _sug is not None},
+                  pdf_path=(JOBS.get(job_id) or {}).get("path"))
+    return pick
+
+
 def _ft(v) -> str:
     """4.0 -> "4", 5.3333 -> "5.33". Estimators read feet per paper inch."""
     try:
         return f"{float(v):.2f}".rstrip("0").rstrip(".")
     except (TypeError, ValueError):
         return "?"
+
+
+# How a person set the scale, in the export's and the report's words (CRITIC-scale-1 M2). `confirmed` is said only for
+# a confirmation; a record from before `how` keeps "set by the reviewer".
+_SCALE_HOW_WORDS = {"confirmed": "checked by the reviewer by measuring a known length",
+                    "accepted": "accepted by the reviewer without measuring",
+                    "typed": "typed by the reviewer",
+                    "calibrated": "set by measuring a known length",
+                    "picked": "chosen by the reviewer from the sheet's readings"}
+
+
+def _scale_how_said(how, measure_disagreed=None) -> str:
+    """How a person set the scale, in the export's words. An acceptance kept over the person's own disagreeing measure
+    is not "without measuring": it says the measure (CRITIC-scale-3 M1)."""
+    md = measure_disagreed if isinstance(measure_disagreed, dict) else {}
+    if how == "accepted" and md.get("ft"):
+        return (f'accepted by the reviewer; a measure on {str(md.get("at") or "")[:10]} said '
+                f'1 in = {_ft(md.get("ft"))} ft')
+    return _SCALE_HOW_WORDS.get(how, "set by the reviewer")
 
 
 def _scale_name(det: dict) -> str:
@@ -3777,8 +5304,17 @@ def _scale_name(det: dict) -> str:
     text = det.get("text") or f'1 inch = {_ft(det.get("ft_per_paper_inch"))} ft'
     if det.get("set_by") != _BY_REVIEWER:
         return f'{text} (auto, {det.get("source") or "unknown"})'
+    # A CONFIRMED record (scale verdict S2) is the engine's own number with a person's word on it: "set by the reviewer;
+    # the engine had read <the same number>" would contradict itself (the Gate 1 trap _page_scale's same_as_engine
+    # comment names), so it says what happened.
+    _eng = det.get("engine_ft_per_paper_inch")
+    if (det.get("set_how") in ("confirmed", "accepted") and _eng
+            and abs(float(_eng) - float(det.get("ft_per_paper_inch") or 0)) < 1e-6):
+        return f'{text} (read by the engine, {_scale_how_said(det.get("set_how"), det.get("set_measure_disagreed"))})'
+    # the words follow HOW the person set it (CRITIC-scale-1 M2); a record from before `how` keeps the old words
+    verb = _SCALE_HOW_WORDS.get(det.get("set_how"), "set by the reviewer")
     if det.get("engine_ft_per_paper_inch"):
-        return (f'{text} (set by the reviewer; the engine had read '
+        return (f'{text} ({verb}; the engine had read '
                 f'{det.get("engine_text") or "?"} = '
                 f'{_ft(det["engine_ft_per_paper_inch"])} ft per inch)')
     # The engine read NOTHING it would stand behind, but on a suggestion page
@@ -3786,10 +5322,10 @@ def _scale_name(det: dict) -> str:
     # about the sheet and would hide where the number came from, so the two
     # cases are named apart.
     if det.get("basis") == _BASIS_SUGGESTION:
-        return (f'{text} (set by the reviewer, accepting a reading the engine '
+        return (f'{text} ({verb}, accepting a reading the engine '
                 f'recovered but would not vouch for: '
                 f'{det.get("suggestion_text") or "?"})')
-    return f'{text} (set by the reviewer; the engine read no scale here)'
+    return f'{text} ({verb}; the engine read no scale here)'
 
 
 # The report PDF's base font has no glyph for the typographic prime marks an
@@ -3853,8 +5389,9 @@ def _scale_report_lines(sc: dict | None, image_dpi=None) -> list[str]:
     auto case is recovered from the pixels-per-foot the export already
     carried, which is exactly image_dpi / ft_per_paper_inch."""
     if not sc:
-        return ["Scale: none was read on this sheet - no footage can be "
-                "quoted from it."]
+        # true on a sheet the engine read nothing on AND on one whose readings disagree (it did read, nothing was in
+        # force): the approval carried no scale (CRITIC-scale-3 live run)
+        return ["Scale: none in force at approval - no footage can be quoted from it."]
     ppu = sc.get("pixelsPerUnit")
     ft = sc.get("ftPerPaperInch")
     if ft is None and ppu and image_dpi:
@@ -3863,7 +5400,18 @@ def _scale_report_lines(sc: dict | None, image_dpi=None) -> list[str]:
     if sc.get("setBy") != _BY_REVIEWER:
         return [f'{head}   [{sc.get("name", "")}]']
     eng = sc.get("engineFtPerPaperInch")
-    out = [f"{head}   - SET BY THE REVIEWER, not read by the engine."]
+    if sc.get("setHow") in ("confirmed", "accepted") and eng and ft and abs(float(eng) - float(ft)) < 1e-6:
+        # the engine's own reading with a person's word on it: CHECKED (a measure agreed) or ACCEPTED (a click), never
+        # "set by the reviewer" (CRITIC-scale-2 M1)
+        return [f'{head}   - read by the engine ({sc.get("engineText") or "?"}) and '
+                f'{_scale_how_said(sc["setHow"], sc.get("setMeasureDisagreed")).upper()}.']
+    _how = sc.get("setHow")
+    if _how == "picked":
+        out = [f"{head}   - CHOSEN BY THE REVIEWER from the sheet's own readings."]
+    elif _how in _SCALE_HOW_WORDS:
+        out = [f"{head}   - {_SCALE_HOW_WORDS[_how].upper()}, not read by the engine."]
+    else:
+        out = [f"{head}   - SET BY THE REVIEWER, not read by the engine."]
     if eng:
         out.append(f'The engine had read 1 inch = {_ft(eng)} ft '
                    f'({sc.get("engineText") or "?"}). Every length below is '
@@ -3902,6 +5450,9 @@ class ApproveScale(BaseModel):
     ft_per_paper_inch: float
     text: str | None = None
     picked_by_reviewer: bool = False
+    # HOW a person set it (scale verdict, 2026-10-02): typed | calibrated | picked | confirmed. Optional: when absent the
+    # server works it out from the number (_scale_how), so an older page's approve still records a truthful word.
+    how: str | None = None
     # A PROFILE sheet prints two scales that are both right at once: the run
     # measured across, the rise measured up, deliberately exaggerated so the
     # slope is readable. When the reviewer has told the screen about the second
@@ -3973,6 +5524,11 @@ class ApproveBody(BaseModel):
     # here (contour interpolation, how many contours, region not bounded), so
     # a person holding only the PDF learns it too. Bounded in `approve`.
     notes: list[str] = []
+    # A build before 2026-10-02 sent each sheet's flooring block here; it is ignored now: the flooring
+    # estimate is one per job and per account on the server (GET/PUT /api/job/{id}/flooring).
+    fl_estimate: dict | None = None
+    # the job estimate's version this tab holds: a tab whose estimate is stale may not approve
+    fl_est_version: int | None = None
     # the scale the reviewer had on screen. Omitted = keep whatever this page
     # already decided (a stored pick, else the engine's). See _page_scale.
     scale: ApproveScale | None = None
@@ -4032,6 +5588,25 @@ class ApproveBody(BaseModel):
     # the stamp of the scale record the page loaded (GET .../scale `stamp`, or the last approve's `scale_stamp`):
     # _scale_seen_check. None = a page from before the stamp: refused, reload
     scale_seen: str | None = None
+    # THE TAKEOFF THIS APPROVE IS OF (critic empty-1, MAJOR-4): the version of the page's takeoff record the page holds
+    # (GET / POST .../ticks `version`; 0 = no line style was ever added). The server refuses an approve whose version is
+    # not its own record's, or that would export a line style its record does not hold (_approve_ticks_check)
+    ticks_version: int = 0
+    # REPLACING AN APPROVAL MADE ON AN EARLIER VERSION IS ASKED FIRST (critic empty-2, MAJOR-1): true only when the
+    # person answered Yes to the page's one question. Without it an approve of a page whose approval in the bid was
+    # made on an earlier version is refused, writing nothing (EARLIER_ASK); with it the replaced export is kept in the
+    # page's record of approvals taken out of the bid, as Withdraw keeps one, so it can be put back (_approval_keep)
+    replace_earlier: bool = False
+
+
+def _takeoff_row_counts(it) -> bool:
+    """A row the export would itemise: a label and a quantity above zero (the same test as approve's row loop)."""
+    if not isinstance(it, dict) or not str(it.get("label", "")).strip():
+        return False
+    try:
+        return round(float(it.get("qty", 0)), 1) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _once_frac(once: dict, ch: dict) -> float:
@@ -4075,8 +5650,26 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
     # first, before anything is written: a page that did not see the scale record now in force does not write its old
     # number over it (critic 23, RISK-1: a tab deaf to the Scale card retired the reviewer's 50, or exported at 45)
     _scale_seen_check(job_id, page, res, body)
+    # a tab whose flooring estimate is not the job's current one approves nothing (ruling H): a page with
+    # flooring rooms, or a tab that says it holds an estimate, must hold the version on the server
+    _fl_cur, _fl_doc, _fl_st = _fl_doc_read(job_id, _fl_acct(request), _who(request) if request is not None else None)
+    _fl_rooms_here = bool((_fl_doc["sheets"].get(str(page)) or {}).get("rooms"))
+    if body.fl_est_version is not None or _fl_rooms_here:
+        if body.fl_est_version != _fl_cur:
+            raise HTTPException(409, FL_STALE)
+    # THE APPROVE IS HELD TO THE SERVER'S OWN RECORD OF THIS PAGE'S TAKEOFF (critic empty-1, MAJOR-4: a tab whose tick
+    # had been refused as stale approved its own ticks - the bid held one style, the record another, and a reload showed
+    # the record on an approved page). First the version, here; then every line style the export would carry, below
+    _tk_have = _approve_ticks_check(job_id, page, res, body, request)
     # a row a build of 2026-10-01 marked as the old Earthwork calculator's (a tab still open from it) counts nowhere
     _extra = [it for it in body.extra_items if not (isinstance(it, dict) and it.get("src") == "earthwork-old")]
+    # THE FLOORING ROWS ARE THE SERVER'S (ruling P): what the browser sent is dropped and the account's
+    # own rows for this page are carried - quantities only, no price (ruling T), no product words
+    # (ruling S), marked with the account that made them
+    _extra = [it for it in _extra if not _fl_is_row(it)]
+    if _fl_rooms_here:
+        _fl_items = (_fl_compute(job_id, _fl_doc)["pages"].get(page) or {}).get("items") or []
+        _extra += [dict(it, fl_acct=_fl_acct(request), unit_price=None) for it in _fl_items]
     scale = body.image_dpi / 72.0
     # One ratio for the whole page: fy/fx, or exactly 1.0 when the sheet has a
     # single scale - in which case _axis_len_pt is never called and every
@@ -4105,11 +5698,18 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
         _tw = _page_twins(job_id, page, res)
         _once = {int(k): v for k, v in (_tw.get("families") or {}).items() if int(k) in _once_sids}
     _el_sid: list = []                  # style id per element, parallel to `elements`
-    for ch in list(res["chains"]) + list(body.added_chains):
+    _n_detected = len(res["chains"])    # the detection's own lines come first; the rest are lines the person drew or moved
+    _tk_styles = {st.get("style_id") for st in res.get("styles") or [] if isinstance(st, dict)}
+    for _ci, ch in enumerate(list(res["chains"]) + list(body.added_chains)):
         label = body.chain_labels.get(ch["chain_id"]) \
             or body.labels.get(ch["style_id"])
         if label is None or ch["chain_id"] in excluded:
             continue
+        # ...every line style this export would carry is one the record holds: a detected line by its own style, a line
+        # the person drew or moved by the detected style it was put in (a family the person made on the page lives for
+        # the session only, is in no record, and is not judged). Nothing has been written yet
+        if (_ci < _n_detected or ch.get("style_id") in _tk_styles) and ch.get("style_id") not in _tk_have:
+            raise HTTPException(409, TICKS_STALE)
         wf = _wz_frac(ch["points"], _wz, _v_ratio) if _wz else 1.0
         _wz_fr.append(wf)
         _el_sid.append(ch.get("style_id"))
@@ -4185,12 +5785,41 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
         "elements": elements,
         **({"countOnce": _once_summary} if _once else {}),
     }
+    # NOTHING IN THE TAKEOFF, NOTHING APPROVED (the takeoff starts empty, 2026-10-03): no line the person added and no
+    # row (Areas, a count, Flooring, Structure, Trenching, Cut / fill) with a quantity - refused before anything is written
+    if not elements and not any(_takeoff_row_counts(it) for it in _extra):
+        # on a page that IS approved the only way out of the bid is Withdraw, so the refusal names it (critic empty-1,
+        # MINOR-3)
+        raise HTTPException(409, TAKEOFF_EMPTY + (" " + TAKEOFF_EMPTY_APPROVED
+                                                  if (_job_dir(job_id) / f"p{page}_elements.json").exists() else ""))
+    # THE EXPORT IS EXACTLY THE RECORD (critic empty-2, MINOR-2). No line style the record lacks is exported (above);
+    # here, none the record holds is left out. A declared trade used to set styles aside in one browser, so the bid held
+    # a part of the record, and every other browser of the account showed more than the bid on an approved page, with
+    # no note. The page no longer sets aside a style the person added (webui/app.js scopeApply); an approve that still
+    # names fewer styles than the record is refused, before anything is written
+    if _tk_have - {int(_k) for _k in body.labels}:
+        raise HTTPException(409, TICKS_PART)
+    # AN APPROVAL MADE ON AN EARLIER VERSION IS NOT REPLACED WITHOUT A YES (critic empty-2, MAJOR-1: one press of Approve,
+    # no question, replaced 41 rows by length - 44,793.4 ft - with the one area row that had come back by itself, and
+    # kept no copy). Refused here, before anything is written (the scale record too), unless the approve says the person
+    # was asked; the refusal carries what would be replaced, for the page's question
+    _ea = _approved_earlier(job_id, page)
+    if _ea is not None and not body.replace_earlier:
+        raise HTTPException(409, {"earlier": _ea, "say": EARLIER_ASK})
     # the stamp checked again and the scale written under the page's scale lock, as one step: a Scale-card write or
     # another tab's approve landing between the first check and this write was overwritten with nothing said (critic 24,
     # MINOR-1). Nothing above this line writes the record; the work above runs unlocked
     with _scale_lock(job_id, page):
         _scale_seen_check(job_id, page, res, body)
-        det = _page_scale(job_id, page, res, body.scale)
+        det = _page_scale(job_id, page, res, body.scale, who=_who(request) if request is not None else None)
+    # NO SCALE, NO MEASURED QUANTITY (scale verdict S4 rule 2): on a page whose readings disagree, or that has no scale,
+    # an approve that would export a length, an area or a volume - a labelled line not counted as objects, or any
+    # calculator row (Flooring, Structure, Trench, Areas, Cut / fill) whose unit is not EA - is refused, naming the
+    # choices; nothing has been written yet. An approve of counts only passes.
+    if det is None:
+        _dep = _scale_dependent_rows(elements, _extra, body.object_counts)
+        if _dep:
+            raise HTTPException(409, _scale_needed_words(job_id, page, res, _dep))
     # the cut / fill rows this approve would export stand only while the engine's own numbers do. Asked here, after the
     # scale above is recorded, so a correction made in this very approve is seen: refused, and said - the host takes
     # the rows out (or brings the engine's in) and the reviewer approves again (critic 8, WRONG-1: the rows at 50 were
@@ -4205,10 +5834,13 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
         _op, _row = cf_other
         raise HTTPException(409, {"cutfill": f"page {_op + 1}'s approved takeoff still carries the job's cut / fill rows "
                                               f"(\"{_row}\"): approve page {_op + 1} again first, without the cut / fill "
-                                              f"rows (a row of your own with that name stays) - one set per job, here they "
+                                              f"rows (a row of your own with that name stays), or withdraw its approval if "
+                                              f"nothing else is in its takeoff - one set per job, here they "
                                               f"would count the dirt twice", "export_page": _op,
                                   "scale_stamp": _scale_stamp(job_id, page)})
     _cf_rows_claim(job_id, page, _extra)
+    # THE VERDICT TRAVELS (scale verdict S5): state, value, plain words, the witnesses, how a person set it - never who
+    export["scaleVerdict"] = _scale_export_verdict(job_id, page, res, det)
     if det:
         # pixels-per-foot in the export's own pixel space; the app rescales
         # to its stored image width at import
@@ -4216,6 +5848,7 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
             "pixelsPerUnit": body.image_dpi / det["ft_per_paper_inch"],
             "unit": "ft",
             "name": _scale_name(det),
+            "state": export["scaleVerdict"].get("state"),
         }
         if det.get("set_by") == _BY_REVIEWER:
             # machine-readable twin of the sentence in `name`, so no consumer
@@ -4226,6 +5859,12 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
                 "engineFtPerPaperInch": det.get("engine_ft_per_paper_inch"),
                 "engineText": det.get("engine_text"),
                 "setAt": det.get("set_at"),
+                # how the person set it (scale verdict S2): typed | calibrated | picked | confirmed; never who
+                "setHow": det.get("set_how"),
+                # the person's measure behind it, if any: {ft, at, agrees} (CRITIC-scale-3 M1); never who
+                "setMeasure": ({k: det["set_measure"].get(k) for k in ("ft", "at", "agrees")}
+                               if isinstance(det.get("set_measure"), dict) else None),
+                "setMeasureDisagreed": det.get("set_measure_disagreed"),
             })
             if det.get("basis") == _BASIS_SUGGESTION:
                 # which of the two reviewer cases this is: their own number,
@@ -4331,11 +5970,15 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
             price = float(price) if price is not None else None
         except (TypeError, ValueError):
             price = None
-        unit = str(ex.get("unit", ""))[:8] or "EA"
+        # a row with no unit is exported with none - never as a count (CRITIC-scale-3 MINOR 3)
+        unit = str(ex.get("unit") or "")[:8]
         # `unit == "EA"` exactly, not .upper(): the UI splits on the same
         # literal, and a case difference here would read the wrong bucket.
         # Looked up on the UNTRUNCATED label, which is what the UI keyed on.
         o = (ov_qty if unit == "EA" else ov_ft).get(raw_label)
+        if ex.get("src") == "flooring":
+            o = None                     # a flooring row's quantity is the server's (ruling P): no typed override
+            price = None                 # and no price of the generic book (ruling T)
         eng_qty = qty
         if o:
             qty = round(float(o.qty), 1)
@@ -4372,7 +6015,10 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
             _prov["kind"] = ex["kind"].strip()[:24]
         # the job's cut / fill rows say so in the export: one set per job, and another page's approve looks for them
         # here (_cf_rows_exported_elsewhere). An Areas-tool row named alike is not one (critic 11, r-2)
-        if ex.get("_area"):
+        if ex.get("src") == "flooring":
+            _prov["src"] = "flooring"
+            _prov["fl_acct"] = str(ex.get("fl_acct") or "")[:16]
+        elif ex.get("_area"):
             _prov["src"] = "area"           # the Areas tool's, whatever its name (critic 12, WRONG-2)
         elif _CF_HOST_ROW.match(label):
             _prov["src"] = "cutfill"
@@ -4490,16 +6136,42 @@ def approve(job_id: str, page: int, body: ApproveBody, request: Request = None):
     # this export's rows carry their own marks: an export without them is v1.8.5's, whose old Earthwork calculator rows
     # count nowhere (_export_view). Never read off its file time (critic legacy-1, RISK-4)
     export[EXPORT_MARKS_KEY] = 1
-    out.write_text(json.dumps(export, indent=1))
+    # ...and it says it holds what the person ADDED (the takeoff starts empty): an export without this mark was approved
+    # on an earlier version, and its page says so until it is approved again or withdrawn (_approved_earlier)
+    export[EXPORT_ADDED_KEY] = 1
+    # written under the lock a withdrawal holds from its read to its unlink: an approve landing between the two was
+    # deleted with a 200 to both (critic empty-1, MINOR-11)
+    _kept = None
+    with _WITHDRAW_LOCK:
+        # ...and an approval made on an earlier version is KEPT before this one takes its place, exactly as Withdraw
+        # keeps one (the same record, who and when), so it can be put back (critic empty-2, MAJOR-1). Read again under
+        # the lock: one that arrived since the check above (a put back in another tab) is not replaced without a yes
+        _old = _export_file(out)
+        if _old is not None and not _old.get(EXPORT_ADDED_KEY):
+            if not body.replace_earlier:
+                raise HTTPException(409, {"earlier": _approved_earlier(job_id, page, _old), "say": EARLIER_ASK,
+                                          "scale_stamp": _scale_stamp(job_id, page)})
+            try:
+                _kept = _approval_keep(_job_dir(job_id), page, _old, _who(request) if request is not None else None,
+                                       "replaced")
+            except OSError:
+                raise HTTPException(503, {"say": EARLIER_KEEP_FAILED, "scale_stamp": _scale_stamp(job_id, page)})
+        out.write_text(json.dumps(export, indent=1))
+    # the takeoff record now stands on THIS detection: the person approved it as it reads here (_ticks_seen)
+    _ticks_seen(job_id, page, _ticks_owner(job_id, request), res)
     _ledger_approve(job_id, page, body, res, export)
     _audit(request, "sheet_approve", job=job_id, page=page,
-           detail=_n(len(elements), "line") + ", " + _n(len(items), "item"))
+           detail=_audit_n(len(elements), "line") + ", " + _audit_n(len(items), "item"))
     return JSONResponse({"exported": len(elements), "file": str(out),
                          "items": items, "scale": export.get("scale"),
                          "overrides": export["overrides"],
                          "override_warnings": ov_warn,
                          # the scale record as this approve left it: the page's next approve sends it (_scale_seen_check)
                          "scale_stamp": _scale_stamp(job_id, page),
+                         # the earlier version's approval this one replaced, kept in the page's record: when, and what it
+                         # held (never who)
+                         **({"replaced": {"at": _kept["at"], "holds": (_approved_earlier(job_id, page, _old) or {}).get("holds")}}
+                            if _kept else {}),
                          **({"ew_said": EW_APPROVED_SAID} if _ew_was else {})})
 
 
@@ -4631,7 +6303,7 @@ async def legend_sheet_upload(job_id: str, file: UploadFile, request: Request):
 
 
 @app.get("/api/job/{job_id}/page/{page}/scale/dimensions")
-def get_scale_dimensions(job_id: str, page: int):
+def get_scale_dimensions(job_id: str, page: int, request: Request = None):
     """The scale in force checked against the dimensions the sheet prints
     (takeoff_engine.dimcheck). A second witness beside the drawn bar, and
     the one that catches a caption read off the wrong viewport: every
@@ -4648,34 +6320,28 @@ def get_scale_dimensions(job_id: str, page: int):
     if not rf.exists():
         raise HTTPException(404, "run detect first")
     res = json.loads(rf.read_text())
-    sc = _page_scale(job_id, page, res)
+    sc = _page_scale(job_id, page, res, unhidden=True)
     ft = None
     if sc:
         try:
             ft = float(sc.get("ft_per_paper_inch") or 0) or None
         except (TypeError, ValueError):
             ft = None
-    cache = _job_dir(job_id) / f"p{page}_dimcheck.json"
-    key = {"scale": ft, "engine_sig": res.get("engine_sig")}
-    try:
-        cached = json.loads(cache.read_text())
-        if cached.get("key") == key:
-            return JSONResponse(cached["check"])
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    doc = pymupdf.open(job["path"])
-    words = page_words(doc[page])
-    doc.close()
-    check = dimension_check(words, res.get("chains") or [], ft)
-    try:
-        cache.write_text(json.dumps({"key": key, "check": check}))
-    except OSError:
-        pass
-    return JSONResponse(check)
+    # `scale_verdict`: the page's scale verdict WITH this check as its dimension witness - the lazy half of
+    # GET .../scale's verdict, which says "pending" until this has run. One computation per detection and scale, shared
+    # by every caller (_dimcheck_single, CRITIC-scale-3 M3). A check that cannot be made is an answer, not a 500
+    # (CRITIC-scale-2 M2): the page resolves to "the printed dimensions could not be checked".
+    check, err = _dimcheck_single(job_id, page, res, ft, exact_scale=True)
+    if check is None:
+        return JSONResponse({"verdict": "failed", "why": f"the printed dimensions could not be checked ({err})",
+                             "witnesses": [], "scale_verdict": _scale_verdict(job_id, page, res, request, sc,
+                                                                              _DIM_FAILED)})
+    # a dict passes through _scale_verdict whole: the route's own check is its dimension witness
+    return JSONResponse(dict(check, scale_verdict=_scale_verdict(job_id, page, res, request, sc, check)))
 
 
 @app.get("/api/job/{job_id}/page/{page}/scale")
-def get_scale_pick(job_id: str, page: int):
+def get_scale_pick(job_id: str, page: int, request: Request = None):
     """The scale decision recorded for this page: what the engine reads NOW,
     and whether a human overruled it and with what.
 
@@ -4689,6 +6355,7 @@ def get_scale_pick(job_id: str, page: int):
     f = _job_dir(job_id) / f"p{page}_result.json"
     eng = None
     sugg = None
+    _r = None
     if f.exists():
         try:
             _r = json.loads(f.read_text())
@@ -4696,14 +6363,22 @@ def get_scale_pick(job_id: str, page: int):
             sugg = (_r.get("scale_suggestions") or {}) or None
         except (OSError, ValueError):
             eng = sugg = None
+            _r = None
     # ONE read of the record gives the number and its stamp: read apart, a record written between them paired a new stamp
     # with the old number, and the page's approve of that old number would pass the stamp check
     raw = _stored_scale_raw(job_id, page)
-    pick = (None if raw is None or raw.get("retired") or _sane_ft(raw.get("ft_per_paper_inch")) is None else raw)
+    # a person's record only: a tombstone, a number out of band, or a file without set_by "reviewer" (CRITIC-scale-1
+    # MINOR 3) is no pick - the same rule as _stored_scale_pick
+    pick = (None if raw is None or raw.get("retired") or raw.get("set_by") != _BY_REVIEWER
+            or _sane_ft(raw.get("ft_per_paper_inch")) is None else raw)
+    _vv = None if _r is None else _scale_verdict(job_id, page, _r, request)
+    # readings that disagree, with no person's record: nothing is in force (S4) - as the verdict knows it now (a page
+    # whose check is still pending reads its engine value until the check lands)
+    _hidden = bool(_vv) and _vv.get("state") == "CONFLICT" and not (_vv.get("person") or {}).get("value")
     return {
         # the record's stamp (_scale_stamp): the page sends it back with Approve. `recorded`: a review decision is on
         # file - a pick, or a tombstone (back to the engine's reading) - and the page's own saved scale gives way to it
-        "stamp": _scale_stamp_of(raw),
+        "stamp": _scale_stamp_of(raw, _scale_detection_digest_of(_r)),
         "recorded": raw is not None,
         "engine": None if not eng else {
             "ft_per_paper_inch": eng.get("ft_per_paper_inch"),
@@ -4715,10 +6390,179 @@ def get_scale_pick(job_id: str, page: int):
             "source": sugg.get("source"),
             "why": (sugg.get("pick") or {}).get("why"),
             "candidates": _scale_offered(sugg)},
-        "reviewer": pick,
-        "in_force": (pick or {}).get("ft_per_paper_inch")
-                    or (eng or {}).get("ft_per_paper_inch"),
+        # the person's name only for staff or the person themself (_scale_who_shown, ruling 7)
+        "reviewer": _scale_record_shown(pick, request),
+        "in_force": None if _hidden else ((pick or {}).get("ft_per_paper_inch")
+                                          or (eng or {}).get("ft_per_paper_inch")),
+        # THE SCALE VERDICT (S1): CONFIRMED / UNCHECKED / CONFLICT / NONE from the witnesses and the review record.
+        # Read-only: nothing in force changes yet. `dimensions` stays "pending" until GET .../scale/dimensions has run
+        # for this detection (lazy: up to 4.3 s on a dense sheet, _scale_dimcheck_cached).
+        "verdict": _vv,
     }
+
+
+class ScalePersonBody(BaseModel):
+    """A person's scale decision made NOW, not at Approve (scale verdict S2). `how`: confirmed (the number in force,
+    as it is), picked (one of the page's readings - on a CONFLICT that is the only way), typed, calibrated (the
+    Measure tool: a line of known length). `scale_seen`: the record's stamp the page last loaded (GET .../scale)."""
+    ft_per_paper_inch: float
+    how: str
+    text: str | None = None
+    scale_seen: str | None = None
+    # THE PERSON'S MEASURE, AS EVIDENCE (CRITIC-scale-3 MINOR 5): the points they picked on the sheet (page coordinates,
+    # in the order picked) and the true length they typed; the SERVER works out the ft per inch and the 2 % test, and
+    # stores both with the record. REQUIRED for `confirmed`; optional for `accepted` (a measure kept beside it).
+    measure: dict | None = None
+    # no longer taken: a bare number from the client is no measure (it is refused with words)
+    measured_ft_per_paper_inch: float | None = None
+
+
+def _scale_measure_from(body_measure, res: dict) -> dict:
+    """The person's measure worked out on the server: {points, true_ft, paper_in, ft, at}. Refused (400, in words) when
+    the points are not a line on this page or the length is not a length."""
+    def bad(why):
+        raise HTTPException(400, f"Nothing was saved: the measure {why}.")
+    if not isinstance(body_measure, dict):
+        bad("is missing")
+    pts = body_measure.get("points")
+    if not isinstance(pts, list) or not (2 <= len(pts) <= 64):
+        bad("needs the two (or more) points you picked on the sheet")
+    pg = res.get("page") or {}
+    lim = max(float(pg.get("width_pt") or 0), float(pg.get("height_pt") or 0)) or 1e5
+    clean = []
+    for q in pts:
+        if (not isinstance(q, (list, tuple)) or len(q) != 2
+                or not all(isinstance(c, (int, float)) and not isinstance(c, bool) and math.isfinite(c) for c in q)):
+            bad("has a point that is not two numbers")
+        if not all(-10 <= c <= lim + 10 for c in q):
+            bad("has a point off the page")
+        clean.append([float(q[0]), float(q[1])])
+    paper_pt = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(clean, clean[1:]))
+    if paper_pt < 1.0:
+        bad("is too short to measure (under 1 pt on paper)")
+    tf = body_measure.get("true_ft")
+    if not isinstance(tf, (int, float)) or isinstance(tf, bool) or not math.isfinite(tf) or tf <= 0:
+        bad("needs the true length you know, in feet")
+    ft = _sane_ft(float(tf) / (paper_pt / 72.0))
+    if ft is None:
+        bad(f"gives {float(tf) / (paper_pt / 72.0):.4g} ft per inch, outside the band "
+            f"({SCALE_FT_MIN}-{SCALE_FT_MAX}); check the points and the length")
+    return {"points": clean, "true_ft": float(tf), "paper_in": round(paper_pt / 72.0, 6), "ft": ft,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+
+
+@app.post("/api/job/{job_id}/page/{page}/scale/confirm")
+def scale_confirm(job_id: str, page: int, body: ScalePersonBody, request: Request = None):
+    """Record a person's scale decision on this page now: Confirm the number in force, pick a reading, type one or
+    calibrate. Who may do it is who may approve the page (the session middleware's job rule; in core-redesign a
+    viewer is refused every write by method). The record names who (served only to staff and that person) and how.
+
+    HONEST BY CONSTRUCTION (coordinator ruling 8): the request carries the VALUE being decided, and
+      * a page that did not see the record now in force cannot decide over it (`scale_seen` must be the record's
+        stamp, as for Approve - _scale_seen_check - but strictly: no "it agrees anyway" pass);
+      * `confirmed` must be the number in force at this moment, and there must be one: on a page whose readings
+        disagree (CONFLICT) or that has none there is nothing to confirm - choose a reading (`picked`);
+      * `picked` must be one of the readings the engine made on this page.
+    Nothing is written when any check fails."""
+    from takeoff_engine.scale_verdict import PERSON_HOW
+    JOBS.get(job_id) or _404()
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    if not rf.exists():
+        raise HTTPException(404, "run detect first")
+    res = json.loads(rf.read_text())
+    if body.how not in PERSON_HOW:
+        raise HTTPException(400, f"how must be one of {', '.join(PERSON_HOW)}; nothing was saved")
+    want = _sane_ft(body.ft_per_paper_inch)
+    if want is None:
+        raise _refuse_scale(body.ft_per_paper_inch)
+    who = _who(request) if request is not None else None
+    with _scale_lock(job_id, page):
+        if not isinstance(body.scale_seen, str) or body.scale_seen != _scale_stamp(job_id, page):
+            raise HTTPException(409, "Nothing was saved: this sheet's scale record changed since this page loaded it. "
+                                     "Reload the page, look at the scale again, then decide.")
+        det = _page_scale(job_id, page, res, unhidden=True)
+        # EVERY WITNESS HEARD BEFORE A DECISION (CRITIC-scale-1 B1): the dimension check is computed here when it is
+        # not on file. A confirmation is never decided on a verdict that is still waiting for it.
+        v = _scale_verdict_full(job_id, page, res, det)
+        how = body.how
+        extra = {}
+        if body.measured_ft_per_paper_inch is not None:
+            raise HTTPException(400, "Nothing was saved: send the measure itself (the points you picked and the length "
+                                     "you typed), not a number worked out from it.")
+        mz = _scale_measure_from(body.measure, res) if body.measure is not None else None
+        measured = mz["ft"] if mz else None
+        if how in ("confirmed", "accepted"):
+            # both say "the reading in force is the scale": decided on the FULL verdict, never on a CONFLICT
+            if v is None:
+                raise HTTPException(409, _SCALE_NO_CHECK)
+            if v["state"] == "CONFLICT":
+                raise HTTPException(409, "Nothing was saved: this sheet's scale readings disagree, so there is no scale "
+                                         f"to accept. Choose one of them ({_scale_choices_words(v)}), or measure "
+                                         f"something you know.")
+            now = float((det or {}).get("ft_per_paper_inch") or 0)
+            if now <= 0:
+                raise HTTPException(409, "Nothing was saved: this sheet has no scale in force. Type it, or measure "
+                                         "something you know.")
+            if abs(want - now) > 1e-6 * now:
+                raise HTTPException(409, f'Nothing was saved: the scale in force is 1" = {_ft(now)} ft, not '
+                                         f'1" = {_ft(want)} ft. Reload the page and look at it again.')
+            from takeoff_engine.scale_verdict import agree as _agree
+            if how == "confirmed":
+                # A CONFIRMATION IS A MEASUREMENT THAT AGREED (CRITIC-scale-2 M1): the person's own measure on the
+                # sheet must be sent, and must agree within 2 %; a click alone is `accepted`
+                if measured is None or not _agree(measured, now):
+                    raise HTTPException(409, "Nothing was saved: a confirmation needs a measure on the sheet that "
+                                             "agrees with the scale (within 2 %). Measure to check, or accept it as "
+                                             "read.")
+                extra["measured_ft"] = measured
+                extra["measure"] = dict(mz, agrees=True)
+            elif mz is not None:
+                extra["measure"] = dict(mz, agrees=_agree(measured, now))
+                if not _agree(measured, now):
+                    # kept as read although the person's own measure said otherwise: recorded beside it, and it keeps
+                    # the page not confirmed (CRITIC-scale-3 M1)
+                    extra["measure_disagreed"] = {"ft": measured, "at": mz["at"]}
+        elif how == "picked" and not _scale_is_reading(want, _scale_full_readings(res, v)):
+            # it claims a reading the sheet does not have (CRITIC-scale-2 MINOR 1: exactly, 1e-6): a person entered
+            # it, so it is TYPED
+            how = "typed"
+        rec = _scale_person_write(job_id, page, res, want, body.text, how, who, extra)
+        stamp = _scale_stamp(job_id, page)
+    return {"ok": True, "stamp": stamp, "record": _scale_record_shown(rec, request),
+            "verdict": _scale_verdict(job_id, page, res, request)}
+
+
+class ScaleBackBody(BaseModel):
+    scale_seen: str | None = None
+
+
+@app.post("/api/job/{job_id}/page/{page}/scale/back")
+def scale_back(job_id: str, page: int, body: ScaleBackBody, request: Request = None):
+    """BACK TO THE ENGINE'S OWN READING, recorded now (the takeoff starts empty, 2026-10-03: the Scale card's "put it
+    back" used to say "Approve to make that this page's record", and an approve needs something in the takeoff). The
+    same retire an approve of the engine's number makes (_page_scale_record: a tombstone, no person), under the page's
+    scale lock and only from a page that saw the record now in force. Nothing is exported."""
+    JOBS.get(job_id) or _404()
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    if not rf.exists():
+        raise HTTPException(404, "run detect first")
+    res = json.loads(rf.read_text())
+    eng = res.get("scale") or {}
+    try:
+        ft = float(eng.get("ft_per_paper_inch") or 0)
+    except (TypeError, ValueError):
+        ft = 0.0
+    if ft <= 0:
+        raise HTTPException(409, "Nothing was saved: the engine read no scale on this sheet to go back to. Type the "
+                                 "scale, or measure something you know.")
+    with _scale_lock(job_id, page):
+        if not isinstance(body.scale_seen, str) or body.scale_seen != _scale_stamp(job_id, page):
+            raise HTTPException(409, "Nothing was saved: this sheet's scale record changed since this page loaded it. "
+                                     "Reload the page, look at the scale again, then decide.")
+        _page_scale(job_id, page, res, ApproveScale(ft_per_paper_inch=ft, text=eng.get("text"), picked_by_reviewer=False),
+                    who=_who(request) if request is not None else None)
+        stamp = _scale_stamp(job_id, page)
+    return {"ok": True, "stamp": stamp, "verdict": _scale_verdict(job_id, page, res, request)}
 
 
 # ---------- training-ledger hooks ------------------------------------------
@@ -4968,7 +6812,7 @@ def _calcstate_check(raw: bytes) -> dict:
 
 # A SHARED JOB'S RECORD HOLDS NO ONE'S PRICED TAKEOFF (2026-10-02). On a job every account opens (owner-less: a demo
 # card or a shared sheet, with accounts on the box), the page record never stores and never serves any account's rows,
-# unit prices, trades or flooring prices: they stay in that browser (its `::calc2` cache), as v1.8.5 kept them for every
+# unit prices, trades or flooring prices: they stay in that browser (its `::calc3` cache), as v1.8.5 kept them for every
 # job. Rows saved there before this are left in the file and never served. An owner's own job, and a box with no
 # accounts (one person), are unchanged. Detection, approvals, scale and cut / fill on a shared sheet are shared by design
 # and not touched here.
@@ -4980,18 +6824,41 @@ def _calcstate_shared(job_id: str) -> bool:
     return isinstance(j, dict) and j.get("owner") is None and bool(_users.load())
 
 
-def _fl_prices(fl, keep=None) -> None:
-    """Flooring types' prices on a shared job: the stored ones by type name (`keep`, the old record's), else none."""
-    if not isinstance(fl, dict) or not isinstance(fl.get("types"), list):
-        return
-    old = {}
-    if isinstance(keep, dict) and isinstance(keep.get("types"), list):
-        old = {t.get("name"): t for t in keep["types"] if isinstance(t, dict)}
-    for t in fl["types"]:
-        if isinstance(t, dict):
-            o = old.get(t.get("name")) or {}
-            for k in ("sf_price", "lf_price"):
-                t[k] = o.get(k, 0)
+# A SHARED SHEET'S FLOORING RECORD, BY ALLOW-LIST (critic 2, B2; ruling H). The money of a flooring
+# estimate - types, rates, waste, packs, typed lines, which type each room is - lives in the job's
+# estimate per ACCOUNT (_fl_est_*), never in a page record. A shared page's record keeps and serves only
+# what is listed here: geometry and names. A field added to the page later is NOT here, so it can not
+# leak by being forgotten (a deny-list did: round 3's `price`, `base_price` and `est` went to everyone).
+_FL_PAGE_KEYS = ("fl_v", "rooms", "closures", "seq", "deductDefaults", "default_ceiling_ft", "wallClass", "wallFaces",
+                 "wallRows", "wallStyles", "wallAdd", "wallDrop", "zoneScales", "wallLines")
+_FL_ROOM_KEYS = ("name", "uid", "pts", "area_sf", "area_pt2", "perim_lf", "perim_pt", "openings_lf", "holes_sf",
+                 "holes_pt2", "n_holes", "doors", "closures", "source", "click", "scale_ft_per_in", "scale_by",
+                 "ceiling_ft", "ceiling_text", "ceiling_by", "bridges", "doors_unplaced", "base_off", "openings",
+                 "openings_removed", "scale_verdict", "scale_contested", "objects", "deductions", "q")
+
+
+def _fl_public(fl):
+    """A page's flooring state reduced to the allow-list (shared sheets: written and served)."""
+    if not isinstance(fl, dict):
+        return None
+    out = {k: fl[k] for k in _FL_PAGE_KEYS if k in fl}
+    if isinstance(out.get("rooms"), list):
+        out["rooms"] = [{k: r[k] for k in _FL_ROOM_KEYS if k in r} for r in out["rooms"] if isinstance(r, dict)]
+    return out
+
+
+def _replace_retry(tmp: Path, f: Path) -> None:
+    """os.replace, retried a moment on Windows: a reader holding the file open (the job's flooring
+    estimate reads every page's record) makes the replace fail with PermissionError there, and a save
+    must not be lost to that. Elsewhere the first try always succeeds."""
+    for i in range(20):
+        try:
+            os.replace(tmp, f)
+            return
+        except PermissionError:
+            if i == 19:
+                raise
+            time.sleep(0.05)
 
 
 def _calcstate_put(job_id: str, page: int, raw: bytes) -> dict:
@@ -5024,6 +6891,12 @@ def _calcstate_put(job_id: str, page: int, raw: bytes) -> dict:
         for _k in ("ew", "ew_bound", "gzones", "ew_dropped"):
             if _k in old and _k not in data:
                 data[_k] = old[_k]
+        # THE FLOORING IS THE JOB DOCUMENT'S (ruling P): a page record's "fl" is never written by a browser
+        # (critic 3: B1 / B4, a visit re-saved it without its rooms' types; B3, another account rewrote its
+        # figures). What an earlier build left there stays as it was, for the one migration that reads it.
+        data.pop("fl", None)
+        if "fl" in old:
+            data["fl"] = old["fl"]
         # the old calculator's rows count nowhere: a row a build of 2026-10-01 marked as its (`earthwork-old`) is not
         # stored, and the record says the page had such work (the note: _ew_removed_pages)
         if isinstance(data.get("rows"), list):
@@ -5039,12 +6912,13 @@ def _calcstate_put(job_id: str, page: int, raw: bytes) -> dict:
                 data.pop(_k, None)
                 if _k in old:
                     data[_k] = old[_k]
-            _fl_prices(data.get("fl"), old.get("fl"))
+            if "fl" in data:
+                data["fl"] = _fl_public(data.get("fl"))
     # unique tmp name: two debounced saves landing together must not
     # interleave in one tmp file and publish a torn record
     tmp = f.with_name(f"{f.name}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(json.dumps(data, indent=1))
-    os.replace(tmp, f)
+    _replace_retry(tmp, f)
     _ledger_calcstate(job_id, page, old, data)
     return {"ok": True, "bytes": len(raw)}
 
@@ -5070,7 +6944,8 @@ def get_calcstate(job_id: str, page: int):
     if _calcstate_shared(job_id):
         for _k in _CALC_PERSONAL:
             d.pop(_k, None)
-        _fl_prices(d.get("fl"))
+        if "fl" in d:
+            d["fl"] = _fl_public(d.get("fl"))
         d["job_shared"] = True
     return d
 
@@ -5080,13 +6955,300 @@ async def post_calcstate(job_id: str, page: int, request: Request):
     return JSONResponse(_calcstate_put(job_id, page, await request.body()))
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# THE TAKEOFF STARTS EMPTY (2026-10-03, the owner: "make it where takeoffs are empty and items need to be added to
+# takeoff"). Until now every style the engine picked was in the takeoff after Detect and the person dropped what they did
+# not want; which rows were ticked lived only in that browser (keyed by the document's name), and reached the server only
+# inside an approve. Now nothing is in the takeoff until the person adds it, and the list of what they added is the
+# SERVER'S: one record per page (p<N>_ticks.json), holding the explicit adds - never "everything minus what was dropped".
+#
+#   * owner of a record: the job (an account's own job, or the one person on a box with no accounts); on a shared sheet
+#     (a demo card, owner-less with accounts on the box) each account has its own, and nobody reads another's;
+#   * each tick is kept as (style id, style key). The key is the engine's own family identity - class, weight class,
+#     exact colour, dash signature, CAD layer (webui/app.js styleFp; unique on a page by construction) - so a re-detect
+#     keeps the ticks whose style is still on the page, by key, never by position, and lists new styles unticked;
+#   * writes are versioned: a stale tab's write is refused with a sentence (TICKS_STALE) and changes nothing;
+#   * opening a page writes NOTHING, ever (a read of the ticks makes no write);
+#   * NOTHING IS BROUGHT OVER FROM AN EARLIER VERSION (the owner, 2026-10-03: "don't bring anything over, start
+#     empty"; the repair after CRITIC-empty-1). A page with no record here starts EMPTY, whatever the live build (2.0)
+#     held for it: its ticks lived in one browser, its approvals in an export, and every way of guessing a takeoff back
+#     from them put lines in a bid that the estimator had left out (a moved line's old family, another computer's default
+#     picks, a same-named file). A 2.0 APPROVAL is not touched: its export stays byte for byte, in the bid sheet and the
+#     report, until the person approves that page again or withdraws the approval, and the page says so in one line
+#     (_approved_earlier). A write that asks to bring ticks over (`migrate`, a page of this branch's first build) is
+#     refused and writes nothing;
+#   * an APPROVE is held to this record (_approve_ticks_check): its version, and every line style it would export;
+#   * a demo card's fresh open sweeps the job folder (_sweep_job_dir), so every account starts empty there.
+# Approve with nothing in the takeoff is refused (TAKEOFF_EMPTY).
+TICKS_STALE = "This page's takeoff was changed in another tab or on another computer. Reload to see it."
+TICKS_NO_MIGRATE = ("Nothing is brought over from an earlier version: this page's takeoff starts empty. Reload this "
+                    "page.")
+TAKEOFF_EMPTY = "Nothing is in the takeoff. Tick the styles you want first."
+# ...and on a page that is approved, where an empty approve cannot take the page out of the bid (critic empty-1, MINOR-3)
+TAKEOFF_EMPTY_APPROVED = "To take this page out of the bid, use Withdraw approval."
+TICKS_MAX = 20000                       # style ids in one write; a sheet has a few hundred
+_TICKS_LOCK = threading.Lock()
+# every export this build writes says it holds what the person ADDED; an export without the mark was approved on an
+# earlier version (MARKS DECIDE, like EXPORT_MARKS_KEY: no file time; 2.0 reads past an unknown top-level key)
+EXPORT_ADDED_KEY = "takeoff_added"
+EARLIER_HEAD = "Approved on an earlier version: its numbers are still in the bid."
+# an approve that would replace such an approval without the person's yes (critic empty-2, MAJOR-1): refused, nothing
+# written. The page asks its one question before it sends an approve; these words are for a page that had not heard
+EARLIER_ASK = ("This page's approval in the bid was made on an earlier version, and approving replaces it. Nothing was "
+               "approved. Press Approve again: it asks first, and No changes nothing.")
+# ...and what a note that says "approve it again" adds on such a page: what approving again replaces
+EARLIER_AGAIN = (". Approving again replaces the approval made on an earlier version - {holds} - with the takeoff this "
+                 "page holds now; it asks first, and the replaced approval is kept")
+EARLIER_KEEP_FAILED = ("Approve did not go through: the earlier approval could not be kept (its record is in use), so it "
+                       "was not replaced. Nothing changed in the bid. Press Approve again.")
+# an approve that leaves out a line style the page's takeoff record holds (critic empty-2, MINOR-2: under a declared
+# trade the bid held a part of the record, and another browser showed more than the bid). The export is exactly the record
+TICKS_PART = ("This approve leaves out a line style that is in this page's takeoff on the server. Nothing was approved. "
+              "Reload this page, check the takeoff, and approve again.")
+
+
+def _ticks_path(job_id: str, page: int) -> Path:
+    return _job_dir(job_id) / f"p{page}_ticks.json"
+
+
+def _ticks_owner(job_id: str, request) -> str:
+    """Whose ticks: the job's, or on a shared sheet this account's own."""
+    return ("acct:" + _fl_acct(request)) if _calcstate_shared(job_id) else "job"
+
+
+def _ticks_wclass(w) -> int:
+    """chain._weight_class's five bands (the same port as webui/app.js weightClass)."""
+    try:
+        w = float(w or 0)
+    except (TypeError, ValueError):
+        w = 0.0
+    for i, lim in enumerate((0.35, 0.75, 1.5, 2.6)):
+        if w <= lim:
+            return i
+    return 4
+
+
+def _style_key(st: dict) -> str:
+    """A style's identity across detections of one page: the engine's own family key (class, weight class, exact colour,
+    layer) and the dash signature it splits families by. Two rows of one page never share it (chain._assign_styles does
+    not emit a family twice), so a key either finds its style or finds nothing - it never lands on another one."""
+    col = st.get("color") or []
+    try:
+        col = ",".join(repr(round(float(c), 6)) for c in col)
+    except (TypeError, ValueError):
+        col = "-"
+    return "|".join([str(st.get("class") or ""), "w%d" % _ticks_wclass(st.get("width")), col,
+                     str(st.get("signature") or ""), "L=" + str(st.get("layer") or "")])
+
+
+def _ticks_result(job_id: str, page: int):
+    """The page's detection, or None."""
+    try:
+        r = json.loads((_job_dir(job_id) / f"p{page}_result.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return r if isinstance(r, dict) else None
+
+
+def _ticks_file(job_id: str, page: int) -> dict:
+    try:
+        d = json.loads(_ticks_path(job_id, page).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"v": 1, "by": {}}
+    if not isinstance(d, dict) or not isinstance(d.get("by"), dict):
+        return {"v": 1, "by": {}}
+    return d
+
+
+def _ticks_rec(job_id: str, page: int, owner: str):
+    rec = _ticks_file(job_id, page)["by"].get(owner)
+    return rec if isinstance(rec, dict) else None
+
+
+def _ticks_store(job_id: str, page: int, owner: str, rec: dict) -> None:
+    """Write one owner's record; the other owners' stay as they were. Atomic (a torn file would read as no ticks)."""
+    d = _ticks_file(job_id, page)
+    d["by"][owner] = rec
+    f = _ticks_path(job_id, page)
+    tmp = f.with_name(f"{f.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps(d, indent=1), encoding="utf-8")
+    _replace_retry(tmp, f)
+
+
+def _ticks_view(rec: dict, res: dict) -> dict:
+    """A stored record over the detection on the page now: the style ids its keys find. A key that finds no style is
+    dropped and counted - never re-pointed. Two rows sharing one key (the engine does not emit that; never seen): the
+    tick stays on its own number only while the record was written on this very engine's detection (`sig`), where a
+    number means what it meant; after a re-detect by another engine it is dropped and counted, never left on whichever
+    twin now wears the old number (critic empty-1, MINOR-6). `redetected`: the record was written on another engine's
+    detection, so the lines and lengths under the styles kept may have changed (MINOR-7)."""
+    styles = res.get("styles") or []
+    same = rec.get("sig") == res.get("engine_sig")
+    by_key: dict = {}
+    for st in styles:
+        if isinstance(st, dict) and isinstance(st.get("style_id"), int):
+            by_key.setdefault(_style_key(st), []).append(st["style_id"])   # collecting every row of a key, not ranking
+    sids, dropped = [], 0
+    for t in rec.get("styles") or []:
+        if not isinstance(t, dict):
+            continue
+        hit = by_key.get(str(t.get("key") or ""), [])
+        if len(hit) == 1:
+            sids.append(hit[0])
+        elif same and t.get("sid") in hit:
+            sids.append(t["sid"])
+        else:
+            dropped += 1
+    return {"styles": sorted(set(sids)), "dropped": dropped, "redetected": not same}
+
+
+def _approved_earlier(job_id: str, page: int, raw=None) -> "dict | None":
+    """This page's approval was made on an earlier version (its export carries no EXPORT_ADDED_KEY), or None. Such an
+    approval is NOT touched and NOT out of date: its numbers stay in the bid sheet and the report until the page is
+    approved again here or the approval is withdrawn. `head` is the page's one line; `detail` what was approved, folded
+    behind it: the rows, and the lines and feet of the rows billed by length (as every reader of the bid sees the
+    export: _export_view). `raw`: the export, when the caller has already read it."""
+    if raw is None:
+        try:
+            raw = json.loads((_job_dir(job_id) / f"p{page}_elements.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    if not isinstance(raw, dict) or raw.get(EXPORT_ADDED_KEY):
+        return None
+    exp = _export_view(job_id, page, raw)
+    items = [it for it in (exp.get("items") or []) if isinstance(it, dict)]
+    # a row billed by length is one the approve's footage branch wrote: it has no `unit` (a count has EA, a calculator
+    # row its own unit); its `count` is its lines, its `length_ft` the feet the bid holds (None: no scale then)
+    by_len = [it for it in items if "unit" not in it]
+    lines, ft, has_ft = 0, 0.0, False
+    for it in by_len:
+        try:
+            lines += int(it.get("count") or 0)
+            if it.get("length_ft") is not None:
+                ft += float(it["length_ft"])
+                has_ft = True
+        except (TypeError, ValueError):
+            pass
+    other = len(items) - len(by_len)
+    n = lambda k, w: f"{k:,} {w}{'' if k == 1 else 's'}"       # noqa: E731
+    parts = []
+    if by_len:
+        parts.append(f"{n(len(by_len), 'row')} by length ({n(lines, 'line')}" + (f", {ft:,.1f} ft" if has_ft else "") + ")")
+    if other:
+        parts.append(f"{n(other, 'row')} counted or calculated")
+    # `holds`: what the approval holds, as one phrase - the words of the question an approve asks before it replaces
+    # it, of the note that says to approve again, and of the offer to put it back (critic empty-2, MAJOR-1)
+    holds = " and ".join(parts) if parts else "no rows"
+    detail = ("That approval holds " + holds + ". It stays in the bid sheet and "
+              "the report as it is until this page is approved again or its approval is withdrawn.")
+    return {"head": EARLIER_HEAD, "detail": detail, "holds": holds, "items": len(items), "lines": lines,
+            "ft": round(ft, 1) if has_ft else None}
+
+
+def _ticks_reply(rec: dict, res: dict) -> dict:
+    v = _ticks_view(rec, res)
+    return {"state": "explicit", "version": int(rec.get("version") or 0), "styles": v["styles"],
+            "dropped": v["dropped"], "redetected": v["redetected"]}
+
+
+def _ticks_rec_new(res: dict, sids, version: int) -> dict:
+    """One owner's record: the styles added, each with its key, and the engine signature of the detection they were
+    written on (`sig`: _ticks_view)."""
+    byid = {st.get("style_id"): st for st in (res.get("styles") or []) if isinstance(st, dict)}
+    return {"version": version, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "sig": res.get("engine_sig"),
+            "styles": [{"sid": s, "key": _style_key(byid[s])} for s in sorted(set(sids)) if s in byid]}
+
+
+def _ticks_get(job_id: str, page: int, owner: str) -> dict:
+    """A read: never a write. No record = an empty takeoff, whatever an earlier version held for the page."""
+    res = _ticks_result(job_id, page)
+    if res is None:
+        raise HTTPException(404, "no result for this page")
+    rec = _ticks_rec(job_id, page, owner)
+    # `earlier` rides on the read only (the page asks once, when it opens the sheet; a tick's reply does not carry it)
+    out = _ticks_reply(rec, res) if rec is not None else {"state": "fresh", "version": 0, "styles": []}
+    return dict(out, earlier=_approved_earlier(job_id, page))
+
+
+def _ticks_seen(job_id: str, page: int, owner: str, res: dict) -> None:
+    """An approve went through on a record written on another engine's detection: the person approved the takeoff as it
+    reads on THIS detection, so the record is written again on it - the same styles under their numbers here, the same
+    version (the page stays in step) - and the page stops saying the sheet was detected again."""
+    with _TICKS_LOCK:
+        rec = _ticks_rec(job_id, page, owner)
+        if rec is None or rec.get("sig") == res.get("engine_sig"):
+            return
+        new = _ticks_rec_new(res, _ticks_view(rec, res)["styles"], int(rec.get("version") or 0))
+        _ticks_store(job_id, page, owner, new)
+
+
+def _approve_ticks_check(job_id: str, page: int, res: dict, body, request) -> set:
+    """The approve names the takeoff it approves (`ticks_version`): refused, with the stale write's own sentence and
+    before anything is written, unless that is the version of the owner's record here. Returns the style ids the
+    record holds on this detection: the approve's line styles are held to them where they are exported."""
+    owner = _ticks_owner(job_id, request)
+    rec = _ticks_rec(job_id, page, owner)
+    cur = int(rec.get("version") or 0) if rec else 0
+    if body.ticks_version != cur:
+        raise HTTPException(409, TICKS_STALE)
+    return set(_ticks_view(rec, res)["styles"]) if rec else set()
+
+
+@app.get("/api/job/{job_id}/page/{page}/ticks")
+def ticks_get(job_id: str, page: int, request: Request = None):
+    """What is in this page's takeoff (style ids), for this job or, on a shared sheet, this account. `state`: explicit
+    (a record) or fresh (nothing added yet: empty). `earlier`: the page's approval was made on an earlier version and is
+    still in the bid (_approved_earlier), or null."""
+    _calcstate_guard(job_id)
+    JOBS.get(job_id) or _404()
+    return _ticks_get(job_id, page, _ticks_owner(job_id, request))
+
+
+class TicksBody(BaseModel):
+    version: int = 0
+    styles: list = []
+    # what a page of this branch's first build sent to bring a 2.0 page's ticks over: refused (TICKS_NO_MIGRATE)
+    migrate: dict | None = None
+
+
+@app.post("/api/job/{job_id}/page/{page}/ticks")
+def ticks_post(job_id: str, page: int, body: TicksBody, request: Request = None):
+    """The page's takeoff as the person left it: every style they added, nothing else."""
+    _calcstate_guard(job_id)
+    JOBS.get(job_id) or _404()
+    # nothing is brought over from an earlier version, by any account, on any page: refused before anything is read
+    if body.migrate is not None:
+        raise HTTPException(409, TICKS_NO_MIGRATE)
+    owner = _ticks_owner(job_id, request)
+    res = _ticks_result(job_id, page)
+    if res is None:
+        raise HTTPException(404, "no result for this page")
+    if len(body.styles) > TICKS_MAX:
+        raise HTTPException(413, f"{len(body.styles)} style ids in one write; the cap is {TICKS_MAX}. Nothing was saved.")
+    valid = {st.get("style_id") for st in (res.get("styles") or []) if isinstance(st, dict)}
+    sids = {s for s in body.styles if isinstance(s, int) and not isinstance(s, bool) and s in valid}
+    with _TICKS_LOCK:
+        rec = _ticks_rec(job_id, page, owner)
+        cur = int(rec.get("version") or 0) if rec else 0
+        if body.version != cur:
+            raise HTTPException(409, TICKS_STALE)
+        rec = _ticks_rec_new(res, sids, cur + 1)
+        _ticks_store(job_id, page, owner, rec)
+    return {"ok": True, **_ticks_reply(rec, res)}
+
+
 def _export_outdated(job_id: str, pno: int, exp: dict) -> "str | None":
     """Why page `pno`'s approved export no longer carries the page's scale, or None. Its scale record changed after the
     approve - a Scale-card typing writes the review's record and not the export (2026-09-29), and a refused approve
     records its scale before the refusal - so the report and the bid sheet, which read the export, would carry its
     quantities at the old scale with nothing said (critic 17 and 19, RISK-3). A v1.8.5 approval is never out of date for
-    its old Earthwork calculator rows (they count nowhere: _export_view)."""
-    return _export_outdated_why(job_id, pno, exp)
+    its old Earthwork calculator rows (they count nowhere: _export_view).
+    Every such note ends by telling the reader to approve the page again. Where the approval was made on an EARLIER
+    VERSION that replaces it with whatever the takeoff here holds, so the note says what would be replaced (critic
+    empty-2, MAJOR-1: by the note's own words 328 lines became 0)."""
+    why = _export_outdated_why(job_id, pno, exp)
+    ea = _approved_earlier(job_id, pno, exp) if why else None
+    return why + EARLIER_AGAIN.format(holds=ea["holds"]) if ea else why
 
 
 def _export_outdated_why(job_id: str, pno: int, exp: dict) -> "str | None":
@@ -5095,8 +7257,14 @@ def _export_outdated_why(job_id: str, pno: int, exp: dict) -> "str | None":
         ppu, dpi = float(sc.get("pixelsPerUnit") or 0), float(exp.get("imageDpi") or 0)
         was = dpi / ppu if ppu > 0 and dpi > 0 else 0.0
         res = json.loads((_job_dir(job_id) / f"p{pno}_result.json").read_text(encoding="utf-8"))
-        det = _page_scale(job_id, pno, res) or {}
+        # the UNHIDDEN value (a person's record, else the engine's reading): a page approved before readings were
+        # found to disagree keeps its approval and its numbers - the verdict is said apart (_scale_flag_words), and
+        # only a change of the value itself (a person's, or the engine's on a re-detect) is OUT OF DATE (S4 rule 3)
+        det = _page_scale(job_id, pno, res, unhidden=True) or {}
         now = float(det.get("ft_per_paper_inch") or 0)
+        # A WITHDRAWN READING IS NO SCALE "NOW" (CRITIC-scale-3 M2): on a page whose readings disagree and no person
+        # chose, the engine's number is not in force, so it is never compared, nor printed as "it reads ... now"
+        withdrawn = (det.get("set_by") != _BY_REVIEWER and now > 0 and _scale_disagrees(job_id, pno, res, det))
     except (OSError, ValueError, TypeError, HTTPException):
         return None
     # the export's cut / fill rows: the ones its approve marked as the cut / fill's (`src`). MARKS DECIDE: an export
@@ -5126,16 +7294,22 @@ def _export_outdated_why(job_id: str, pno: int, exp: dict) -> "str | None":
     # rows that stand no more is refused, and without them the dirt leaves the bid (critic 20, MINOR-6; critic 21, WRONG-2).
     # Rows that belong to ANOTHER page's takeoff now leave this page's export: approve it again without them (critic 22)
     if cf_rows and isinstance(rp, int) and rp != int(pno):
-        step = f"approve page {pno + 1} again without its cut / fill rows (they belong to page {rp + 1}'s takeoff now)"
+        # ...or withdraw: with nothing else in its takeoff the page cannot be approved again (critic empty-1, MINOR-3)
+        step = (f"approve page {pno + 1} again without its cut / fill rows (they belong to page {rp + 1}'s takeoff now), "
+                f"or withdraw its approval if nothing else is in its takeoff")
     elif cf_rows or holds:
         step = f"compute in the Cut / fill panel, then approve page {pno + 1} again with its cut / fill rows"
     else:
         step = "approve it again"
-    if was > 0 and now > 0 and abs(now - was) > 1e-3 * now:
+    # an approval that carried no scale (counts only) is never out of date for a scale reason, and a withdrawn reading
+    # is not a change: the verdict's own flag says those (_scale_flag_words)
+    scale_judged = was > 0 and not withdrawn
+    if scale_judged and now > 0 and abs(now - was) > 1e-3 * now:
         return (f'OUT OF DATE: page {pno + 1} was approved at 1" = {_ft(was)} ft, but its scale is now 1" = {_ft(now)} ft - '
                 f'{step}; its quantities here are at the old scale')
-    if (was > 0) != (now > 0):
-        # a scale then and none now, or none then and one now (critic 20, MINOR-5)
+    if scale_judged and now <= 0:
+        # a scale then and none now (critic 20, MINOR-5). "None then, one now" is no longer out of date: an approval with
+        # no scale carries counts only (S4), and no count moves with a scale (CRITIC-scale-3 M2)
         then = f'1" = {_ft(was)} ft' if was > 0 else "no scale"
         nowt = f'1" = {_ft(now)} ft' if now > 0 else "no scale"
         return (f"OUT OF DATE: page {pno + 1} was approved with {then}, and it reads {nowt} now - {step}; its quantities "
@@ -5176,17 +7350,217 @@ def _bid_warning(note) -> bool:
     return str(note).startswith(("OUT OF DATE", "NOT IN THE BID", "CHECK"))
 
 
+# WITHDRAW A PAGE'S APPROVAL (coordinator ruling, 2026-10-03). Since the takeoff starts empty an approve with nothing in
+# the takeoff is refused, so a page whose takeoff became empty after it was approved (its cut / fill rows removed, say)
+# could no longer be approved "again" to clear its OUT OF DATE note, and the bid kept counting it. This is the explicit
+# act for that: the page's approved export leaves (kept inside the record, so nothing a person approved is lost), the
+# bid sheet and the report stop counting the page, and its OUT OF DATE note goes with the export it judged. Recorded
+# with who and when (p<N>_withdrawn.json, a list: one entry per withdrawal), never served with the name. Approving the
+# page again brings it back.
+WITHDRAW_NONE = "This page is not approved, so there is no approval to withdraw."
+_WITHDRAW_LOCK = threading.Lock()
+
+
+@app.post("/api/job/{job_id}/page/{page}/withdraw")
+def withdraw_approval(job_id: str, page: int, request: Request = None):
+    """Withdraw this page's approval: its export leaves the bid sheet and the report; the record says who and when."""
+    _calcstate_guard(job_id)
+    JOBS.get(job_id) or _404()
+    d = _job_dir(job_id)
+    f = d / f"p{page}_elements.json"
+    with _WITHDRAW_LOCK:
+        if not f.exists():
+            raise HTTPException(404, WITHDRAW_NONE)
+        try:
+            exp = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            exp = None
+        rf = d / f"p{page}_withdrawn.json"
+        try:
+            hist = json.loads(rf.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            hist = []
+        hist = hist if isinstance(hist, list) else []
+        at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        items = (exp or {}).get("items") or [] if isinstance(exp, dict) else []
+        hist.append({"at": at, "who": _who(request) if request is not None else None, "items": len(items),
+                     "export": exp})
+        tmp = rf.with_name(f"{rf.name}.{uuid.uuid4().hex[:8]}.tmp")
+        tmp.write_text(json.dumps(_withdrawn_trim(hist), indent=1), encoding="utf-8")
+        try:
+            f.unlink()
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(503, "The approval could not be withdrawn (the file is in use). Nothing changed in the "
+                                     "bid; try again in a moment.")
+        _replace_retry(tmp, rf)                         # the record, with the export it took out
+        try:
+            (d / "takeoff_report.pdf").unlink()        # the last report printed it; the next one is built without it
+        except OSError:
+            pass
+    left = sorted(int(p.name[1:].split("_")[0]) for p in d.glob("p*_elements.json"))
+    # the redesign's activity log (takeoff_engine/audit.py): an approval taken out of the bid is said there as the
+    # approve was, or the log's last word on the page would be "approved"
+    _audit(request, "sheet_withdraw", job=job_id, page=page, detail=_audit_n(len(items), "item"))
+    return {"ok": True, "page": page, "at": at, "items": len(items), "approved": left}
+
+
+# AN EARLIER VERSION'S APPROVAL IS KEPT WHEN AN APPROVE REPLACES IT, AND CAN BE PUT BACK (critic empty-2, MAJOR-1; the
+# coordinator's R6). One press of Approve on a page the live build had approved replaced that approval - 41 rows by
+# length, 44,793.4 ft - with whatever the takeoff here held, and kept no copy. Now:
+#   * the approve is refused until the person has answered the page's one question (ApproveBody.replace_earlier);
+#   * the replaced export goes into the page's record of approvals taken out of the bid (p<N>_withdrawn.json), exactly
+#     as Withdraw keeps one: who, when, the export - and `how` it left ("replaced"; a withdrawal has no `how`);
+#   * POST .../putback puts the NEWEST earlier version's approval in that record back in the bid, byte for byte, and
+#     marks the entry (`back`: who and when). Whatever approval is in the bid at that moment is kept in its turn
+#     (`how`: "put back"), so no approval a person made is ever lost. Only an EARLIER VERSION's approval is put back: it
+#     says of itself that it is not the takeoff here (the page's line, the question on the next approve). An approval
+#     made on this build comes back by approving the page again, held to the takeoff record like every approve.
+PUTBACK_NONE = "No earlier approval of this page is kept, so there is nothing to put back."
+PUTBACK_FAILED = "The earlier approval could not be put back (a file is in use). Nothing changed in the bid; try again in a moment."
+
+
+def _export_file(f: Path) -> "dict | None":
+    """An approved export as it is on disk, or None (no file, unreadable, not an object)."""
+    try:
+        exp = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return exp if isinstance(exp, dict) else None
+
+
+def _withdrawn_read(d: Path, page: int) -> list:
+    """The page's record of approvals taken out of the bid, oldest first ([] when there is none)."""
+    try:
+        hist = json.loads((d / f"p{page}_withdrawn.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return hist if isinstance(hist, list) else []
+
+
+# THE RECORD IS BOUNDED (critic merge-1, MINOR-4). Every withdrawal, replacement and put back appended the WHOLE
+# export, and GET /approved reads every page's record on every call: a heavy sheet (an export of 1.0 MB) withdrawn
+# eight times left a 9.6 MB record, a withdraw took 395 ms where the first took 63, and GET /approved 53 ms where it
+# took 3. The record now keeps the NEWEST WITHDRAWN_KEEP approvals taken out of the bid, and - whatever its age - the
+# one approval a put back would restore (_kept_earlier), so Put back keeps working after any number of withdrawals.
+# Three, because what the record is for is the mistake just made: the last withdrawal, the one before it and one
+# more are still there; and at most four entries hold that heaviest sheet's record under 5 MB (it was 1.2 MB an
+# entry), about 30 ms of GET /approved, however often the page is withdrawn. An entry older than that leaves the
+# record whole: who, when and the export.
+WITHDRAWN_KEEP = 3
+
+
+def _withdrawn_trim(hist: list) -> list:
+    """The record as it is written: its newest WITHDRAWN_KEEP entries, and the entry a put back would restore."""
+    if len(hist) <= WITHDRAWN_KEEP:
+        return hist
+    hit = _kept_earlier(hist)
+    cut = len(hist) - WITHDRAWN_KEEP
+    return [e for i, e in enumerate(hist) if i >= cut or (hit is not None and i == hit[0])]
+
+
+def _withdrawn_write(d: Path, page: int, hist: list) -> None:
+    rf = d / f"p{page}_withdrawn.json"
+    tmp = rf.with_name(f"{rf.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps(_withdrawn_trim(hist), indent=1), encoding="utf-8")
+    _replace_retry(tmp, rf)
+
+
+def _approval_keep(d: Path, page: int, exp: dict, who, how: str) -> dict:
+    """Keep an approval that is leaving the bid, exactly as Withdraw keeps one: one more entry in the page's record
+    with who, when and the export itself, plus `how` it left. Written BEFORE the caller touches the export, so the copy
+    exists first; an OSError means nothing was kept (the caller then replaces nothing). Call under _WITHDRAW_LOCK."""
+    hist = _withdrawn_read(d, page)
+    ent = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "who": who, "items": len(exp.get("items") or []), "export": exp,
+           "how": how}
+    hist.append(ent)
+    _withdrawn_write(d, page, hist)
+    return ent
+
+
+def _kept_earlier(hist: list) -> "tuple | None":
+    """(index, entry) of the approval a put back would restore: the NEWEST entry of the record that holds an earlier
+    version's approval (an export without EXPORT_ADDED_KEY), unless that one was put back already (`back`)."""
+    for i in range(len(hist) - 1, -1, -1):
+        e = hist[i]
+        if isinstance(e, dict) and isinstance(e.get("export"), dict) and not e["export"].get(EXPORT_ADDED_KEY):
+            return None if e.get("back") else (i, e)
+    return None
+
+
+def _kept_facts(job_id: str, page: int, d: Path) -> "dict | None":
+    """What the page may put back, for the page's offer: when it left the bid, how, and what it holds - never who."""
+    hit = _kept_earlier(_withdrawn_read(d, page))
+    if hit is None:
+        return None
+    ea = _approved_earlier(job_id, page, hit[1]["export"]) or {}
+    return {"at": hit[1].get("at"), "how": hit[1].get("how") or "withdrawn", "holds": ea.get("holds"),
+            "items": ea.get("items"), "lines": ea.get("lines"), "ft": ea.get("ft")}
+
+
+@app.post("/api/job/{job_id}/page/{page}/putback")
+def put_back_approval(job_id: str, page: int, request: Request = None):
+    """Put this page's earlier approval back in the bid as it was (the newest one kept in its record)."""
+    _calcstate_guard(job_id)
+    JOBS.get(job_id) or _404()
+    d = _job_dir(job_id)
+    f = d / f"p{page}_elements.json"
+    rf = d / f"p{page}_withdrawn.json"
+    with _WITHDRAW_LOCK:
+        hist = _withdrawn_read(d, page)
+        hit = _kept_earlier(hist)
+        if hit is None:
+            raise HTTPException(404, PUTBACK_NONE)
+        ent = hit[1]
+        who = _who(request) if request is not None else None
+        at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            was = rf.read_bytes()                          # the record as it is, to undo this if the export cannot be written
+            if f.exists():                                 # the approval in the bid now gives its place: kept in its turn
+                cur = _export_file(f)
+                hist.append({"at": at, "who": who, "items": len((cur or {}).get("items") or []), "export": cur,
+                             "how": "put back"})
+            ent["back"] = {"at": at, "who": who}
+            _withdrawn_write(d, page, hist)
+        except OSError:
+            raise HTTPException(503, PUTBACK_FAILED)
+        tmp = f.with_name(f"{f.name}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            # written as an approve writes an export (json.dumps, indent 1): the file is byte for byte the one replaced
+            tmp.write_text(json.dumps(ent["export"], indent=1))
+            _replace_retry(tmp, f)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            try:
+                rf.write_bytes(was)                        # nothing was put back: the record says so again
+            except OSError:
+                pass
+            raise HTTPException(503, PUTBACK_FAILED)
+        try:
+            (d / "takeoff_report.pdf").unlink()            # the last report printed the approval this one replaced
+        except OSError:
+            pass
+    left = sorted(int(p.name[1:].split("_")[0]) for p in d.glob("p*_elements.json"))
+    _ea = _approved_earlier(job_id, page)
+    # the redesign's activity log: an earlier version's approval put back in the bid, with what it holds
+    _audit(request, "sheet_putback", job=job_id, page=page, detail=(_ea or {}).get("holds"))
+    return {"ok": True, "page": page, "at": at, "approved": left, "earlier": _ea}
+
+
 @app.get("/api/job/{job_id}/approved")
 def approved_pages(job_id: str):
     """Which pages of a job are approved (carry p<N>_elements.json), so a
     whole-job reader asks once instead of probing every page and logging
     a 404 per unapproved sheet in the browser console. `outdated`: the
-    approved pages whose scale changed since, with why (_export_outdated)."""
+    approved pages whose scale changed since, with why (_export_outdated).
+    `earlier`: the pages approved on an earlier version, whose numbers are
+    still in the bid as they were (_approved_earlier)."""
     if job_id not in JOBS:
         _404()
     pages = []
     outdated = {}
     notes = {}
+    earlier = {}
     try:
         for f in _job_dir(job_id).glob("p*_elements.json"):
             try:
@@ -5195,11 +7569,17 @@ def approved_pages(job_id: str):
                 continue
             pages.append(pno)
             try:
-                why = _export_outdated(job_id, pno, json.loads(f.read_text(encoding="utf-8")))
+                _exp = json.loads(f.read_text(encoding="utf-8"))
+                why = _export_outdated(job_id, pno, _exp)
             except (OSError, ValueError):
-                why = None
+                _exp, why = None, None
             if why:
                 outdated[str(pno)] = why
+            # approved on an earlier version, still in the bid as it was (never an OUT OF DATE of its own): a whole-job
+            # reader says the page's one line from here
+            ea = _approved_earlier(job_id, pno, _exp) if _exp is not None else None
+            if ea:
+                earlier[str(pno)] = ea
     except OSError:
         pass
     un = _cf_rows_unapproved(job_id, pages)
@@ -5214,9 +7594,25 @@ def approved_pages(job_id: str):
             notes[str(pno)] = _ew_note(job_id, pno)
     except OSError:
         pass
+    # `kept`: the pages - approved now or not - whose record holds an earlier version's approval that can be put back
+    # (_kept_earlier: replaced by an approve here, or withdrawn), with what it holds; the page offers it (never who)
+    kept = {}
+    try:
+        _d = _job_dir(job_id)
+        for f in _d.glob("p*_withdrawn.json"):
+            try:
+                pno = int(f.name[1:].split("_")[0])
+            except ValueError:
+                continue
+            kf = _kept_facts(job_id, pno, _d)
+            if kf:
+                kept[str(pno)] = kf
+    except OSError:
+        pass
     # `ew_removed`: the job-level list of those pages (a whole-job view - the frame's Plans tiles, Summary - says the note
     # once per page from it, without reading every page's notes); `ew_note`: the sentence itself
-    return {"pages": sorted(pages), "outdated": outdated, "notes": notes, "ew_removed": ew_pages, "ew_note": EW_REMOVED_NOTE}
+    return {"pages": sorted(pages), "outdated": outdated, "notes": notes, "ew_removed": ew_pages, "ew_note": EW_REMOVED_NOTE,
+            "earlier": earlier, "kept": kept}
 
 
 @app.get("/api/job/{job_id}/activity")
@@ -5237,7 +7633,8 @@ def job_activity(job_id: str, request: Request, limit: int = 30):
 
 
 @app.get("/api/job/{job_id}/page/{page}/elements")
-def get_elements(job_id: str, page: int):
+def get_elements(job_id: str, page: int, request: Request = None):
+    _FL_READER.set(_fl_acct(request) if request is not None else None)
     f = _job_dir(job_id) / f"p{page}_elements.json"
     if not f.exists():
         raise HTTPException(404, "not approved yet")
@@ -5347,6 +7744,7 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
     per page an overlay of the approved lines on the sheet, then an
     itemized table (label / count / footage / pricing). `ignore` is the
     bid-sheet CSV's: the cross-sheet unticks, applied to the bid page."""
+    _FL_READER.set(_fl_acct(request))
     import io
     import textwrap
 
@@ -5399,6 +7797,12 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
             pg.insert_text((50, 46), _bct[:120], fontsize=7.5,
                            color=(0.38, 0.38, 0.38))
     _ewp = set(_ew_removed_pages(job_id))
+    # THE JOB'S FLOORING IS PRICED ON ITS ESTIMATE (critic 4, M2: re-approving a 2.0 sheet dropped its flooring money
+    # from SUM OF APPROVED SHEETS, 5,184.70 -> 3,231.60, with nothing said). Read once, for this account
+    _fl_v, _fl_doc, _fl_stored = _fl_doc_read(job_id, _fl_acct(request), _who(request) if request is not None else None)
+    _fl_c = _fl_compute(job_id, _fl_doc)
+    _fl_moved = bool(_fl_stored) and bool(_fl_c["lines"])
+    _FL_PREV = "priced in the previous version; now on the flooring estimate - not added to the totals"
     for pno in pages:
         # without v1.8.5's old Earthwork calculator rows and their caveats (_export_view)
         exp = _export_view(job_id, pno, json.loads((jd / f"p{pno}_elements.json").read_text()))
@@ -5446,7 +7850,14 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
         # Every number in the table below is this multiplication. When a
         # person overrode the engine's reading, the printed takeoff says so
         # on its own face - the reader of the PDF has no other way to know.
-        for _ln in _scale_report_lines(exp.get("scale"), exp.get("imageDpi")):
+        # wrapped, never cut: the words of how a person set it run long (CRITIC-scale-3 live run: "... SAID 1 I")
+        for _ln in [w for _l in _scale_report_lines(exp.get("scale"), exp.get("imageDpi"))
+                    for w in (textwrap.wrap(_l, 116) or [""])]:
+            tp.insert_text((50, y), _ln[:118], fontsize=8)
+            y += 11
+        # how the scale stands now, in the CSVs' words (scale verdict S5); never "confirmed" unless a person confirmed
+        # it or two kinds of witness agree (_scale_plain_words)
+        for _ln in _scale_report_state_lines(job_id, pno, exp):
             tp.insert_text((50, y), _ln[:118], fontsize=8)
             y += 11
         # Caveats the reviewer's calculators attached to their own rows. They
@@ -5527,7 +7938,13 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
             tp.insert_text((440, y), f'{it["unit_price"]:.2f}' if it.get("unit_price") else "-", fontsize=9)
             tp.insert_text((500, y), f'{it["extended"]:,.2f}' if it.get("extended") else "-", fontsize=9)
             y += _REPORT_CELL_LH * (len(_labl) - 1)       # the label's wrapped lines, under its first
-            if it.get("extended"):
+            # a flooring row an earlier build priced: kept as approved (a record), marked, never summed - its money is the
+            # flooring estimate's now (the summary carries that one line)
+            _prev = _fl_moved and _fl_is_row(it) and it.get("src") != "flooring" and bool(it.get("extended"))
+            if _prev:
+                y += 11
+                tp.insert_text((60, y), f"({_FL_PREV})", fontsize=7)
+            elif it.get("extended"):
                 page_total += it["extended"]
             # An EA/CY row's reference footage, stated as reference.
             if _rep_ft > 0.05:
@@ -5581,7 +7998,7 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
             _unit = it.get("unit") or "ft"
             g = grand.setdefault((it["label"], _unit),
                                  {"count": 0, "qty": 0.0, "ext": 0.0,
-                                  "eng": 0.0, "ov": False, "unit": _unit})
+                                  "eng": 0.0, "ov": False, "unit": _unit, "prev": 0.0})
             g["count"] += it["count"]
             if _unit == "ft":
                 # the feet a trench run replaced are counted on the run's rows, not here
@@ -5595,7 +8012,10 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
                 _eq = it.get("engine_qty")
                 g["eng"] += (_eq if _eq is not None else it.get("qty")) or 0.0
             g["ov"] = g["ov"] or it.get("qty_set_by") == _BY_REVIEWER
-            g["ext"] += it.get("extended") or 0.0
+            if _prev:
+                g["prev"] += it.get("extended") or 0.0
+            else:
+                g["ext"] += it.get("extended") or 0.0
             y += 13
         if page_total:
             y += 8
@@ -5670,6 +8090,9 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
         tp.insert_text((500, y), f'{g["ext"]:,.2f}' if g["ext"] else "-", fontsize=9)
         y += _REPORT_CELL_LH * (len(_labl) - 1)
         total += g["ext"]
+        if g.get("prev"):
+            y += 11
+            tp.insert_text((60, y), f'({g["prev"]:,.2f} {_FL_PREV})', fontsize=7)
         if g["ov"] and abs(g["eng"] - g["qty"]) > 0.05:
             y += 11
             tp.insert_text((60, y),
@@ -5677,6 +8100,21 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
                            f'measured total was {g["eng"]:,.1f} {g["unit"]}.',
                            fontsize=8)
         y += 13
+    if _fl_moved:
+        # ONE LINE where the flooring money used to be: the estimate's total, reconciled into the sum
+        _fl_tot = (_fl_c.get("total_cents") or 0) / 100.0
+        _fl_open = len(_fl_c.get("open") or [])
+        if y > 700:
+            tp = _ReportPage(out.new_page(width=612, height=792))
+            _letterhead(tp)
+            y = 60
+        tp.insert_text((50, y), "Flooring estimate" + (f" (held: {_fl_open} check(s) open)" if _fl_open else ""), fontsize=9)
+        tp.insert_text((500, y), f"{_fl_tot:,.2f}", fontsize=9)
+        y += 11
+        tp.insert_text((60, y), "flooring is priced on the flooring estimate (its page follows); the flooring rows above are quantities",
+                       fontsize=7)
+        y += 13
+        total += _fl_tot
     if total:
         y += 10
         tp.insert_text((277, y), "SUM OF APPROVED SHEETS:", fontsize=11)
@@ -5758,8 +8196,16 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
         tp.insert_text((420, y), (str(len(_L["rows"])) + (f" ({_oth})" if _oth else "")) if _L["rows"] else "",
                        fontsize=8)
         y += 12 + _REPORT_CELL_LH * (len(_labl) - 1)
+    # THE ESTIMATE PAGE: the job's flooring estimate for this account (takeoff_engine/fl_job.py), the
+    # same strings as the customer CSV - or, while a check is open, the list of what holds it.
+    _fl_first = len(out)                 # the estimate's pages carry no disclaimer of ours (ruling J)
+    if _fl_c["lines"]:
+        _fl_estimate_pages(out, _fl_c, _letterhead)
     _beta = textwrap.wrap(BETA_LONG, 150) or [""]
-    for _pg in map(_ReportPage, out):
+    _fl_issued = bool(_fl_c["lines"]) and not _fl_c["open"]
+    for _pi, _pg in enumerate(map(_ReportPage, out)):
+        if _fl_issued and _pi >= _fl_first:
+            continue                     # the customer's estimate: Description, Qty, Rate, Amount, Total, notes
         _w, _h = _pg.rect.width, _pg.rect.height
         _band = 10 + 8 * len(_beta)
         _pg.draw_rect(pymupdf.Rect(0, _h - _band, _w, _h),
@@ -5783,6 +8229,1394 @@ def report_pdf(job_id: str, request: Request, ignore: list[str] = Query([])):
                         filename=f"takeoff_{Path(_display_name(job['path'])).stem[:30]}.pdf")
 
 
+# ---- THE FLOORING JOB: one document per job and per account (rulings H-K, P-W, 2026-10-02) -------
+# takeoff_engine/fl_job.py holds the model, the acts and the money; fl_rooms.py the rooms' figures.
+# Stored at <job>/fl_est/<account key>.json as {"version": n, "doc": {...}}: the estimate AND the
+# rooms of every sheet, versioned (a stale tab's act is refused: critic 3, M3). The browser sends
+# ACTS; the server measures what needs the drawing (a pick, an outline, a deduction, an opening on a
+# wall), applies the act, and computes every figure on every read. Opening a job writes nothing:
+# the one write a read may make is the single migration of a job saved by an earlier build (ruling Q).
+_FL_EST_LOCK = threading.Lock()
+FL_STALE = "This estimate was changed on another computer. Reload to see it."
+FL_ACT_MAX = 400_000                    # bytes of one act: a traced outline of 2,000 corners fits
+
+
+def _fl_acct(request) -> str:
+    who = _who(request) if request is not None else None
+    return hashlib.sha1(str(who or "_").encode("utf-8")).hexdigest()[:16]
+
+
+def _fl_est_file(job_id: str, acct: str) -> Path:
+    return _job_dir(job_id) / "fl_est" / f"{acct}.json"
+
+
+def _fl_page_states(job_id: str) -> dict:
+    """Each page record's flooring part as an earlier build saved it (read for the migration only)."""
+    out = {}
+    for f in sorted(_job_dir(job_id).glob("p*_calcstate.json")):
+        try:
+            pno = int(f.name[1:].split("_")[0])
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        fl = d.get("fl") if isinstance(d, dict) else None
+        if isinstance(fl, dict):
+            out[pno] = fl
+    return out
+
+
+def _fl_prices_by_page(job_id: str) -> dict:
+    """Every price an earlier build kept for a flooring label, per page (read for the migration only):
+    the page record's price book, then the unit price an APPROVED export carried for a label the book
+    has none for. Critic 4, M2: a Tile priced only in 2.0's takeoff panel ($6/SF) lived in that
+    browser's own price book and in the approved export - the migration never saw it. The browser's
+    price book itself is out of this server's reach: what no export carried is said on the worksheet.
+    {page: {label: price}}; the key "\u0000from" lists where each came from."""
+    out = {}
+    for f in sorted(_job_dir(job_id).glob("p*_calcstate.json")):
+        try:
+            pno = int(f.name[1:].split("_")[0])
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict) and isinstance(d.get("prices"), dict):
+            out[pno] = dict(d["prices"])
+    for f in sorted(_job_dir(job_id).glob("p*_elements.json")):
+        try:
+            pno = int(f.name[1:].split("_")[0])
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        book = out.setdefault(pno, {})
+        for it in (d.get("items") or []) if isinstance(d, dict) else []:
+            if not isinstance(it, dict) or it.get("src") == "flooring" or not _FL_ROW_RX.match(str(it.get("label") or "")):
+                continue
+            try:
+                up = float(it.get("unit_price") or 0)
+            except (TypeError, ValueError):
+                up = 0.0
+            lab = str(it["label"])
+            if up > 0 and not book.get(lab):
+                book[lab] = up
+                book.setdefault("\u0000from", []).append(f"sheet {pno + 1}: {lab} at {up:g} from its approved export")
+    return out
+
+
+def _fl_stamps(job_id: str) -> dict:
+    """{page: its detection's stamp now}: a room measured on another detection has its checks open
+    again (ruling R: re-detecting reopens)."""
+    out = {}
+    for f in _job_dir(job_id).glob("p*_result.json"):
+        try:
+            out[int(f.name[1:].split("_")[0])] = f"{f.stat().st_mtime:.2f}"
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def _fl_may_migrate_pages(job_id: str, who) -> bool:
+    """Whose are the rooms an earlier build left in the page records: the job's owner's (a job with
+    no owner on a box with no accounts is the one person's). A shared sheet's page rooms belong to
+    nobody in particular and are migrated only into an account that kept an estimate on them."""
+    j = JOBS.get(job_id) or {}
+    if _calcstate_shared(job_id):
+        return False
+    return j.get("owner") is None or j.get("owner") == who
+
+
+_FL_FACTS: dict = {}     # (job, page, result mtime, scale-record mtime, pdf mtime) -> the sheet's scale facts
+
+
+def _fl_sheet_facts(job: dict, job_id: str, page: int):
+    """THE SHEET A ROOM'S FIGURES STAND ON, read by the server (critic 4, B1: `multi` and the scale came
+    from the browser). -> {ft: the scale in force (the reviewer's record, else the engine's reading,
+    through _page_scale untouched), by, eng: the engine's printed reading, choices: every printed
+    caption, multi} or None when the sheet has no detection.
+
+    MERGE HOOK (the page-level scale verdict on dev): this is the ONE place a room learns its sheet's
+    scale. When the verdict lands, return its scale as `ft` here; fl_job.rescale_room measures every
+    room on the sheet again on the next read and reopens its scale check (`was_ft`). The cache key
+    carries the result's and the scale record's mtimes, so a re-detect or an approve is seen at once."""
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    sf = _scale_pick_path(job_id, page)
+    try:
+        rm = rf.stat().st_mtime
+    except OSError:
+        return None
+    try:
+        sm = sf.stat().st_mtime
+    except OSError:
+        sm = None
+    try:
+        dm = (_job_dir(job_id) / f"p{page}_dimcheck.json").stat().st_mtime
+    except OSError:
+        dm = None
+    key = (job_id, page, rm, sm, dm, job.get("mtime"))
+    hit = _FL_FACTS.get(key)
+    if hit is not None:
+        return hit
+    try:
+        res = json.loads(rf.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    det = _page_scale(job_id, page, res)
+    ft = _sane_ft(det.get("ft_per_paper_inch")) if det else None
+    try:
+        eng = float((res.get("scale") or {}).get("ft_per_paper_inch") or 0) or None
+    except (TypeError, ValueError):
+        eng = None
+    try:
+        v = _room_view_scale(_scale_sites(job, job_id, page), 0.0, 0.0)
+    except Exception:            # noqa: BLE001 - no captions read: one scale, no choices
+        v = {"choices": [], "multi": False}
+    pgm = res.get("page") or {}
+    # THE PAGE-LEVEL SCALE VERDICT (merged from dev 2026-10-02): _page_scale is the verdict's scale in force (None when
+    # the readings disagree with no person's record). How it stands decides how the rooms stand:
+    #   none (disagree, or no scale): no scale for rooms - pt only, the estimate held with the verdict's words;
+    #   amber (accepted as read, or one reading not checked): the value, a hold-free flag on the worksheet;
+    #   clean (confirmed by a measure, typed, calibrated, picked by a person, or every witness agreeing).
+    try:
+        vd = _scale_verdict(job_id, page, res, det=_page_scale(job_id, page, res, unhidden=True))
+    except Exception:            # noqa: BLE001 - a verdict that can not be worked out leaves the scale in force as it is
+        vd = {}
+    how = (det or {}).get("set_how") if (det or {}).get("set_by") == _BY_REVIEWER else None
+    if not ft:
+        sheet_state = "none"
+    elif ((det or {}).get("set_by") == _BY_REVIEWER and how != "accepted") or vd.get("state") == "CONFIRMED":
+        sheet_state = "clean"
+    else:
+        sheet_state = "amber"
+    out = {"ft": ft, "by": ("reviewer" if det and det.get("set_by") == _BY_REVIEWER else "engine") if ft else None,
+           "sheet": sheet_state, "verdict": vd.get("state"), "words": vd.get("why"),
+           "eng": eng, "choices": v.get("choices") or [], "multi": bool(v.get("multi")),
+           # the page box every outline is held to (critic 5, B1)
+           "wh": [float(pgm.get("width_pt") or 0), float(pgm.get("height_pt") or 0)] if pgm.get("width_pt") else None}
+    if len(_FL_FACTS) > 2000:
+        _FL_FACTS.clear()
+    _FL_FACTS[key] = out
+    return out
+
+
+def _fl_facts(job: dict, job_id: str, doc: dict) -> dict:
+    return {int(k): _fl_sheet_facts(job, job_id, int(k)) for k in doc["sheets"]}
+
+
+_FL_SEAL_KEY: dict = {}
+_FL_PDF_HASH: dict = {}
+
+
+class FlSealKeyDamaged(Exception):
+    """The store's fl_seal.key exists but is not a usable key (empty or short): nothing is sealed with it."""
+
+
+_FL_SEAL_LOCK = threading.Lock()
+FL_SEAL_KEY_MIN = 32
+
+
+def _fl_seal_key() -> bytes:
+    """The seal's own key (critic 5, minor 2: it was session.key, which also signs every cookie): a file
+    of its own in the store, `fl_seal.key`, made once, 0600 where the OS allows (on Windows the file
+    inherits its folder's rights: a store under the user's folder is not readable by other users, a
+    store elsewhere inherits whatever that folder allows). A backup of the store still holds it -
+    protecting the backup is its own encryption's job; the seal stops a file edited outside the app,
+    not a person who holds the store's files.
+
+    CRITIC 6, M1: a key file under 32 bytes (emptied, truncated) is NEVER used - an empty HMAC key is a
+    seal anyone can compute. It raises FlSealKeyDamaged: every pick is then held ("the store's seal key
+    is damaged: ask us") and one line is logged. A missing file is created ATOMICALLY (a temp file,
+    then a link that fails if another process made the key first; that one's key is read and used)."""
+    import secrets as _s
+    f = JOBS_DIR / "fl_seal.key"
+    hit = _FL_SEAL_KEY.get(str(f))
+    if hit:
+        return hit
+    with _FL_SEAL_LOCK:
+        hit = _FL_SEAL_KEY.get(str(f))
+        if hit:
+            return hit
+        if not f.exists():
+            JOBS_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_name(f"fl_seal.key.{uuid.uuid4().hex[:8]}.tmp")
+            tmp.write_bytes(_s.token_hex(32).encode())
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+            try:
+                try:
+                    os.link(tmp, f)              # fails when the key exists: the first creator wins
+                except (AttributeError, NotImplementedError):
+                    os.rename(tmp, f)            # (no hard links: rename, which on Windows also refuses an existing file)
+            except FileExistsError:
+                pass
+            finally:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+        try:
+            b = f.read_bytes().strip()
+        except OSError as e:
+            print(f"[flooring] the store's seal key could not be read ({e}): nothing is sealed", flush=True)
+            raise FlSealKeyDamaged(str(e))
+        if len(b) < FL_SEAL_KEY_MIN:
+            print(f"[flooring] the store's seal key {f} is damaged ({len(b)} bytes, at least {FL_SEAL_KEY_MIN} needed): "
+                  "nothing is sealed; every pick is held", flush=True)
+            raise FlSealKeyDamaged(f"{len(b)} bytes")
+        _FL_SEAL_KEY[str(f)] = b
+        return b
+
+
+def _fl_key_id() -> str:
+    """A short fingerprint of the seal key (stored beside each seal so a changed key is named as the cause)."""
+    return hashlib.sha256(b"fl-key-id|" + _fl_seal_key()).hexdigest()[:10]
+
+
+def _fl_pdf_hash(job: dict) -> str:
+    """The job's PDF by its content (sha256), cached by path, size and mtime."""
+    p = str(job.get("path") or "")
+    try:
+        st = os.stat(p)
+    except OSError:
+        return "no-pdf"
+    k = (p, st.st_size, st.st_mtime)
+    if k not in _FL_PDF_HASH:
+        h = hashlib.sha256()
+        with open(p, "rb") as fh:
+            for blk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(blk)
+        _FL_PDF_HASH[k] = h.hexdigest()
+    return _FL_PDF_HASH[k]
+
+
+def _fl_seal(job_id: str, acct: str, room: dict, page: int) -> str:
+    """The server's seal over what it measured in a room (fl_job.seal_body), bound to this job, this
+    account, THIS SHEET and the PDF's content (critic 5, minor 1: a sealed room copied onto another
+    sheet, or a sheet filed under a page the job does not have, read as sealed): a room copied, moved,
+    forged or edited on disk does not carry it."""
+    import hmac as _h
+    from takeoff_engine import fl_job as _fj
+    job = JOBS.get(job_id) or {}
+    msg = (f"fl-room|{job_id}|{acct}|p{int(page)}|{_fl_pdf_hash(job)}|".encode("utf-8") + _fj.seal_body(room).encode("utf-8"))
+    return _h.new(_fl_seal_key(), msg, hashlib.sha256).hexdigest()[:40]
+
+
+def _fl_verify(job_id: str, acct: str, r: dict, page: int):
+    """True when the room's seal is the server's; else the CAUSE in the estimator's words (critic 6, minor 1):
+    the seal key is damaged, the drawing behind the job changed, the store's seal key changed, or the stored
+    figures were changed outside the app."""
+    import hmac as _h
+    from takeoff_engine import fl_job as _fj
+    try:
+        if _h.compare_digest(str(r.get("seal") or ""), _fl_seal(job_id, acct, r, page)):
+            return True
+        kid = _fl_key_id()
+    except FlSealKeyDamaged:
+        return _fj.KEY_DAMAGED_WHY
+    ctx = r.get("seal_ctx") or {}
+    job = JOBS.get(job_id) or {}
+    if ctx.get("pdf") and ctx["pdf"] != _fl_pdf_hash(job)[:16]:
+        return _fj.PDF_WHY
+    if ctx.get("key") and ctx["key"] != kid:
+        return _fj.KEY_WHY
+    return False
+
+
+def _fl_reconcile(job_id: str, acct: str, doc: dict, legacy: bool) -> dict:
+    """Every room's figures and scale derived again from its stored geometry and its sheet (fl_job.
+    reconcile) - on every read and before every write."""
+    from takeoff_engine import fl_job as _fj
+    import hmac as _h
+    job = JOBS.get(job_id) or {}
+    return _fj.reconcile(doc, _fl_facts(job, job_id, doc),
+                         verify=lambda r, p: _fl_verify(job_id, acct, r, p), legacy=legacy,
+                         n_pages=job.get("pages"))
+
+
+def _fl_doc_write(job_id: str, acct: str, version: int, doc: dict) -> None:
+    from takeoff_engine import fl_job as _fj
+    doc = _fj.clean_doc(doc)
+    job = JOBS.get(job_id) or {}
+    for k, s in doc["sheets"].items():
+        for r in s["rooms"]:
+            try:
+                r["seal"] = _fl_seal(job_id, acct, r, int(k))
+                r["seal_ctx"] = {"pdf": _fl_pdf_hash(job)[:16], "key": _fl_key_id()}
+            except FlSealKeyDamaged:
+                r["seal"], r["seal_ctx"] = None, None      # never sealed with a weak key: the next read holds every pick
+    f = _fl_est_file(job_id, acct)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f"{f.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps({"version": int(version), "doc": doc}, indent=1), encoding="utf-8")
+    _replace_retry(tmp, f)
+
+
+def _fl_doc_read(job_id: str, acct: str, who=None):
+    """(version, doc, stored). A job with no document yet for this account: an earlier build's work
+    is migrated ONCE and written (version + 1, marked migrated); otherwise the four default floor
+    types, not stored (version 0) - nothing is written by reading it."""
+    from takeoff_engine import fl_job as _fj
+    f = _fl_est_file(job_id, acct)
+    old_est, old_v = None, 0
+    if f.exists():
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = None
+        if isinstance(d, dict) and isinstance(d.get("doc"), dict):
+            return int(d.get("version") or 0), _fl_read_doc(job_id, acct, d["doc"]), True
+        if isinstance(d, dict) and isinstance(d.get("est"), dict):
+            old_est, old_v = d["est"], int(d.get("version") or 0)
+    with _FL_EST_LOCK:
+        # the same check again under the lock: two first reads must migrate once
+        if f.exists():
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(d, dict) and isinstance(d.get("doc"), dict):
+                    return int(d.get("version") or 0), _fl_read_doc(job_id, acct, d["doc"]), True
+            except (OSError, ValueError):
+                pass
+        pages = _fl_page_states(job_id) if (old_est is not None or _fl_may_migrate_pages(job_id, who)) else {}
+        mig = _fj.migrate(pages, old_est, _fl_prices_by_page(job_id), _fl_stamps(job_id), time.strftime("%Y-%m-%d %H:%M"))
+        if mig is not None:
+            mig = _fl_reconcile(job_id, acct, mig, legacy=True)
+            _fl_doc_write(job_id, acct, old_v + 1, mig)
+            return old_v + 1, _fl_read_doc(job_id, acct, json.loads(_fl_est_file(job_id, acct).read_text(encoding="utf-8"))["doc"]), True
+    return 0, _fj.default_doc(with_types=True), False
+
+
+def _fl_read_doc(job_id: str, acct: str, raw: dict) -> dict:
+    """A stored document as every reader sees it: cleaned, then every figure derived again (a document
+    of a build before the seals is held to the band its outlines allow instead)."""
+    from takeoff_engine import fl_job as _fj
+    legacy = int((raw or {}).get("v") or 0) < _fj.DOC_V
+    return _fl_reconcile(job_id, acct, _fj.clean_doc(raw), legacy)
+
+
+def _fl_compute(job_id: str, doc: dict) -> dict:
+    from takeoff_engine import fl_job as _fj
+    return _fj.compute(doc, _fl_stamps(job_id))
+
+
+def _fl_reply(job_id: str, acct: str, who=None, said: str = "") -> dict:
+    from takeoff_engine import fl_job as _fj
+    v, doc, stored = _fl_doc_read(job_id, acct, who)
+    comp = _fl_compute(job_id, doc)
+    return {"ok": True, "version": v, "est": doc["est"], "sheets": doc["sheets"], "stored": stored,
+            "computed": _fj.public(comp), "shared": _calcstate_shared(job_id), "said": said}
+
+
+@app.get("/api/job/{job_id}/flooring")
+def flooring_get(job_id: str, request: Request):
+    """The job's flooring for THIS account: the estimate, the rooms of every sheet, their version,
+    and everything computed from them (the page shows these numbers and computes none)."""
+    _calcstate_guard(job_id)
+    JOBS.get(job_id) or _404()
+    return _fl_reply(job_id, _fl_acct(request), _who(request))
+
+
+@app.put("/api/job/{job_id}/flooring")
+def flooring_put_gone(job_id: str, request: Request):
+    """A build of 2026-10-02 wrote its whole estimate here, flags and all (critic 3, B2). The job takes
+    acts now (POST .../flooring/act): nothing here is written."""
+    raise HTTPException(410, "This page is from an earlier build: reload it. The flooring takes one act at a time now.")
+
+
+class FlActBody(BaseModel):
+    version: int
+    act: dict
+
+
+def _fl_result(job_id: str, page: int) -> dict:
+    f = _job_dir(job_id) / f"p{page}_result.json"
+    if not f.exists():
+        raise HTTPException(409, "run Detect on this page first")
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(500, "could not read this page's detection result")
+
+
+def _fl_scale_rec(info: dict, ft_fallback=None) -> dict:
+    """A room's scale record from _room_scale_info: how it was chosen, the printed scale it stands on,
+    the ratio of this print to the printed values (a hand-calibrated reduced print), the choices."""
+    by = str(info.get("by") or "")
+    ft = info.get("ft") or ft_fallback
+    choices = [{"fpi": float(c["fpi"]), "text": str(c.get("text") or "")} for c in (info.get("choices") or []) if c.get("fpi")]
+    ratio = 1.0
+    for c in info.get("choices") or []:
+        if c.get("ft") and c.get("fpi"):
+            ratio = float(c["ft"]) / float(c["fpi"])
+            break
+    rec = {"how": "sheet", "ft": ft, "fpi": None, "text": None, "why": info.get("why"), "multi": bool(info.get("multi")),
+           "choices": choices, "ratio": ratio, "by": by or None, "contested": info.get("contested")}
+    if by.startswith("inset caption"):
+        rec["how"] = "view"
+        rec["text"] = by[len("inset caption"):].strip() or None
+        rec["fpi"] = info.get("site_fpi") or (ft / ratio if ft and ratio else None)
+    elif info.get("site_text"):
+        rec["text"] = info.get("site_text")
+        rec["fpi"] = info.get("site_fpi")
+    return rec
+
+
+def _fl_closure_openings(pts: list, closures: list) -> list:
+    from takeoff_engine import fl_rooms as _fr
+    out = []
+    for c in closures or []:
+        mx, my = (c[0] + c[2]) / 2, (c[1] + c[3]) / 2
+        e = _fr.nearest_edge(pts, mx, my)
+        if e and e["d"] <= 6:
+            out.append({"x": mx, "y": my, "w_pt": math.hypot(c[2] - c[0], c[3] - c[1]), "w_ft": None, "by": "gap closed by hand", "why": None})
+    return out
+
+
+def _fl_openings_from_bridges(bridges: list) -> list:
+    out = []
+    for b in bridges or []:
+        g = b.get("g") if isinstance(b.get("g"), list) and len(b["g"]) == 4 else [b["x0"], b["y0"], b["x1"], b["y1"]]
+        out.append({"x": (g[0] + g[2]) / 2, "y": (g[1] + g[3]) / 2, "w_pt": b.get("w") if (b.get("w") or 0) > 0 else b.get("r"),
+                    "w_ft": None, "by": b.get("w_by") or "from the swing", "why": b.get("w_why")})
+    return out
+
+
+def _fl_merge_openings(old: list, removed: list, fresh: list) -> list:
+    """A fresh list of found openings into a room, keeping what the estimator did: a typed width stays
+    on its opening, an opening removed by hand stays removed, one added by hand stays."""
+    near = lambda a, b: math.hypot(float(a[0]) - float(b["x"]), float(a[1]) - float(b["y"])) <= 10
+    out = []
+    for o in fresh:
+        if any(near(q, o) for q in removed or []):
+            continue
+        had = next((q for q in old or [] if math.hypot(q["x"] - o["x"], q["y"] - o["y"]) <= 10 and q["by"] != "added by hand"), None)
+        out.append(dict(o, w_ft=had["w_ft"]) if had and (had.get("w_ft") or 0) > 0 else o)
+    out += [q for q in old or [] if q["by"] == "added by hand" or str(q["by"]).startswith("from the swing (no door record")]
+    return out
+
+
+def _fl_objects(out_objects: list, fpp, dflt: dict) -> list:
+    from takeoff_engine import fl_rooms as _fr
+    objs = []
+    for o in out_objects or []:
+        pts = o.get("polygon") or []
+        a_sf = o.get("area_sf")
+        a_pt2 = (float(a_sf) / (fpp * fpp)) if (a_sf and fpp) else _fr.poly_area(pts)
+        kind = str(o.get("kind") or "shape")
+        objs.append({"kind": kind, "layer": o.get("layer"), "area_pt2": a_pt2,
+                     "w_pt": (float(o.get("w_ft") or 0) / fpp) if fpp else 0.0, "h_pt": (float(o.get("h_ft") or 0) / fpp) if fpp else 0.0,
+                     "guessed": bool(o.get("guessed")), "deduct": bool(dflt.get(kind)) and not o.get("guessed"), "manual": False, "pts": pts})
+    return objs
+
+
+def _fl_outline_problem(res: dict, room: dict):
+    """An outline held to fl_job.outline_problem on its sheet's page box, at its own scale."""
+    from takeoff_engine import fl_job as _fj
+    pgm = res.get("page") or {}
+    wh = [float(pgm.get("width_pt") or 0), float(pgm.get("height_pt") or 0)] if pgm.get("width_pt") else None
+    ft = (room.get("scale") or {}).get("ft")
+    return _fj.outline_problem(room.get("pts") or [], wh, (float(ft) / 72.0) if ft else None)
+
+
+def _fl_default_type(sh: dict):
+    """The floor type a new room on this sheet starts with when the act names none: the last one given
+    on the sheet, else the last typed room's (critic 4, minor 5: a drawn room came in untyped where a
+    picked one took the last type). An untyped room holds the estimate either way."""
+    if sh.get("last_type"):
+        return sh["last_type"]
+    return next((r["type"] for r in reversed(sh.get("rooms") or []) if r.get("type")), None)
+
+
+def _fl_measure(job: dict, job_id: str, doc: dict, act: dict, stamps: dict) -> dict:
+    """The acts that need the drawing are measured here and returned as the plain acts fl_job applies
+    (room_put, deduct_put, opening_put, object_toggle, deduct_del). Returns {"refused": why} when the
+    drawing does not give what the act asked for (nothing is written then)."""
+    from takeoff_engine import fl_job as _fj, fl_rooms as _fr, rooms as _rooms
+    kind = act.get("kind")
+    if kind not in ("room_pick", "room_draw", "room_edit", "deduct_at", "opening_add"):
+        return act
+    page = act.get("page")
+    if not isinstance(page, int) or isinstance(page, bool) or page < 0 or page >= int(job.get("pages") or 10 ** 6):
+        raise HTTPException(422, "no such sheet")
+    sh = _fj.sheet(doc, page)
+    aids = sh["aids"]
+    res = _fl_result(job_id, page)
+    stamp = stamps.get(page)
+    scr = _sane_ft(act.get("scale_ft_per_in")) if act.get("scale_ft_per_in") is not None else None
+    if kind == "room_pick":
+        x, y = float(act.get("x")), float(act.get("y"))
+        dup = next((r for r in sh["rooms"] if _fr.point_in(r["pts"], x, y)), None)
+        if dup:
+            return {"refused": f"that point is inside {dup['name'] or 'a room'} already on the list - click a space that is not listed yet, or remove that row first"}
+        styles = [int(v) for v in (act.get("styles") or [])[:4000] if isinstance(v, int)]
+        zone = act.get("zone") if isinstance(act.get("zone"), list) and len(act["zone"]) == 4 else None
+        body = RoomPickBody(x=x, y=y, styles=styles, closures=aids["closures"], wall_lines=aids["wallLines"],
+                            wall_add=aids["wallAdd"], wall_drop=aids["wallDrop"], zone=zone, scale_ft_per_in=scr)
+        out = _rooms_pick_core(job_id, page, body)
+        if not out.get("ok"):
+            return {"refused": out.get("why") or "no room there", "leak": out.get("leak") or [], "closes_with": out.get("closes_with")}
+        sinfo = out.get("_sinfo") or {}
+        fpp = (out["scale_ft_per_in"] / 72.0) if out.get("scale_ft_per_in") else None
+        cl = out.get("ceiling") or {}
+        bridges = out.get("bridges_used") or []
+        room = {"uid": _fj.new_id("r"), "name": out.get("name") or "", "source": "click", "click": [x, y], "pts": out["polygon"],
+                "area_pt2": out["area_pt2"], "holes_pt2": out.get("holes_pt2") or 0, "n_holes": out.get("n_holes") or 0,
+                "perim_pt": out["perim_pt"], "bridges": bridges, "doors_unplaced": out.get("doors_unplaced") or [],
+                "openings": _fl_openings_from_bridges(bridges) + _fl_closure_openings(out["polygon"], aids["closures"]),
+                "objects": _fl_objects(out.get("objects"), fpp, aids["deductDefaults"]), "deductions": [],
+                "closures_used": out.get("closures_used") or 0,
+                "ceiling_ft": cl.get("ft") if (cl.get("ft") or 0) > 0 else None, "ceiling_text": cl.get("text"),
+                "ceiling_by": "sheet" if (cl.get("ft") or 0) > 0 else None,
+                "scale": dict(_fl_scale_rec(sinfo, out.get("scale_ft_per_in")), typed=scr), "det": stamp,
+                "type": act.get("type") or _fl_default_type(sh)}
+        bad = _fl_outline_problem(res, room)
+        if bad:
+            return {"refused": f"not a room on this sheet: {bad}"}
+        return {"kind": "room_put", "page": page, "room": room, "_wallStyles": styles}
+    if kind in ("room_draw", "room_edit"):
+        pts = [[float(p[0]), float(p[1])] for p in (act.get("pts") or [])[:2001] if isinstance(p, (list, tuple)) and len(p) >= 2]
+        if len(pts) > 2000:
+            raise HTTPException(413, "an outline of more than 2,000 corners")
+        if len(pts) < 3:
+            return {"refused": "an outline needs at least 3 corners"}
+        old = _fj.find_room(doc, page, str(act.get("uid") or "")) if kind == "room_edit" else None
+        found = _rooms_openings_core(job, job_id, page, res, pts, aids["wallAdd"], aids["wallDrop"])
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        if old is None:
+            info = _room_scale_info(job, job_id, page, res, RoomPickBody(x=sum(xs) / len(xs), y=sum(ys) / len(ys), scale_ft_per_in=scr,
+                                                                       box=[min(xs), min(ys), max(xs), max(ys)]))
+            fresh = _fl_openings_from_bridges(found["openings"]) + _fl_closure_openings(pts, aids["closures"])
+            room = {"uid": _fj.new_id("r"), "name": "", "source": "drawn", "click": None, "pts": pts,
+                    "area_pt2": _fr.poly_area(pts), "holes_pt2": 0, "perim_pt": _fr.poly_perim(pts),
+                    "bridges": found["openings"], "doors_unplaced": found["unplaced"], "openings": fresh,
+                    "objects": [], "deductions": [], "scale": dict(_fl_scale_rec(info, scr), typed=scr), "det": stamp,
+                    "type": act.get("type") or _fl_default_type(sh)}
+        else:
+            room = json.loads(json.dumps(old))
+            room.pop("seal", None)
+            room.pop("unverified", None)         # measured again from its new outline, by the server
+            room["pts"] = [[round(p[0], 2), round(p[1], 2)] for p in pts]
+            room["area_pt2"] = _fr.poly_area(pts)
+            room["holes_pt2"] = 0.0
+            room["perim_pt"] = _fr.poly_perim(pts)
+            room["source"] = "edited"
+            n = len(pts)
+            room["base_off"] = [run for run in room.get("base_off") or [] if any(_fr.off_span(pts[i], pts[(i + 1) % n], run) for i in range(n))]
+            if old["source"] != "click":
+                room["bridges"] = found["openings"]
+                room["doors_unplaced"] = found["unplaced"]
+            fresh = _fl_openings_from_bridges(room["bridges"] if old["source"] == "click" else found["openings"]) + _fl_closure_openings(pts, aids["closures"])
+            room["openings"] = _fl_merge_openings(old.get("openings") or [], old.get("openings_removed") or [], fresh)
+            room["det"] = stamp
+        bad = _fl_outline_problem(res, room)
+        if bad:
+            # critic 5, B1: an outline off the sheet, crossing itself, too small or bigger than the sheet is refused
+            raise HTTPException(400, f"not taken: {bad}")
+        return {"kind": "room_put", "page": page, "room": room}
+    r = _fj.find_room(doc, page, str(act.get("uid") or ""))
+    x, y = float(act.get("x")), float(act.get("y"))
+    if kind == "deduct_at":
+        if not _fr.point_in(r["pts"], x, y):
+            return {"refused": "deduct: click inside the room"}
+        oi = next((i for i, o in enumerate(r["objects"]) if len(o["pts"]) >= 3 and _fr.point_in(o["pts"], x, y)), -1)
+        if oi >= 0:
+            return {"kind": "object_toggle", "page": page, "uid": r["uid"], "oi": oi}
+        di = next((d for d in r["deductions"] if len(d["pts"]) >= 3 and _fr.point_in(d["pts"], x, y)), None)
+        if di:
+            return {"kind": "deduct_del", "page": page, "uid": r["uid"], "did": di["id"]}
+        allst = [s2.get("style_id") for s2 in (res.get("styles") or []) if isinstance(s2, dict)]
+        body = RoomPickBody(x=x, y=y, styles=allst, closures=aids["closures"], wall_lines=aids["wallLines"])
+        out = _rooms_pick_core(job_id, page, body)
+        if not out.get("ok"):
+            return {"refused": out.get("why") or "no shape there"}
+        if out["area_pt2"] >= 0.5 * (r["area_pt2"] or 0):
+            return {"refused": "that click is not inside a fixture - the lines around it enclose most of the room"}
+        return {"kind": "deduct_put", "page": page, "uid": r["uid"], "deduction": {"pts": out["polygon"], "area_pt2": out["area_pt2"]}}
+    # opening_add: ONE CLICK ON THE WALL (ruling W). Where a swing is drawn there with no door record
+    # (its leaf a thin rectangle the detector does not read as a leaf), its radius is the width
+    e = _fr.nearest_edge(r["pts"], x, y)
+    if not e:
+        return {"refused": "click ON the room's outline"}
+    fpp = _fj.room_fpp(r)
+    r_lo, r_hi = (max(8.0, 1.25 / fpp), 6.0 / fpp) if fpp else (8.0, 80.0)
+    units = None
+    try:
+        d = pymupdf.open(job["path"])
+        try:
+            units = _page_arc_units(job, job_id, page, d[page])
+        finally:
+            d.close()
+    except Exception:
+        units = None
+    sw = _rooms.swing_near(units or [], e["at"][0], e["at"][1], r_lo, r_hi)
+    if sw:
+        return {"kind": "opening_put", "page": page, "uid": r["uid"],
+                "opening": {"x": e["at"][0], "y": e["at"][1], "w_pt": sw["r"], "by": "from the swing (no door record)",
+                            "why": f"a {sw['sweep']:.0f} degree swing drawn there, r {sw['r']:.1f} pt; the detector made no record of it"}}
+    return {"kind": "opening_put", "page": page, "uid": r["uid"],
+            "opening": {"x": e["at"][0], "y": e["at"][1], "w_pt": 0, "by": "added by hand", "why": None}}
+
+
+def _fl_act_core(job_id: str, request: Request, version: int, act: dict) -> dict:
+    from takeoff_engine import fl_job as _fj
+    _calcstate_guard(job_id)
+    job = JOBS.get(job_id) or _404()
+    acct, who = _fl_acct(request), _who(request)
+    if len(json.dumps(act)) > FL_ACT_MAX:
+        raise HTTPException(413, "that act is too large")
+    v, doc, _st = _fl_doc_read(job_id, acct, who)
+    if int(version) != v:
+        return JSONResponse({"detail": FL_STALE, "version": v}, status_code=409)
+    stamps = _fl_stamps(job_id)
+    m = _fl_measure(job, job_id, doc, act, stamps)
+    if "refused" in m:
+        rep_ = _fl_reply(job_id, acct, who)
+        rep_.update(ok=False, why=m["refused"], leak=m.get("leak") or [], closes_with=m.get("closes_with"), page=act.get("page"))
+        return rep_
+    with _FL_EST_LOCK:
+        f = _fl_est_file(job_id, acct)
+        try:
+            cur = json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+        except (OSError, ValueError):
+            cur = None
+        if isinstance(cur, dict) and isinstance(cur.get("doc"), dict):
+            v2, doc2 = int(cur.get("version") or 0), _fl_read_doc(job_id, acct, cur["doc"])
+        else:
+            v2, doc2 = v, doc
+        if v2 != int(version):
+            return JSONResponse({"detail": FL_STALE, "version": v2}, status_code=409)
+        try:
+            facts = _fl_facts(job, job_id, doc2)
+            if isinstance(m.get("page"), int) and not isinstance(m.get("page"), bool) and m["page"] not in facts:
+                facts[m["page"]] = _fl_sheet_facts(job, job_id, m["page"])
+            said = _fj.apply_act(doc2, m, str(who or "this computer"), time.strftime("%Y-%m-%d %H:%M"), stamps, facts=facts)
+            # what the act changed is derived again before it is stored: the document on disk is what every read shows
+            # (every room in doc2 was verified as it was read, or was measured by the server just now)
+            _fj.reconcile(doc2, _fl_facts(job, job_id, doc2), trusted=True, n_pages=job.get("pages"))
+        except _fj.ActError as e:
+            return JSONResponse({"detail": str(e), "version": v2}, status_code=422)
+        if m.get("_wallStyles") is not None and m.get("kind") == "room_put":
+            _fj.sheet(doc2, m["page"])["aids"]["wallStyles"] = m["_wallStyles"] or None
+        _fl_doc_write(job_id, acct, v2 + 1, _fj.clean_doc(doc2))
+    out = _fl_reply(job_id, acct, who, said)
+    if m.get("kind") == "room_put":
+        out["room_uid"] = m["room"].get("uid") if isinstance(m.get("room"), dict) else None
+    return out
+
+
+@app.post("/api/job/{job_id}/flooring/act")
+def flooring_act(job_id: str, body: FlActBody, request: Request):
+    """ONE ACT of the estimator on this job's flooring, over the version the writer read (409 when it is
+    stale). Acts carry what a person did - never an area, a base, a quantity, a total or a flag
+    (takeoff_engine/fl_job.py apply_act lists them); the server measures and computes the rest."""
+    from takeoff_engine import fl_job as _fj
+    act = dict(body.act or {})
+    if act.get("kind") in ("scale_ack", "openings_ack", "measure_ack"):
+        raise HTTPException(422, "acknowledge through the room's own route (.../rooms/{uid}/scale/acknowledge, .../openings/acknowledge "
+                                 "or .../measure/acknowledge)")
+    # CRITIC 4, B1: an act carries GEOMETRY and CHOICES only. A measured room, deduction or opening is
+    # the server's own output (_fl_measure), never a browser's; a figure in a payload is refused, named
+    if act.get("kind") in _fj.SERVER_ONLY_KINDS:
+        raise HTTPException(400, f"{act.get('kind')} is the server's own act (what it measured): send what you did - a pick, an "
+                                 "outline, a click - and the server measures it")
+    bad = _fj.figure_fields(act)
+    if bad:
+        raise HTTPException(400, f"an act carries geometry and choices only: {', '.join(bad)} "
+                                 f"{'is a figure' if len(bad) == 1 else 'are figures'} the server computes - refused, nothing written")
+    return _fl_act_core(job_id, request, body.version, act)
+
+
+class FlScaleAckBody(BaseModel):
+    version: int
+    fpi: float
+    digest: str
+
+
+@app.post("/api/job/{job_id}/page/{page}/rooms/{uid}/scale/acknowledge")
+def flooring_scale_ack(job_id: str, page: int, uid: str, body: FlScaleAckBody, request: Request):
+    """A room's scale acknowledged AS a value (ruling R): the printed scale the estimator saw and the
+    digest of the room as shown. A digest that is not the room's now (re-picked, reshaped, re-scaled,
+    re-detected) is refused. Naming another printed scale measures the room at it."""
+    return _fl_act_core(job_id, request, body.version, {"kind": "scale_ack", "page": page, "uid": uid, "fpi": body.fpi, "digest": body.digest})
+
+
+class FlMeasureAckBody(BaseModel):
+    version: int
+    digest: str
+
+
+@app.post("/api/job/{job_id}/page/{page}/rooms/{uid}/measure/acknowledge")
+def flooring_measure_ack(job_id: str, page: int, uid: str, body: FlMeasureAckBody, request: Request):
+    """An earlier build's pick, measured again from its outline (critic 5, minor 3), acknowledged as it is - with the
+    digest of the room as shown. Re-picking it restores its fill measure instead."""
+    return _fl_act_core(job_id, request, body.version, {"kind": "measure_ack", "page": page, "uid": uid, "digest": body.digest})
+
+
+class FlOpenAckBody(BaseModel):
+    version: int
+    count: int
+    digest: str
+
+
+@app.post("/api/job/{job_id}/page/{page}/rooms/{uid}/openings/acknowledge")
+def flooring_openings_ack(job_id: str, page: int, uid: str, body: FlOpenAckBody, request: Request):
+    """A room's openings reviewed (ruling W): with the count the estimator saw and the digest of the
+    list. Any change to the list (an opening added, removed or re-measured, the outline reshaped, the
+    sheet detected again) reopens it."""
+    return _fl_act_core(job_id, request, body.version, {"kind": "openings_ack", "page": page, "uid": uid, "count": body.count, "digest": body.digest})
+
+
+def _fl_doc_name(job: dict) -> str:
+    return Path(_display_name(job["path"])).stem[:40]
+
+
+def _fl_held(comp: dict):
+    if not comp["lines"] and comp["open"]:
+        # nothing priced yet AND something holds it (a sheet with no scale in force): the holds, in words
+        return JSONResponse({"detail": "The customer estimate is held until these are resolved.",
+                             "open": [c["text"] for c in comp["open"]]}, status_code=409)
+    if not comp["lines"]:
+        raise HTTPException(404, "this job's flooring estimate has no lines yet - give its rooms a floor type")
+    if comp["open"]:
+        return JSONResponse({"detail": "The customer estimate is held until these are resolved.",
+                             "open": [c["text"] for c in comp["open"]]}, status_code=409)
+    return None
+
+
+@app.get("/api/job/{job_id}/flooring_estimate.csv")
+def flooring_estimate_csv(job_id: str, request: Request):
+    """THE CUSTOMER ESTIMATE (ruling J): Description, Qty, Rate, Amount, Total and the
+    estimator's own notes - nothing of ours. Its checks are computed again now, from what is
+    stored; refused (409, with the list) while any is open."""
+    from takeoff_engine import fl_job as _fj
+    job = JOBS.get(job_id) or _404()
+    _calcstate_guard(job_id)
+    _v, doc, _stored = _fl_doc_read(job_id, _fl_acct(request), _who(request) if request is not None else None)
+    comp = _fl_compute(job_id, doc)
+    held = _fl_held(comp)
+    if held is not None:
+        return held
+    return Response(_fj.customer_csv(comp), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{_fl_doc_name(job)}_estimate.csv"'})
+
+
+def _fl_letterhead_for(request):
+    """The account's letterhead, as the report prints it (company, contact line; nothing when blank)."""
+    _brec, _bscope = _branding.resolve(_who(request))
+    co = (_brec.get("company") or "").strip()
+    ct = (_brec.get("contact") or "").strip()
+
+    def lh(pg) -> None:
+        if not co:
+            return
+        pg.insert_text((50, 36), co[:80], fontsize=10)
+        if ct:
+            pg.insert_text((50, 46), ct[:120], fontsize=7.5, color=(0.38, 0.38, 0.38))
+    return lh
+
+
+def _fl_estimate_pages(out, comp: dict, _letterhead, title: str = "Estimate") -> None:
+    """The estimate's pages, appended to `out` (a pymupdf document): the account's letterhead,
+    Description / Qty / Rate / Amount, the TOTAL, the estimator's notes; or, while a check is open,
+    the list of what holds it. Shared by the customer PDF and the internal report."""
+    tp = _ReportPage(out.new_page(width=612, height=792))
+    _letterhead(tp)
+    y = 60
+    tp.insert_text((50, y), title if not comp["open"] else title + " - held", fontsize=16)
+    y += 22
+
+    def head(tp, y, cont=False):
+        for _x, _h in ((50, "Description"), (390, "Qty"), (450, "Rate"), (515, "Amount")):
+            tp.insert_text((_x, y), _h, fontsize=9)
+        if cont:
+            tp.insert_text((50, y - 14), title + " (continued)", fontsize=9)
+        return y + 14
+    if comp["open"]:
+        tp.insert_text((50, y), "Not issued: these checks are open (the worksheet lists them all).", fontsize=9)
+        y += 16
+        for _c in comp["open"]:
+            for _seg in _report_cell_lines("- " + _c["text"], 500.0):
+                if y > 730:
+                    tp = _ReportPage(out.new_page(width=612, height=792))
+                    _letterhead(tp)
+                    y = 60
+                tp.insert_text((50, y), _seg, fontsize=9)
+                y += _REPORT_CELL_LH
+        return
+    y = head(tp, y)
+    for _ln in comp["lines"]:
+        _dl = _report_cell_lines(_ln["desc"], 330.0)
+        if y + _REPORT_CELL_LH * len(_dl) > 730:
+            tp = _ReportPage(out.new_page(width=612, height=792))
+            _letterhead(tp)
+            y = head(tp, 74, cont=True)
+        _report_cell_draw(tp, 50, y, _dl)
+        tp.insert_text((390, y), _ln["qty"], fontsize=9)
+        tp.insert_text((450, y), _ln["rate"], fontsize=9)
+        tp.insert_text((515, y), _ln["amount"], fontsize=9)
+        y += _REPORT_CELL_LH * (len(_dl) - 1) + 14
+    y += 8
+    if y > 730:
+        tp = _ReportPage(out.new_page(width=612, height=792))
+        _letterhead(tp)
+        y = 74
+    tp.insert_text((390, y), "TOTAL", fontsize=11)
+    tp.insert_text((515, y), comp["total"], fontsize=11)
+    y += 22
+    for _n in comp["notes"]:
+        for _seg in _report_cell_lines(_n, 500.0):
+            if y > 730:
+                tp = _ReportPage(out.new_page(width=612, height=792))
+                _letterhead(tp)
+                y = 60
+            tp.insert_text((50, y), _seg, fontsize=9)
+            y += _REPORT_CELL_LH
+
+
+@app.get("/api/job/{job_id}/flooring_estimate.pdf")
+def flooring_estimate_pdf(job_id: str, request: Request):
+    """THE CUSTOMER ESTIMATE AS ITS OWN PDF (ruling U): the account's letterhead, Description / Qty /
+    Rate / Amount, the Total and the estimator's notes - nothing of ours, no takeoff rows, no
+    disclaimer band. Refused while a check is open, like the CSV."""
+    job = JOBS.get(job_id) or _404()
+    _calcstate_guard(job_id)
+    _v, doc, _stored = _fl_doc_read(job_id, _fl_acct(request), _who(request) if request is not None else None)
+    comp = _fl_compute(job_id, doc)
+    held = _fl_held(comp)
+    if held is not None:
+        return held
+    out = pymupdf.open()
+    _fl_estimate_pages(out, comp, _fl_letterhead_for(request))
+    pdf = out.tobytes(deflate=True, garbage=4)
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{_fl_doc_name(job)}_estimate.pdf"'})
+
+
+@app.get("/api/job/{job_id}/flooring_worksheet.csv")
+def flooring_worksheet_csv(job_id: str, request: Request):
+    """THE INTERNAL WORKSHEET (ruling J): per line its net, waste, packs, the rooms and sheets behind
+    it, each room's scale and how it was set, each opening and where its width came from, every
+    check and how it closed, and the migration record of a job saved by an earlier build."""
+    from takeoff_engine import fl_job as _fj
+    job = JOBS.get(job_id) or _404()
+    _calcstate_guard(job_id)
+    _v, doc, _stored = _fl_doc_read(job_id, _fl_acct(request), _who(request) if request is not None else None)
+    comp = _fl_compute(job_id, doc)
+    return Response(_fj.worksheet_csv(comp, doc, _display_name(job["path"])), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{_fl_doc_name(job)}_flooring_worksheet.csv"'})
+
+
+# ---- THE WALL PANEL JOB: one document per job and per account (2026-10-03) -----------------------
+# takeoff_engine/wp_job.py holds the model, the acts and the money; wp_settings.py the account's
+# own rates. Stored at <job>/wp_est/<account key>.json as {"version": n, "doc": {...}}, like the
+# flooring estimate beside it. The browser sends ACTS; the server measures what needs the sheet (a
+# line picked, a wall drawn), applies the act and computes every figure on every read. Opening a job
+# writes nothing. NOTHING OF IT is in a page record, an export, a bid sheet or a report: on a shared
+# sheet another account has its own document and sees none of this one. Not shared with flooring:
+# the document's read and write (flooring's carry its 2.0 migration and its seals); shared: the
+# account key, the atomic replace, the sheet's scale facts, the report page and its text wrap.
+_WP_LOCK = threading.Lock()
+WP_STALE = "This wall panel job was changed on another computer. Reload to see it."
+WP_VIEW_ONLY = "This sign-in can look, not change. Nothing was saved."
+WP_SETTINGS_STALE = "These wall panel settings were changed somewhere else. Reload to see them."
+WP_ACT_MAX = 20_000                     # bytes of one act: the longest is a room's typed wall lengths
+_WP_CHAINS: dict = {}                   # (job, page, result mtime) -> {chain id: its length and ends}
+
+
+def _wp_file(job_id: str, acct: str) -> Path:
+    return _job_dir(job_id) / "wp_est" / f"{acct}.json"
+
+
+def _wp_view_only(request) -> bool:
+    """A viewer - the read-only role, where a build has roles - changes nothing here. (core-redesign
+    refuses a viewer every write in its middleware; this is the same answer where that is not merged.)"""
+    who = _who(request) if request is not None else None
+    return bool(who) and _users._is_viewer(_users.load().get(who))
+
+
+WP_STORE_DAMAGED = ("Your wall panel rates could not be read: the settings store on the server is damaged ({why}). "
+                    "Nothing is priced from it, nothing is read as 'not set' and nothing can be saved over it until it is mended: tell us.")
+
+
+def _wp_store_problem(request, why: str, kept: "str | None" = None) -> str:
+    """The sentence for a store that can not be read. Staff also read where the file is and what its copy is called."""
+    said = WP_STORE_DAMAGED.format(why=why)
+    if request is not None and _is_staff(request):
+        from takeoff_engine import wp_settings as _ws
+        said += f" Staff: the file is {_ws.store_path().name} in the job store" + (f"; a copy of it as it is was kept beside it as {kept}." if kept else ".")
+    return said
+
+
+def _wp_settings(request) -> tuple:
+    """(this account's wall panel settings as they are now, their scope, the problem). `problem` is None, or the
+    sentence to show when the store can not be read (critic wp-1, MAJOR-3): the record is then every value NOT KNOWN
+    - never "nothing set" - under the scope "damaged"."""
+    from takeoff_engine import wp_settings as _ws
+    rec, scope, why = _ws.state(_who(request) if request is not None else None)
+    return rec, scope, (_wp_store_problem(request, why) if why else None)
+
+
+def _wp_unprintable(s) -> list:
+    """The letters of a text the proposal's font can not print - what _report_text would draw as "?" - each once,
+    in order. A field that has any holds the proposal by name (critic wp-1, minor 6): never a "?" on the customer's
+    page. Curly quotes, dashes, primes and the other marks _REPORT_FOLD folds are printed as their plain twins."""
+    out = []
+    for c in str("" if s is None else s).translate(_REPORT_FOLD):
+        if not (" " <= c <= "~" or "¡" <= c <= "ÿ" or c in "\t\n\r") and c not in out:
+            out.append(c)
+    return out
+
+
+def _wp_chains(job_id: str, page: int):
+    """{chain id: {len, a, b, box}} of a sheet's detection as it is NOW, or None when the sheet has none.
+    A picked wall is this line's length, read here on every read - never a number kept in the job. `box` is the
+    line's whole extent [x0, y0, x1, y1]: what its view is decided from on a sheet that prints several scales."""
+    rf = _job_dir(job_id) / f"p{page}_result.json"
+    try:
+        key = (job_id, page, rf.stat().st_mtime)
+    except OSError:
+        return None
+    hit = _WP_CHAINS.get(key)
+    if hit is not None:
+        return hit
+    try:
+        res = json.loads(rf.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    out = {}
+    for ch in (res.get("chains") or []) if isinstance(res, dict) else []:
+        try:
+            pts = ch.get("points") or []
+            cid, ln = int(ch["chain_id"]), float(ch.get("length_pt") or 0)
+            if len(pts) >= 2 and ln > 0 and math.isfinite(ln):
+                xs, ys = [float(p[0]) for p in pts], [float(p[1]) for p in pts]
+                out[cid] = {"len": ln, "a": [xs[0], ys[0]], "b": [xs[-1], ys[-1]], "box": [min(xs), min(ys), max(xs), max(ys)]}
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+            continue
+    if len(_WP_CHAINS) >= 24:
+        _WP_CHAINS.clear()
+    _WP_CHAINS[key] = out
+    return out
+
+
+def _wp_wall_view(f: dict, sites: list, box: list) -> dict:
+    """THE SCALE OF THE VIEW A WALL IS DRAWN IN, on a sheet that prints more than one scale (critic wp-1, MAJOR-2: a
+    wall inside an enlarged plan was measured at the sheet's scale, twice its length). THE SAME RULE AND THE SAME
+    FUNCTION a flooring room goes through - _room_scale_decide, with the wall's own extent as its outline - not a
+    second rule. -> {ft, view, why}. `ft` None = this wall has NO feet, and `why` says so:
+      * its view is not known: no view title could be given to it, or the sheet's scale was set by hand with no
+        printed reading to compare the views with (flooring keeps the sheet's scale there and flags the row; a wall
+        has no row to choose a scale on, so it abstains);
+      * its readings disagree: two view titles are as near it (contested)."""
+    x0, y0, x1, y1 = (float(v) for v in box)
+    info = _room_scale_decide(f.get("ft"), f.get("by"), f.get("eng"), sites, (x0 + x1) / 2, (y0 + y1) / 2,
+                              [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)], what="wall")
+    if not info.get("multi"):
+        return {"ft": info.get("ft"), "view": None, "why": None}
+    if info.get("contested"):
+        return {"ft": None, "view": None,
+                "why": f"two view titles are as near this wall and print different scales ({info.get('site_text')} and "
+                       f"{info['contested'].get('text')}): which view it is in can not be told"}
+    if not info.get("site_fpi") or not info.get("ft"):
+        return {"ft": None, "view": None, "why": "the view this wall is drawn in is not known (" + str(info.get("why") or "no view title could be given to it") + ")"}
+    # the sheet's own view is measured at the scale in force (which a person may have set over its printed caption):
+    # it is named as that, not by a caption the scale in force may differ from
+    own = not str(info.get("by") or "").startswith("inset caption")
+    return {"ft": float(info["ft"]), "view": "the sheet's own view" if own else f"its view: {info.get('site_text')}", "why": info.get("why")}
+
+
+def _wp_pages(job: dict, job_id: str, doc: dict) -> dict:
+    """What the server reads off each sheet a wall of this job sits on: whether it is detected, its
+    scale in force (the page-level verdict's, through _fl_sheet_facts: None when the readings disagree
+    or there is none - then nothing on it shows in feet), how that scale stands, its lines, and - on a
+    sheet that prints more than one scale - each wall's own view (`views`, _wp_wall_view)."""
+    out = {}
+    n = int(job.get("pages") or 0)
+    for r in doc["rooms"]:
+        for w in r["walls"]:
+            p = w["page"]
+            if p not in out:
+                f = _fl_sheet_facts(job, job_id, p) if p < n else None
+                if f is None:
+                    out[p] = {"detected": False, "ft": None, "sheet": "none", "words": None, "multi": False, "chains": {}, "views": {}}
+                else:
+                    out[p] = {"detected": True, "ft": f.get("ft"), "sheet": f.get("sheet"), "words": f.get("words"),
+                              "multi": bool(f.get("multi")), "chains": _wp_chains(job_id, p) or {}, "views": {},
+                              "_f": f, "_sites": _scale_sites(job, job_id, p) if (f.get("multi") and f.get("ft")) else []}
+            pg = out[p]
+            if not (pg["multi"] and pg["ft"]):
+                continue
+            if w["src"] == "drawn":
+                box = w["seg"]
+            else:
+                c = pg["chains"].get(w["chain"])
+                box = c.get("box") if c else None       # a line the detection no longer has: wall_pt says so
+            if box:
+                pg["views"][w["id"]] = _wp_wall_view(pg["_f"], pg["_sites"], box)
+    for pg in out.values():
+        pg.pop("_f", None)
+        pg.pop("_sites", None)
+    return out
+
+
+def _wp_read(job_id: str, acct: str) -> tuple:
+    """(version, doc, stored). A job with no document for this account is the empty one, version 0,
+    not stored: nothing is written by reading it."""
+    from takeoff_engine import wp_job as _wj
+    f = _wp_file(job_id, acct)
+    if f.exists():
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = None
+        if isinstance(d, dict) and isinstance(d.get("doc"), dict):
+            return int(d.get("version") or 0), _wj.clean_doc(d["doc"]), True
+    return 0, _wj.default_doc(), False
+
+
+def _wp_write(job_id: str, acct: str, version: int, doc: dict) -> None:
+    f = _wp_file(job_id, acct)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f"{f.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps({"version": int(version), "doc": doc}, indent=1), encoding="utf-8")
+    _replace_retry(tmp, f)
+
+
+def _wp_state(job_id: str, request) -> dict:
+    """This account's wall panel job as it stands: its document, the rates it stands on (its own copy
+    once it is written, the account's settings until then) and everything computed from them."""
+    from takeoff_engine import wp_job as _wj, wp_settings as _ws
+    job = JOBS.get(job_id) or _404()
+    v, doc, stored = _wp_read(job_id, _fl_acct(request))
+    live, scope, problem = _wp_settings(request)
+    # THE RATES THE JOB STANDS ON: its own copy; where the copy holds no value and the account's settings now do, the
+    # settings' value, until the job is next written and takes it (critic wp-1, minor 2). With the store unreadable
+    # the copy stands alone - nothing is followed, nothing is compared, and the proposal is held with the reason.
+    if problem:
+        rates, follows = (doc["rates"] if doc["rates"] is not None else _ws.snapshot(_ws.blank())), []
+    else:
+        rates, follows = _ws.standing(doc["rates"], live)
+    brec, _bscope = _branding.resolve(_who(request) if request is not None else None)
+    comp = _wj.compute(doc, rates, _wp_pages(job, job_id, doc), company=brec.get("company") or "", contact=brec.get("contact") or "",
+                       today=time.strftime("%Y-%m-%d"), unprintable=_wp_unprintable, settings_problem=problem,
+                       price_items=None if problem else live["price_items"])
+    own = doc["rates"] is not None and not problem
+    return {"job": job, "version": v, "doc": doc, "stored": stored, "live": live, "scope": scope, "rates": rates,
+            "comp": comp, "brand": brec, "problem": problem, "follows": follows,
+            "differs": _ws.differences(rates, live) if own else [], "differ_keys": _ws.differing(rates, live) if own else []}
+
+
+def _wp_reply(job_id: str, request, said: str = "") -> dict:
+    """The reply the page mirrors, named key by named key: this account's own document and what the
+    server computed from it. Nothing of another account's is read to build it."""
+    from takeoff_engine import wp_job as _wj, wp_settings as _ws
+    s = _wp_state(job_id, request)
+    doc = s["doc"]
+    return {"ok": True, "version": s["version"], "stored": s["stored"],
+            "job": doc["job"], "rooms": doc["rooms"], "sheets": doc["sheets"], "lines": doc["lines"],
+            "rates": s["rates"], "rates_at": doc["rates_at"], "rates_differ": s["differs"],
+            # which is which: the values this job FOLLOWS the settings for (it holds none of its own yet), and the
+            # differences by part, so one part can be taken without the other
+            "rates_follow": _ws.follow_words(s["follows"], s["rates"]),
+            "differ_parts": {"rates": any(k not in _ws.WORD_KEYS for k in s["differ_keys"]),
+                             "words": any(k in _ws.WORD_KEYS for k in s["differ_keys"])},
+            "settings_problem": s["problem"],
+            "price_items": s["live"]["price_items"], "settings_scope": s["scope"],
+            "company": s["brand"].get("company") or "", "computed": s["comp"], "typed": _wj.typed_amounts(doc),
+            "view_only": _wp_view_only(request), "shared": _calcstate_shared(job_id),
+            "pages": int(s["job"].get("pages") or 0), "said": said}
+
+
+@app.get("/api/job/{job_id}/wallpanels")
+def wallpanels_get(job_id: str, request: Request):
+    """The job's wall panels for THIS account: rooms, sheets, typed lines, costs, and everything
+    computed from them (the page shows these numbers and computes none). Writes nothing."""
+    _calcstate_guard(job_id)
+    JOBS.get(job_id) or _404()
+    return _wp_reply(job_id, request)
+
+
+class WpActBody(BaseModel):
+    version: int
+    act: dict
+
+
+def _wp_measure(job: dict, job_id: str, doc: dict, act: dict) -> dict:
+    """The two acts that need the sheet, measured here and returned as the server's own act (wall_put);
+    {"refused": why} when the sheet does not give what was asked (nothing is written then)."""
+    from takeoff_engine import wp_job as _wj
+    kind = act.get("kind")
+    if kind not in ("wall_pick", "wall_draw"):
+        return act
+    page = act.get("page")
+    if isinstance(page, bool) or not isinstance(page, int) or page < 0 or page >= int(job.get("pages") or 0):
+        raise HTTPException(422, "no such sheet")
+    rid = str(act.get("room") or "")
+    if not any(r["id"] == rid for r in doc["rooms"]):
+        return {"refused": "that room is not on this job any more - reload to see it as it is"}
+    if kind == "wall_pick":
+        chains = _wp_chains(job_id, page)
+        if chains is None:
+            return {"refused": "run Detect on this sheet first: a wall is picked from its detected lines (or draw the wall)"}
+        cid = act.get("chain")
+        c = chains.get(cid) if isinstance(cid, int) and not isinstance(cid, bool) else None
+        if c is None:
+            return {"refused": "that line is not in this sheet's detection (a line joined or drawn on screen is not): draw the wall instead"}
+        return {"kind": "wall_put", "room": rid,
+                "wall": {"id": _wj.new_id("w"), "page": page, "src": "line", "chain": cid, "len_pt": c["len"], "a": c["a"], "b": c["b"]}}
+    seg = act.get("seg")
+    if not (isinstance(seg, list) and len(seg) == 4
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in seg)):
+        raise HTTPException(422, "a drawn wall is its two ends")
+    f = _fl_sheet_facts(job, job_id, page)
+    sz = job.get("sizes") or []
+    wh = (f or {}).get("wh") or (sz[page] if page < len(sz) else None)
+    if wh and not all(-2.0 <= seg[i] <= float(wh[i % 2]) + 2.0 for i in range(4)):
+        return {"refused": f"that wall runs off the sheet (the sheet is {float(wh[0]):g} x {float(wh[1]):g} pt): click its two ends on the sheet"}
+    if math.hypot(seg[2] - seg[0], seg[3] - seg[1]) < 1.0:
+        return {"refused": "that wall has no length: click one end, then the other"}
+    return {"kind": "wall_put", "room": rid, "wall": {"id": _wj.new_id("w"), "page": page, "src": "drawn", "seg": seg}}
+
+
+@app.post("/api/job/{job_id}/wallpanels/act")
+def wallpanels_act(job_id: str, body: WpActBody, request: Request):
+    """ONE ACT of the estimator on this job's wall panels, over the version the writer read (409 when
+    it is stale). An act carries what a person did - a typed value, a choice, a line picked, a wall
+    drawn - never a figure (wp_job.act_problem refuses one by name); the server measures and computes."""
+    from takeoff_engine import wp_job as _wj, wp_settings as _ws
+    _calcstate_guard(job_id)
+    job = JOBS.get(job_id) or _404()
+    if _wp_view_only(request):
+        raise HTTPException(403, WP_VIEW_ONLY)
+    act = dict(body.act or {})
+    if len(json.dumps(act)) > WP_ACT_MAX:
+        raise HTTPException(413, "that act is too large")
+    bad = _wj.act_problem(act)
+    if bad:
+        raise HTTPException(400, bad)
+    acct, who = _fl_acct(request), _who(request)
+    v, doc, _stored = _wp_read(job_id, acct)
+    if int(body.version) != v:
+        return JSONResponse({"detail": WP_STALE, "version": v}, status_code=409)
+    m = _wp_measure(job, job_id, doc, act)          # reads the sheet's detection: outside the lock
+    if "refused" in m:
+        out = _wp_reply(job_id, request)
+        out.update(ok=False, why=m["refused"])
+        return out
+    with _WP_LOCK:
+        v, doc, _stored = _wp_read(job_id, acct)    # again, under the lock: two acts never both write version v + 1
+        if int(body.version) != v:
+            return JSONResponse({"detail": WP_STALE, "version": v}, status_code=409)
+        live, _scope, problem = _wp_settings(request)
+        if problem and m.get("kind") in ("rates_take", "sheet_price_item"):
+            # these two read the account's settings, and the settings can not be read: never "nothing set"
+            return JSONResponse({"detail": problem, "version": v}, status_code=422)
+        now = time.strftime("%Y-%m-%d %H:%M")
+        try:
+            said = _wj.apply_act(doc, m, str(who or "this computer"), now, settings_now=live)
+        except _wj.ActError as e:
+            return JSONResponse({"detail": str(e), "version": v}, status_code=422)
+        except ArithmeticError:
+            # a number no box here can take (critic wp-1, minor 5): refused in words, never a 500
+            return JSONResponse({"detail": "that is not a number this box can take (too large, or too long): nothing was saved",
+                                 "version": v}, status_code=422)
+        if doc["rates"] is None:
+            # THE FIRST WRITE: the job takes the account's rates as they are now and stands on them; a later
+            # change to the settings does not move it (it says what differs and offers them: rates_take)
+            doc["rates"] = _ws.snapshot(_ws.blank() if problem else live)
+            doc["rates_at"] = {"at": now, "by": str(who or "this computer")}
+        elif not problem:
+            # A LATER WRITE: a value the job's copy does not hold and the settings now do becomes the job's own
+            # (critic wp-1, minor 2: a job started before the rates were loaded kept an empty copy for good). A value
+            # the copy holds is never touched.
+            _wj.take_unset(doc, live, now)
+        _wp_write(job_id, acct, v + 1, _wj.clean_doc(doc))
+    return _wp_reply(job_id, request, said)
+
+
+@app.get("/api/job/{job_id}/wallpanels_worksheet.csv")
+def wallpanels_worksheet_csv(job_id: str, request: Request):
+    """THE INTERNAL WORKSHEET: every room's walls with their arithmetic, the suggestion, every line and
+    what is behind it, the rates the job stands on, what holds the proposal. Never for the customer."""
+    from takeoff_engine import wp_job as _wj
+    _calcstate_guard(job_id)
+    s = _wp_state(job_id, request)
+    # it carries lengths measured off detected lines, so it ends like every export of quantities: a blank row, then
+    # the accuracy line (tests/test_accuracy_flag.py, section 6). The customer's proposal carries nothing of ours.
+    text = _wj.worksheet_csv(s["comp"], s["doc"], s["rates"], _display_name(s["job"]["path"]), s["differs"], s["follows"])
+    return Response(text.rstrip("\n") + "\n\n" + _csv_flag_line() + "\n",
+                    media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{_fl_doc_name(s["job"])}_wall_panel_worksheet.csv"'})
+
+
+def _wp_proposal_pages(out, p: dict) -> None:
+    """The proposal's pages, from the allow-list dict ONLY (wp_job.proposal): the company block, the
+    date, the project, the scope sentence, the price in figures and in words, the notes."""
+    def page():
+        tp = _ReportPage(out.new_page(width=612, height=792))
+        if p["company"]:
+            tp.insert_text((50, 36), p["company"][:80], fontsize=10)
+            if p["contact"]:
+                tp.insert_text((50, 46), p["contact"][:120], fontsize=7.5, color=(0.38, 0.38, 0.38))
+        return tp
+    st = {"tp": page(), "y": 78}
+
+    def put(text, x=50, size=10.0, width=512.0, lh=13, gap=0):
+        for seg in _report_cell_lines(text, width - (x - 50), fontsize=size):
+            if st["y"] > 730:
+                st["tp"], st["y"] = page(), 78
+            st["tp"].insert_text((x, st["y"]), seg, fontsize=size)
+            st["y"] += lh
+        st["y"] += gap
+    st["tp"].insert_text((50, st["y"]), "Proposal", fontsize=16)
+    st["tp"].insert_text((430, st["y"]), p["date"], fontsize=9)
+    st["y"] += 26
+    for lab, val in (("Project", p["project"]), ("Location", p["location"])):
+        if val:
+            st["tp"].insert_text((50, st["y"]), lab, fontsize=9, color=(0.38, 0.38, 0.38))
+            put(val, x=110)
+    st["y"] += 10
+    st["tp"].insert_text((50, st["y"]), "Scope", fontsize=9, color=(0.38, 0.38, 0.38))
+    st["y"] += 14
+    put(p["scope"], gap=12)
+    st["tp"].insert_text((50, st["y"]), "Price", fontsize=9, color=(0.38, 0.38, 0.38))
+    st["y"] += 16
+    put("$" + p["total"], size=13.0, lh=16)
+    put(p["total_words"], gap=12)
+    if p["notes"]:
+        st["tp"].insert_text((50, st["y"]), "Notes", fontsize=9, color=(0.38, 0.38, 0.38))
+        st["y"] += 14
+        for n in p["notes"]:
+            put("- " + n, size=9.0, lh=_REPORT_CELL_LH, gap=2)
+
+
+@app.get("/api/job/{job_id}/wallpanels_proposal.pdf")
+def wallpanels_proposal_pdf(job_id: str, request: Request):
+    """THE CUSTOMER'S PROPOSAL: the account's company block, the scope sentence, the price in figures
+    and in words, the account's notes - built from wp_job.PROPOSAL_KEYS and nothing else (no rate, no
+    days, no profit, no cost line). REFUSED (409, with the list of what is missing) while a blank of
+    the sentence, a rate or a quantity is not set."""
+    from takeoff_engine import wp_job as _wj
+    _calcstate_guard(job_id)
+    s = _wp_state(job_id, request)
+    if not s["comp"]["issue"]:
+        return JSONResponse({"detail": "The proposal is held until these are set.", "missing": s["comp"]["hold"]}, status_code=409)
+    # its date is the one the page showed before issuing (wp_job.compute): typed for the job, else the server's today
+    p = _wj.proposal(s["comp"], s["doc"], s["brand"].get("company"), s["brand"].get("contact"))
+    odd = sorted({c for v in p.values() for t in (v if isinstance(v, list) else [v]) for c in _wp_unprintable(t)})
+    if odd:      # every printed field was checked by name in the hold list; this is the last door, never a "?"
+        return JSONResponse({"detail": "The proposal is held until these are set.",
+                             "missing": ["a letter the proposal's font can not print: " + " ".join(odd)]}, status_code=409)
+    out = pymupdf.open()
+    _wp_proposal_pages(out, p)
+    return Response(out.tobytes(deflate=True, garbage=4), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{_fl_doc_name(s["job"])}_proposal.pdf"'})
+
+
+# ---- THE ACCOUNT'S WALL PANEL RATES (Settings) ----------------------------------------------------
+# One record per account (takeoff_engine/wp_settings.py): its own to see and to change; staff may see,
+# change or LOAD FROM A JSON FILE any account's (the page reads the file and posts its contents here -
+# the same record, the same checks). No rate has a default: an account with nothing set has no rates.
+class WpSettingsBody(BaseModel):
+    settings: dict
+    rev: int | None = None
+    account: str | None = None
+    how: str | None = None              # "file": the record was read from a JSON file
+
+
+class WpSettingsOfBody(BaseModel):
+    account: str
+
+
+def _wp_settings_user(request, account):
+    """Whose record this request reads or writes: the caller's own, or - for staff on a box with
+    accounts - the account named. Anyone else naming another account gets the same 404 as /api/users."""
+    me = _who(request)
+    if account in (None, "") or account == me:
+        return me
+    if not _is_staff(request) or not _users.load():
+        raise HTTPException(404, "not found")
+    name = _users.find(account)
+    if name is None:
+        raise HTTPException(404, "no such account")
+    return name
+
+
+def _wp_settings_payload(request, user) -> dict:
+    from takeoff_engine import wp_job as _wj, wp_settings as _ws
+    # a store that can not be read is said so (`problem`), never shown as a record with nothing set (critic wp-1, MAJOR-3)
+    rec, scope, why = _ws.state(user)
+    staff = _is_staff(request) and bool(_users.load())
+    sv = rec.get("saved")
+    if _users.load() and not staff and isinstance(sv, dict) and sv.get("by") and sv["by"] != _who(request):
+        # who saved it is another account's name (staff loaded or edited it): the account reads "staff", not the name
+        rec = dict(rec, saved=dict(sv, by="staff"))
+    return {"settings": rec, "scope": scope, "account": user, "me": _who(request), "staff": staff,
+            "problem": _wp_store_problem(request, why) if why else None,
+            "accounts": [u["user"] for u in _users.list_users()] if staff else None,
+            "view_only": _wp_view_only(request), "words": _ws.WORDS, "keys": list(_ws.KEYS),
+            "room_blanks": sorted(_wj.ROOM_BLANKS), "job_blanks": list(_wj.JOB_BLANKS), "field_blanks": list(_wj.FIELD_BLANKS)}
+
+
+@app.get("/api/wallpanels/settings")
+def wallpanels_settings_get(request: Request):
+    """This account's wall panel rates, sizes, price items, scope sentence and notes."""
+    return _wp_settings_payload(request, _who(request))
+
+
+@app.post("/api/wallpanels/settings/of")
+def wallpanels_settings_of(body: WpSettingsOfBody, request: Request):
+    """Staff: one named account's wall panel settings (the name travels in the body, not the address)."""
+    return _wp_settings_payload(request, _wp_settings_user(request, body.account))
+
+
+@app.post("/api/wallpanels/settings")
+def wallpanels_settings_post(body: WpSettingsBody, request: Request):
+    """Save one account's wall panel settings, whole: the caller's own, or (staff) the account named.
+    Held to wp_settings.clean - any problem refuses the save and lists every one; a save over a record
+    that changed since it was read is refused."""
+    from takeoff_engine import wp_settings as _ws
+    if _wp_view_only(request):
+        raise HTTPException(403, WP_VIEW_ONLY)
+    user = _wp_settings_user(request, body.account)
+    try:
+        _ws.save(user, body.settings, rev=body.rev, by=str(_who(request) or "this computer"),
+                 at=time.strftime("%Y-%m-%d %H:%M"), how="loaded from a file" if body.how == "file" else "typed")
+    except _ws.Stale:
+        return JSONResponse({"detail": WP_SETTINGS_STALE}, status_code=409)
+    except _ws.Damaged as e:
+        # THE STORE CAN NOT BE READ: nothing is written over it (the other accounts' records are still in a file a
+        # person can mend); it stays as it is and a copy of it was kept beside it
+        return JSONResponse({"detail": "Nothing was saved. " + _wp_store_problem(request, e.why, e.kept), "damaged": True}, status_code=503)
+    except _ws.Busy as e:
+        return JSONResponse({"detail": "Nothing was saved: " + str(e)}, status_code=503)
+    except ValueError as e:
+        return JSONResponse({"detail": "Nothing was saved.", "problems": str(e).split("\n")}, status_code=422)
+    except ArithmeticError:
+        return JSONResponse({"detail": "Nothing was saved.", "problems": ["a number in these settings is too large or too long to read"]},
+                            status_code=422)
+    return _wp_settings_payload(request, user)
+
+
+# THE FLOORING ROWS OF A TAKEOFF are the server's (ruling P): an approve drops whatever flooring rows
+# the browser sent and carries the account's own rows for the page, unpriced (ruling T). On a shared
+# sheet they carry the account that made them, and another account reading the export does not see
+# them (ruling S).
+_FL_ROW_RX = re.compile(r"^(Flooring|Base/molding|Integral base|Waste|Wall area|Transition strips) \u2014 ")
+
+
+def _fl_is_row(it) -> bool:
+    return isinstance(it, dict) and (it.get("src") == "flooring" or bool(_FL_ROW_RX.match(str(it.get("label") or ""))))
+
+
+def _fl_export_items(job_id: str, items: list, request) -> list:
+    """An export's rows as THIS account may read them: on a shared sheet, no flooring row of another
+    account (and none from a build that did not mark whose it was)."""
+    if not _calcstate_shared(job_id):
+        return items
+    me = _fl_acct(request)
+    return [it for it in items or [] if not _fl_is_row(it) or (it.get("src") == "flooring" and it.get("fl_acct") == me)]
+
+
 @app.get("/api/job/{job_id}/bidsheet.csv")
 def bidsheet_csv(job_id: str, request: Request, ignore: list[str] = Query([])):
     """Every approved page of this job filed onto this seat's bid sheet, in
@@ -5790,6 +9624,7 @@ def bidsheet_csv(job_id: str, request: Request, ignore: list[str] = Query([])):
     line names listed at the end (never dropped). `ignore` repeats
     "page:label" for the sheet contributions the operator unticked on the
     cross-sheet panel, so the CSV agrees with the screen."""
+    _FL_READER.set(_fl_acct(request))
     job = JOBS.get(job_id) or _404()
     jd = _job_dir(job_id)
     pages = sorted(int(f.name[1:].split("_")[0]) for f in jd.glob("p*_elements.json"))
@@ -5811,6 +9646,9 @@ def bidsheet_csv(job_id: str, request: Request, ignore: list[str] = Query([])):
     ew_notes = [_ew_note(job_id, pno) for pno in _ew_removed_pages(job_id)]
     res, scope = _bid_build(job_id, pages, _who(request), ignore)
     text = _bidsheet.to_csv(res, _display_name(job["path"]), scope)
+    # the scale's state on each approved page, said in the header (scale verdict S5): one reading, or readings that
+    # disagree on a page approved before they were found to
+    old += _scale_flag_words(job_id, pages)
     if old or ew_notes:
         # an approved page whose scale changed since, or the cut / fill rows in no approved page: said in the header, above
         # every number (critic 17 and 19, RISK-3; critic 22, RISK-2)
@@ -6056,7 +9894,8 @@ def analyze_page(job_id: str, page: int, fresh: bool = False):
     rf = _job_dir(job_id) / f"p{page}_result.json"
     if rf.exists():
         res = json.loads(rf.read_text())
-        det = res.get("scale") or {}
+        # the scale IN FORCE (never the engine's reading on a sheet whose readings disagree, CRITIC-scale-3)
+        det = _page_scale(job_id, page, res) or {}
         ft_per_in = det.get("ft_per_paper_inch")
         rows = []
         for st in res["styles"][:28]:
@@ -6888,9 +10727,9 @@ def page_runs(job_id: str, page: int, body: RunsBody):
         raise HTTPException(404, "run detect first")
     res = json.loads(rf.read_text())
     det = _page_scale(job_id, page, res)
+    # THE SERVER'S SCALE DECIDES (CRITIC-scale-3 MINOR 2): a scale the client sends is checked against it, never used
+    _scale_sent_check(body.scale_ft_per_in, det)
     fpp = det["ft_per_paper_inch"] / 72.0 if det else 0.0
-    if body.scale_ft_per_in is not None and float(body.scale_ft_per_in) > 0:
-        fpp = float(body.scale_ft_per_in) / 72.0      # the scale in force on screen
     sids = set(int(s) for s in body.style_ids)
     chains = list(res.get("chains") or [])
     if body.chains:
@@ -6960,7 +10799,9 @@ def page_runs(job_id: str, page: int, body: RunsBody):
         out["systems"].append({"code": code, "families": g["families"],
                                "runs": [r["id"] for r in g["runs"]],
                                "structures_on_runs": g["structures_on_runs"],
-                               "length_ft": round(sum(r["length_ft"] or 0 for r in g["runs"]), 1)})
+                               # null with no scale in force: a 0 here would read as measured (CLAUDE.md 5,
+                               # "0.0 is not None"; CRITIC-scale-4 MINOR 2)
+                               "length_ft": (round(sum(r["length_ft"] or 0 for r in g["runs"]), 1) if det else None)})
     if out["runs"]:
         out["notes"] = [n for n in out["notes"] if n != "no lines in the picked families"]
     return JSONResponse(out)
@@ -7711,6 +11552,17 @@ class RoomPickBody(BaseModel):
     # browser until Approve; a pick is on disk). Omitted = what the server
     # has: the reviewer's recorded pick, else the engine's reading.
     scale_ft_per_in: float | None = None
+    # lines ticked by hand (chain ids): a wall although its line type is not
+    # showing / not a wall although it is (rooms.wall_raster)
+    wall_add: list[int] | None = None
+    wall_drop: list[int] | None = None
+    # the work-area box the click sits in [x0, y0, x1, y1] pt: the fill stays inside it
+    zone: list[float] | None = None
+    box: list[float] | None = None          # set by the route: the fill's own extent, for its scale
+    # walls DRAWN by hand [[x0,y0,x1,y1], ...] pt: a partition the sheet draws in no detected line
+    # (or not at all). Wall for the fill only - unlike a closed gap it is not an opening, not a
+    # transition, not a takeoff line and in no export; saved with the sheet's flooring state
+    wall_lines: list[list[float]] | None = None
 
 
 def _scale_sites(job: dict, job_id: str, page: int) -> list:
@@ -7721,7 +11573,7 @@ def _scale_sites(job: dict, job_id: str, page: int) -> list:
     from takeoff_engine.scale_detect import _caption_sites, _page_linework
 
     cache = _job_dir(job_id) / f"p{page}_scale_sites.json"
-    key = f"{job.get('mtime')}|1"
+    key = f"{job.get('mtime')}|3"
     try:
         d = json.loads(cache.read_text(encoding="utf-8"))
         if d.get("key") == key:
@@ -7729,6 +11581,7 @@ def _scale_sites(job: dict, job_id: str, page: int) -> list:
     except (OSError, ValueError, AttributeError):
         pass
     sites: list = []
+    words: list = []
     try:
         doc = pymupdf.open(job["path"])
         try:
@@ -7743,7 +11596,8 @@ def _scale_sites(job: dict, job_id: str, page: int) -> list:
     out = [{"fpi": float(s["fpi"]), "text": str(s["text"]),
             "box": [round(float(v), 1) for v in s["box"]],
             "rule": ([round(float(v), 1) for v in s["rule"][:3]] if s.get("rule") else None),
-            "compound": bool(s.get("compound"))} for s in sites]
+            "compound": bool(s.get("compound")),
+            "title": _site_title(words, s), "nts": _site_nts(words, s)} for s in sites]
     try:
         cache.write_text(json.dumps({"key": key, "sites": out}), encoding="utf-8")
     except OSError:
@@ -7751,6 +11605,190 @@ def _scale_sites(job: dict, job_id: str, page: int) -> list:
     return out
 
 
+def _site_title(words: list, s: dict) -> str:
+    """The VIEW TITLE printed over a scale caption's title bar ("FLOOR PLAN", "STOREFRONT ELEVATION"):
+    the words in the band just above the bar (measured on the client's kitchen sheet, its full bid set
+    and Belle A1.00: the title's baseline sits 39-41 pt above the bar, the scale text just below it),
+    across the bar's own width. "" when none is printed."""
+    try:
+        if s.get("rule"):
+            rx0, rx1, ry = float(s["rule"][0]), float(s["rule"][1]), float(s["rule"][2])
+        else:
+            rx0, _y0, rx1, ry = (float(v) for v in s["box"])
+        near = [w for w in words if rx0 - 5 <= float(w[0]) <= rx1 + 5 and ry - 50 <= float(w[1]) <= ry - 2]
+        near.sort(key=lambda w: (round(float(w[1])), float(w[0])))
+        return " ".join(str(w[4]) for w in near)[:120]
+    except Exception:            # noqa: BLE001 - a title is a hint, never a reason to fail the sites
+        return ""
+
+
+def _site_nts(words: list, s: dict) -> bool:
+    """A caption printed with NOT TO SCALE on its own line (Belle A1.00: "1/8\" = 1'-0\"" and "NOT TO SCALE"
+    printed over each other at y 1568): the view does not stand on that number, so it is never a room's default."""
+    try:
+        x0, y0, x1, y1 = (float(v) for v in s["box"])
+        near = {str(w[4]).upper().strip(".,") for w in words
+                if x0 - 60 <= float(w[0]) <= x1 + 60 and y0 - 6 <= float(w[1]) <= y1 + 6}
+        return {"NOT", "SCALE"} <= near or "NTS" in near
+    except Exception:            # noqa: BLE001 - a hint, never a reason to fail the sites
+        return False
+
+
+_PLAN_TITLE = re.compile(r"\bPLANS?\b", re.I)
+_NOT_ROOM_TITLE = re.compile(r"\b(ELEVATIONS?|SECTIONS?|DETAILS?)\b", re.I)
+
+
+def _room_view_scale(sites: list, x: float, y: float, box: "list | None" = None, what: str = "room") -> dict:
+    """WHICH PRINTED SCALE A ROOM AT (x, y) WAS DRAWN AT, on a sheet that
+    prints more than one. -> {site, check, why, choices, multi}.
+
+    `what`: the thing being placed, for the sentences only ("room"; "wall" for a wall panel wall -
+    the same rule, critic wp-1 MAJOR-2). A wall has no row to confirm or choose a scale on, so its
+    sentences leave those asks out; the decision is the same one.
+
+    A view's title and its scale are printed UNDER the view (general drafting
+    practice - an INFERENCE this code rests on, said on every row it decides).
+    So the candidates are the caption bars below the point. The room is
+    CLEARLY inside one titled view when the bar that spans it is also the
+    nearest bar below it; then that view's scale, no flag. Otherwise - no bar
+    spans it, or another view's bar lies nearer (a short caption printed off
+    to the left of a wide plan) - the room is measured at the NEAREST title
+    below it and `check` is set: the row turns amber, "check the scale of this
+    room", with every other printed scale one click away. Never silent either
+    way (critic 1, M4): on a tenant-improvement plan the spanning bar was a
+    1/2" elevation's (4x small); on the same client's existing-conditions sheet
+    no bar spans the 3/16" plan's rooms (9x large at the sheet's 1/16"); and a
+    house set's RV garage, spanned by its plan's bar but with an inset's bar
+    nearer, cannot be told apart from those by the bars alone - all three are
+    flagged now. Nearest = distance from the point to the bar segment, so a
+    scale printed in a title block far to one side loses to a view title
+    under the room. A sheet that prints one scale (or none) is not decided
+    here: multi False, nothing changes."""
+    from takeoff_engine.scale_detect import _RULE_BELOW
+
+    def bar(s):
+        if s.get("rule"):
+            return float(s["rule"][0]), float(s["rule"][1]), float(s["rule"][2])
+        rx0, _y0, rx1, ry = s["box"]
+        return float(rx0), float(rx1), float(ry)
+
+    good = [s for s in (sites or []) if not s.get("compound") and _sane_ft(s.get("fpi"))]
+    seen, choices = set(), []
+    for s in good:
+        k = round(float(s["fpi"]), 6)
+        if k not in seen:
+            seen.add(k)
+            choices.append({"fpi": float(s["fpi"]), "text": str(s.get("text") or "")})
+    out = {"site": None, "check": False, "why": None, "choices": choices, "multi": len(choices) >= 2}
+    if not out["multi"]:
+        return out
+    # the asks a room's row can answer (a wall has no such row: `what`)
+    _confirm = " - confirm it once" if what == "room" else ""
+    _choose = " - choose its scale" if what == "room" else ""
+    # A ROOM IS A PLAN-VIEW OBJECT (ruling V; critic 3, M1: the kitchen's customer area defaulted to the
+    # 1/2" STOREFRONT ELEVATION, -54 %). The candidates are the views whose title says PLAN (FLOOR
+    # PLAN, EXISTING FLOOR PLAN, KEY PLAN ...); only when the sheet titles none that way, any title -
+    # except an ELEVATION, SECTION or DETAIL, which is never a room's default. That a room's view is
+    # titled PLAN is an INFERENCE from general drafting practice (the floor plan of a set is titled
+    # so), not read off any sheet's legend. Every printed scale stays a choice.
+    # a caption printed NOT TO SCALE is never a room's default (it stays a choice)
+    good = [s2 for s2 in good if not s2.get("nts")]
+    plans = [s2 for s2 in good if _PLAN_TITLE.search(str(s2.get("title") or ""))]
+    if plans:
+        good, pool_said = plans, "the view titles that say PLAN"
+    else:
+        good = [s2 for s2 in good if not _NOT_ROOM_TITLE.search(str(s2.get("title") or ""))]
+        pool_said = f"the view titles (no title on this sheet says PLAN; elevations, sections and details are never a {what}'s default)"
+    if not good:
+        out["check"] = True
+        out["why"] = ("every scale on this sheet is an elevation's, a section's or a detail's"
+                      + (" - choose this room's scale" if what == "room" else ""))
+        return out
+    if len({round(float(s2["fpi"]), 6) for s2 in good}) == 1:
+        s1 = good[0]
+        out["site"] = s1
+        out["check"] = True
+        out["why"] = (f'{s1.get("text")}: the only scale among {pool_said}' + (f' ("{s1.get("title")}")' if s1.get("title") else "")
+                      + " - an inference from drafting practice" + ("; confirm it once" if what == "room" else ""))
+        return out
+    # THE ROOM, NOT THE CLICK, AND ANY SIDE OF IT (slice 3, 2026-10-02). A caption is not always under
+    # its view: on an existing-conditions sheet the plan's title sits BESIDE the plan. With the room's
+    # outline known, the default is the view title whose bar lies NEAREST the outline in any direction
+    # (rectangle-to-segment distance). When another printed scale's title is within 20 % of that
+    # distance the two are equally plausible: the one BELOW the room wins (a view's title and scale sit
+    # under the view - general drafting practice, an inference); if both or neither are below, the
+    # room is CONTESTED and says so. On such a sheet EVERY room is flagged until the estimator confirms
+    # it once: views can not be told apart reliably yet.
+    if box and len(box) == 4:
+        bx0, by0, bx1, by1 = (float(v) for v in box)
+        bx0, bx1 = sorted((bx0, bx1))
+        by0, by1 = sorted((by0, by1))
+        best: dict = {}
+        for s2 in good:
+            rx0, rx1, ry = bar(s2)
+            dx = 0.0 if (rx0 <= bx1 and rx1 >= bx0) else min(abs(rx0 - bx1), abs(bx0 - rx1))
+            dy = 0.0 if by0 <= ry <= by1 else min(abs(ry - by0), abs(ry - by1))
+            d = math.hypot(dx, dy)
+            k = round(float(s2["fpi"]), 6)
+            if k not in best or d < best[k][0]:
+                best[k] = (d, ry >= by1 - _RULE_BELOW, s2)
+        ranked = sorted(best.values(), key=lambda t: t[0])
+        out["check"] = True
+        d1 = ranked[0][0]
+        near = [t for t in ranked if t[0] <= 1.2 * d1 + 1e-6]
+        txt = lambda t: str(t[2].get("text"))
+        if len(near) == 1:
+            out["site"] = ranked[0][2]
+            out["why"] = (f"{txt(ranked[0])}: the view title nearest this {what} ({d1:.0f} pt from its outline; "
+                          f"the next printed scale, {txt(ranked[1])}, is {ranked[1][0]:.0f} pt away)" + _confirm)
+            return out
+        below_near = [t for t in near if t[1]]
+        if len(below_near) == 1:
+            w = below_near[0]
+            o = next(t for t in near if t is not w)
+            out["site"] = w[2]
+            out["why"] = (f"{txt(w)}: two view titles are about equally near this {what} ({w[0]:.0f} and {o[0]:.0f} pt"
+                          f" from its outline); this one is below it (a view's title sits under the view: general"
+                          f" drafting practice, an inference) - {txt(o)} is the other" + _confirm)
+            return out
+        o = near[1]
+        out["site"] = near[0][2]
+        out["contested"] = {"text": txt(o), "fpi": float(o[2]["fpi"])}
+        out["why"] = (f"{txt(near[0])}: contested - {txt(o)} is as near this {what} ({near[0][0]:.0f} and {o[0]:.0f} pt"
+                      f" from its outline) and " + ("both are below it" if below_near else "neither is below it")
+                      + _choose)
+        return out
+    below = []
+    for s in good:
+        rx0, rx1, ry = bar(s)
+        if ry < y - _RULE_BELOW:
+            continue
+        dx = 0.0 if rx0 <= x <= rx1 else min(abs(x - rx0), abs(x - rx1))
+        slack = max(40.0, 0.1 * (rx1 - rx0))
+        spans = rx0 - slack <= x <= rx1 + slack
+        below.append((math.hypot(dx, ry - y), ry - y, spans, s))
+    if not below:
+        out["check"] = True
+        out["why"] = f"no view title is printed below this {what}"
+        return out
+    nearest = min(below, key=lambda b: b[0])
+    spanning = [b for b in below if b[2]]
+    winner = min(spanning, key=lambda b: b[1]) if spanning else None
+    if winner is not None and winner[3] is nearest[3]:
+        out["site"] = winner[3]
+        out["check"] = True
+        out["why"] = f'{winner[3].get("text")}: the view title under this {what}{_confirm} (the sheet prints several scales)'
+        return out
+    out["site"] = nearest[3]
+    out["check"] = True
+    out["why"] = (f'{nearest[3].get("text")}: the nearest view title below this {what} - '
+                  + (f"another view's title is printed between the {what} and the title bar that spans it"
+                     if winner is not None else f"no title bar spans the {what}")
+                  + " (a view's title and scale sit under the view: general drafting practice, an inference)")
+    return out
+
+
+# the caption view a POINT sits in (the /scale/at offers, dev): a room's own view is decided by _room_view_scale
 def _site_scale_at(sites: list, x: float, y: float) -> dict | None:
     """The caption site whose view a point sits in: the same assignment
     scale_detect._governance makes per stroke - the caption BENEATH the
@@ -7788,41 +11826,112 @@ def _site_scale_at(sites: list, x: float, y: float) -> dict | None:
     return best
 
 
-def _room_pick_scale(job: dict, job_id: str, page: int, res: dict,
-                     body: "RoomPickBody") -> tuple:
-    """(ft per paper inch, who set it) for a room pick at (body.x, body.y).
+def _scale_sent_check(sent, det) -> None:
+    """A route that measures takes the server's scale in force, never the client's (CRITIC-scale-3 MINOR 2). A client
+    that sends one is refused, writing and answering nothing, when it is not that scale: a stale tab, or an API caller
+    on a page whose readings disagree (no scale in force) would otherwise get feet the server does not stand behind."""
+    try:
+        f = float(sent) if sent is not None else 0.0
+    except (TypeError, ValueError):
+        f = 0.0
+    if not (f > 0):
+        return
+    now = float((det or {}).get("ft_per_paper_inch") or 0)
+    if now <= 0:
+        raise HTTPException(409, f'This sheet has no scale in force (its readings disagree, or it has none), so nothing '
+                                 f'is measured at 1" = {_ft(f)} ft. Choose or set the scale on the sheet, then reload.')
+    if abs(f - now) > 1e-4 * now:
+        raise HTTPException(409, f'The scale this page sent (1" = {_ft(f)} ft) is not the sheet scale in force '
+                                 f'(1" = {_ft(now)} ft). Reload the page.')
 
-    THE SCALE IN FORCE, in the order the rest of the product uses it: the
-    scale the review UI has on screen (its typed box or its caption pick),
-    else the reviewer's recorded pick (p<N>_scale.json), else the engine's
-    reading. Then ONE override: a click inside an INSET - a view whose own
-    printed caption governs a different value from the sheet's default
-    (house set A2.1: the FLOORING PLAN at 1/8" beside the 1/4" plan) -
-    takes that caption's value, because the drawing under the click was
-    drawn at it. The override needs an engine default to differ FROM: on a
-    page the engine read no scale for, the typed scale stands everywhere.
-    A refused (out of band) on-screen number is ignored with the same rule
-    the approve route applies, never substituted silently: the reply's
-    `scale_by` says what was used."""
+
+def _room_scale_info(job: dict, job_id: str, page: int, res: dict, body: "RoomPickBody") -> dict:
+    """The scale a room at (body.x, body.y) is measured at, with its reason.
+    -> {ft, by, why, check, multi, choices: [{fpi, text, ft}]}.
+
+    Starts from the scale in force on the sheet (on screen, else the reviewer's
+    record, else the engine's reading - _page_scale, untouched). On a sheet
+    that prints more than one scale, _room_view_scale names the view: its
+    printed value is applied AS A RATIO to the scale in force over the sheet's
+    printed reading, so a sheet calibrated by hand (a reduced print) carries
+    its correction into every view; with no printed reading to ratio against,
+    the scale in force stands and the row is flagged."""
     ft, by = None, None
-    sent = _sane_ft(body.scale_ft_per_in) if body.scale_ft_per_in is not None else None
-    if sent:
-        ft, by = sent, "on screen"
-    else:
-        det = _page_scale(job_id, page, res)
-        if det and _sane_ft(det.get("ft_per_paper_inch")):
-            ft = float(det["ft_per_paper_inch"])
-            by = "reviewer" if det.get("set_by") == _BY_REVIEWER else "engine"
+    det = _page_scale(job_id, page, res)
+    # the server's scale decides; one sent by the page is checked against it, never used (CRITIC-scale-3 MINOR 2)
+    _scale_sent_check(body.scale_ft_per_in, det)
+    if det and _sane_ft(det.get("ft_per_paper_inch")):
+        ft = float(det["ft_per_paper_inch"])
+        by = "reviewer" if det.get("set_by") == _BY_REVIEWER else "engine"
     eng = (res.get("scale") or {}).get("ft_per_paper_inch")
     try:
         eng = float(eng) if eng else None
     except (TypeError, ValueError):
         eng = None
-    if eng:
-        site = _site_scale_at(_scale_sites(job, job_id, page), float(body.x), float(body.y))
-        if site and abs(float(site["fpi"]) - eng) > 1e-6 and _sane_ft(site["fpi"]):
-            return float(site["fpi"]), f"inset caption {site['text']}"
-    return ft, by
+    try:
+        sites = _scale_sites(job, job_id, page)
+    except Exception:            # noqa: BLE001 - no captions read: one scale, no choices (as before the rule moved out)
+        sites = []
+    return _room_scale_decide(ft, by, eng, sites, float(body.x), float(body.y), getattr(body, "box", None))
+
+
+def _room_scale_decide(ft, by, eng, sites: list, x: float, y: float, box: "list | None" = None, what: str = "room") -> dict:
+    """THE RULE of _room_scale_info, on its own (moved out unchanged, critic wp-1 MAJOR-2): given the sheet's scale in
+    force (`ft`, who set it `by`), the engine's printed reading (`eng`) and the sheet's caption sites, the scale the
+    thing at (x, y) with the outline extent `box` is measured at. ONE RULE FOR A FLOORING ROOM AND FOR A WALL PANEL
+    WALL: a wall goes through this same function with its own extent (`what="wall"` changes the sentences only)."""
+    info = {"ft": ft, "by": by, "why": None, "check": False, "multi": False, "choices": []}
+    if ft is None:
+        # NO SCALE IN FORCE (readings disagree, or none): no inset caption becomes a value either - every printed
+        # caption is an offer (CRITIC-scale-3 MINOR 1; _scale_at_offers says it); the room is measured in pt only
+        try:
+            v0 = _room_view_scale(sites, x, y, box, what)
+        except Exception:
+            v0 = {"multi": False, "choices": []}
+        info["multi"] = bool(v0.get("multi"))
+        info["choices"] = [dict(c, ft=None) for c in v0.get("choices") or []]
+        info["check"] = True
+        info["why"] = "no scale is in force on this sheet: the printed captions are offers, not values"
+        return info
+    try:
+        v = _room_view_scale(sites, x, y, box, what)
+    except Exception:
+        return info
+    if not v["multi"]:
+        return info
+    # each printed value as the scale it means on THIS print
+    k = (ft / eng) if (ft and eng) else (1.0 if not ft else None)
+    info["multi"] = True
+    info["choices"] = [dict(c, ft=(c["fpi"] * k if k else None)) for c in v["choices"]]
+    info["check"] = bool(v["check"])
+    info["why"] = v["why"]
+    site = v["site"]
+    if site is None:
+        return info
+    if k is None:
+        # the engine read no printed scale to ratio against: the scale in force stands, flagged
+        info["check"] = True
+        info["why"] = (f"{v['why']}; the sheet's scale was set by hand and the engine read no printed scale "
+                       "to compare it with, so the scale in force is used")
+        return info
+    info["site_fpi"] = float(site["fpi"])
+    info["site_text"] = str(site.get("text") or "") or None
+    info["contested"] = v.get("contested")
+    room_ft = float(site["fpi"]) * k
+    if eng and abs(float(site["fpi"]) - eng) <= 1e-6 and ft:
+        room_ft = ft                     # the sheet's own view: the scale in force, exactly
+    else:
+        by = f"inset caption {site.get('text')}"
+    info["ft"], info["by"] = room_ft, by
+    return info
+
+
+def _room_pick_scale(job: dict, job_id: str, page: int, res: dict,
+                     body: "RoomPickBody") -> tuple:
+    """(ft per paper inch, who set it): _room_scale_info without its reasons (the /scale/at route's answer);
+    (None, None) with no scale in force (CRITIC-scale-3: the server's scale decides, an inset is an offer)."""
+    info = _room_scale_info(job, job_id, page, res, body)
+    return info["ft"], (info["by"] if info["ft"] else None)
 
 
 @app.post("/api/job/{job_id}/page/{page}/rooms/pick")
@@ -7831,7 +11940,15 @@ def rooms_pick(job_id: str, page: int, body: RoomPickBody):
     styles, door openings bridged. takeoff_engine/rooms.py has the method
     and its limits; this route only feeds it the result, the page's words,
     the scale in force (see _room_pick_scale) and a cache key. Needs a
-    detection result: the walls ARE the chains."""
+    detection result: the walls ARE the chains. Read-only: a room joins the
+    job only through the flooring act room_pick, measured the same way."""
+    out = _rooms_pick_core(job_id, page, body)
+    if isinstance(out, dict):
+        out.pop("_sinfo", None)
+    return out
+
+
+def _rooms_pick_core(job_id: str, page: int, body: RoomPickBody) -> dict:
     from takeoff_engine import rooms as _rooms
     job = JOBS.get(job_id) or _404()
     f = _job_dir(job_id) / f"p{page}_result.json"
@@ -7856,11 +11973,13 @@ def rooms_pick(job_id: str, page: int, body: RoomPickBody):
                 M = pg.rotation_matrix
                 words = [tuple(pymupdf.Rect(w[:4]) * M) + tuple(w[4:]) for w in words]
             strokes = _page_layer_strokes(job, job_id, page, pg)
+            arcs = _page_arc_units(job, job_id, page, pg)
         finally:
             doc.close()
     except Exception:
         words = []
         strokes = []
+        arcs = None
     try:
         stamp = f.stat().st_mtime
     except OSError:
@@ -7882,17 +12001,158 @@ def rooms_pick(job_id: str, page: int, body: RoomPickBody):
                                              float(pg_meta.get("width_pt") or 0),
                                              float(pg_meta.get("height_pt") or 0), dpi)
     layered = anno is not None or extra is not None
+    add = set(int(v) for v in (body.wall_add or [])[:2000]) or None
+    drop = set(int(v) for v in (body.wall_drop or [])[:2000]) or None
     key = _rooms._cache_key(job_id, page, dpi, styles, stamp,
-                            anno_tag=("layers", tuple(sorted(wall_layers))) if layered else None)
-    scale, scale_by = _room_pick_scale(job, job_id, page, res, body)
+                            anno_tag=("layers", tuple(sorted(wall_layers))) if layered else None,
+                            add=add, drop=drop)
+    sinfo = _room_scale_info(job, job_id, page, res, body)
+    zone = body.zone if body.zone and len(body.zone) == 4 else None
+    wlines = [c for c in (body.wall_lines or [])[:500] if isinstance(c, list) and len(c) == 4]
+    seal = list(body.closures or []) + wlines
     try:
-        return _rooms.pick_room(res, words, float(body.x), float(body.y),
-                                styles, dpi, cache_key=key,
-                                closures=body.closures or None,
-                                scale=scale, scale_by=scale_by,
-                                anno=anno, extra=extra)
+        out = _rooms.pick_room(res, words, float(body.x), float(body.y),
+                               styles, dpi, cache_key=key,
+                               closures=seal or None,
+                               # 0.0 = no scale in force: pt only, never the engine's withdrawn reading (CRITIC-scale-3)
+                               scale=sinfo["ft"] if sinfo["ft"] else 0.0, scale_by=sinfo["by"],
+                               anno=anno, extra=extra, arcs=arcs,
+                               add=add, drop=drop, zone=zone)
+        # on a sheet that prints several scales the room's view is read off its OUTLINE (ruling L):
+        # measured again at that scale when it differs from the click's
+        if isinstance(out, dict) and out.get("ok") and sinfo.get("multi") and out.get("polygon"):
+            xs = [p[0] for p in out["polygon"]]
+            ys = [p[1] for p in out["polygon"]]
+            body.box = [min(xs), min(ys), max(xs), max(ys)]
+            s2 = _room_scale_info(job, job_id, page, res, body)
+            if s2.get("ft") and sinfo.get("ft") and abs(s2["ft"] - sinfo["ft"]) > 1e-9:
+                out = _rooms.pick_room(res, words, float(body.x), float(body.y),
+                                       styles, dpi, cache_key=key,
+                                       closures=seal or None,
+                                       scale=s2["ft"], scale_by=s2["by"],
+                                       anno=anno, extra=extra, arcs=arcs,
+                                       add=add, drop=drop, zone=zone)
+            sinfo = s2
     except ValueError as e:
         raise HTTPException(422, str(e))
+    # the scale this room was measured at and WHY, every other printed scale
+    # with it, and whether the row must ask the estimator to check it
+    if isinstance(out, dict) and out.get("ok"):
+        out["scale_verdict"] = {k2: sinfo[k2] for k2 in ("why", "check", "multi", "choices")}
+        out["walls_by_hand"] = {"add": len(add or ()), "drop": len(drop or ()), "drawn": len(wlines)}
+        out["closures_used"] = len(body.closures or [])
+        out["zone"] = zone
+        out["_sinfo"] = sinfo
+    return out
+
+
+class RoomScaleBody(BaseModel):
+    x: float
+    y: float
+    scale_ft_per_in: float | None = None
+    box: list[float] | None = None          # the room's outline extent [x0, y0, x1, y1] pt (ruling L)
+
+
+@app.post("/api/job/{job_id}/page/{page}/rooms/scale")
+def rooms_scale(job_id: str, page: int, body: RoomScaleBody):
+    """The scale a room drawn by hand is measured at (its centre's view):
+    the same decision a pick makes (_room_scale_info), with its reason."""
+    job = JOBS.get(job_id) or _404()
+    f = _job_dir(job_id) / f"p{page}_result.json"
+    res: dict = {}
+    if f.exists():
+        try:
+            res = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            res = {}
+    info = _room_scale_info(job, job_id, page, res,
+                            RoomPickBody(x=body.x, y=body.y, scale_ft_per_in=body.scale_ft_per_in, box=body.box))
+    return {"ft_per_paper_inch": info["ft"], "scale_by": info["by"],
+            "scale_verdict": {k2: info[k2] for k2 in ("why", "check", "multi", "choices")}}
+
+
+class RoomOpeningsBody(BaseModel):
+    polygon: list[list[float]]
+    styles: list[int] | None = None
+    dpi: int = 100
+    wall_add: list[int] | None = None       # lines ticked as wall / not a wall by hand
+    wall_drop: list[int] | None = None
+
+
+@app.post("/api/job/{job_id}/page/{page}/rooms/openings")
+def rooms_openings(job_id: str, page: int, body: RoomOpeningsBody):
+    """The door openings the engine finds ON a room outline's edges - for an
+    outline traced by hand (corners only), which has no fill to bridge doors
+    with. Same bridges and widths as a pick (rooms.sealed_walls); a bridge
+    counts when its midpoint lies within a wall's thickness of an edge."""
+    from takeoff_engine import rooms as _rooms
+    job = JOBS.get(job_id) or _404()
+    f = _job_dir(job_id) / f"p{page}_result.json"
+    if not f.exists():
+        raise HTTPException(409, "run Detect on this page first - the doors are found in its detected lines")
+    try:
+        res = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(500, "could not read this page's detection result")
+    poly = [(float(p[0]), float(p[1])) for p in (body.polygon or []) if isinstance(p, (list, tuple)) and len(p) >= 2]
+    if len(poly) < 3:
+        raise HTTPException(422, "an outline needs at least 3 corners")
+    dpi = max(50, min(200, int(body.dpi or 100)))
+    # the doors on an outline do not depend on which line types happen to be showing (ruling M; critic 2,
+    # M2: one traced room listed an opening in one run and none in another): read with every line type
+    styles = None
+    if len(poly) > 2000:
+        raise HTTPException(413, "an outline of more than 2,000 corners")
+    try:
+        stamp = f.stat().st_mtime
+    except OSError:
+        stamp = 0
+    add = set(int(v) for v in (body.wall_add or [])[:2000]) or None
+    drop = set(int(v) for v in (body.wall_drop or [])[:2000]) or None
+    key = _rooms._cache_key(job_id, page, dpi, styles, stamp, add=add, drop=drop)
+    arcs = None
+    try:
+        doc = pymupdf.open(job["path"])
+        try:
+            arcs = _page_arc_units(job, job_id, page, doc[page])
+        finally:
+            doc.close()
+    except Exception:
+        arcs = None
+    return _rooms_openings_core(job, job_id, page, res, poly, body.wall_add, body.wall_drop, dpi)
+
+
+def _rooms_openings_core(job: dict, job_id: str, page: int, res: dict, poly: list, wall_add=None, wall_drop=None, dpi: int = 100) -> dict:
+    from takeoff_engine import rooms as _rooms
+    poly = [(float(p[0]), float(p[1])) for p in poly]
+    f = _job_dir(job_id) / f"p{page}_result.json"
+    try:
+        stamp = f.stat().st_mtime
+    except OSError:
+        stamp = 0
+    styles = None
+    add = set(int(v) for v in (wall_add or [])[:2000]) or None
+    drop = set(int(v) for v in (wall_drop or [])[:2000]) or None
+    key = _rooms._cache_key(job_id, page, dpi, styles, stamp, add=add, drop=drop)
+    arcs = None
+    try:
+        doc = pymupdf.open(job["path"])
+        try:
+            arcs = _page_arc_units(job, job_id, page, doc[page])
+        finally:
+            doc.close()
+    except Exception:
+        arcs = None
+    try:
+        _wall, bridges = _rooms.sealed_walls(res, styles, dpi, key, arcs=arcs, add=add, drop=drop)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    # doors on this outline whose swing could not be measured get no
+    # opening of their own: listed, for the estimator to add by hand
+    return {"openings": _rooms.openings_on_outline(poly, bridges),
+            "unplaced": _rooms.unplaced_near(poly, getattr(bridges, "unplaced", []))}
+
+
 
 
 # (job id, page) -> (pdf mtime, [(layer, pts), ...]): the page's stroke units
@@ -7900,6 +12160,37 @@ def rooms_pick(job_id: str, page: int, body: RoomPickBody):
 # extract_strokes costs seconds on a dense sheet; a dozen picks reuse one.
 _PAGE_STROKES: "OrderedDict" = OrderedDict()
 _PAGE_STROKES_MAX = 6
+
+
+_PAGE_ARCS: "OrderedDict[tuple, tuple]" = OrderedDict()
+_PAGE_ARCS_MAX = 6
+
+
+def _page_arc_units(job: dict, job_id: str, page: int, pg) -> list:
+    """Every stroke unit on the page, in the rotated frame the chains use:
+    the polylines extract.door_swings found the doors on. rooms.door_bridges
+    measures each swing's two ends off its own arc here when no chain
+    carries it (the chain stage drops short arcs: a client's reduced sheet,
+    2 of its 2 doors), and finds the drawn leaf (a straight stroke of one door width from
+    the hinge) among them. Cached per job page and file mtime."""
+    key = (job_id, page)
+    mtime = job.get("mtime")
+    hit = _PAGE_ARCS.get(key)
+    if hit and hit[0] == mtime:
+        _PAGE_ARCS.move_to_end(key)
+        return hit[1]
+    out = []
+    try:
+        for u in extract_strokes(pg):
+            if len(u.pts) < 2:
+                continue
+            out.append({"points": u.pts.astype(float).tolist()})
+    except Exception:
+        out = []
+    _PAGE_ARCS[key] = (mtime, out)
+    while len(_PAGE_ARCS) > _PAGE_ARCS_MAX:
+        _PAGE_ARCS.popitem(last=False)
+    return out
 
 
 def _page_layer_strokes(job: dict, job_id: str, page: int, pg) -> list:
@@ -7941,7 +12232,24 @@ def scale_at(job_id: str, page: int, x: float, y: float,
             res = {}
     body = RoomPickBody(x=x, y=y, scale_ft_per_in=scale_ft_per_in)
     ft, by = _room_pick_scale(job, job_id, page, res, body)
-    return {"ft_per_paper_inch": ft, "scale_by": by}
+    if ft is not None:
+        return {"ft_per_paper_inch": ft, "scale_by": by}
+    # no scale in force: the readings, and an inset caption at this point, as OFFERS for a person (CRITIC-scale-3 MINOR 1)
+    offers = []
+    try:
+        v = _scale_verdict_full(job_id, page, res, _page_scale(job_id, page, res, unhidden=True)) or {}
+        for w in (v.get("choices") or []) + (v.get("offered") or []):
+            offers.append({"ft_per_paper_inch": w.get("value"), "kind": w.get("kind"), "text": w.get("note") or None})
+    except Exception:            # noqa: BLE001 - an offer list that cannot be built is empty, never a value
+        pass
+    try:
+        site = _site_scale_at(_scale_sites(job, job_id, page), float(x), float(y))
+        if site and _sane_ft(site.get("fpi")):
+            offers.append({"ft_per_paper_inch": float(site["fpi"]), "kind": "inset caption", "text": site.get("text")})
+    except Exception:            # noqa: BLE001
+        pass
+    return {"ft_per_paper_inch": None, "scale_by": None, "offers": offers,
+            "why": "no scale is in force on this sheet: choose or set one on the sheet; these are offers, not values"}
 
 
 @app.post("/api/job/{job_id}/page/{page}/structure")
@@ -8128,7 +12436,7 @@ class CutfillOpenBody(BaseModel):
     pages: list[int] | None = None
 
 
-_CF_HANDED = ("read in review", "confirmed in review")
+_CF_HANDED = ("read in review", "confirmed in review", "set in review", "read in review, not confirmed")
 _CF_SHEETS_CACHE: dict = {}          # job id -> (PDF mtime, [printed sheet number per page])
 # the host's own title-block reading (the page strip's, triage.json) where the engine reads none, only when it is
 # shaped like a sheet number: one or two letters, a number, an optional decimal ("C4.1", "C-04"), or "3.1". A
@@ -8565,20 +12873,36 @@ def _cf_review_scale_set(project, key: str, ft: float, text: str) -> "bool | Non
     job_id, page = jp
     try:
         res = json.loads((_job_dir(job_id) / f"p{page}_result.json").read_text(encoding="utf-8"))
+        want = _sane_ft(ft)
+        if want is None:
+            raise _refuse_scale(ft)
         with _scale_lock(job_id, page):     # one writer of the page's scale record at a time (_scale_lock)
-            _page_scale(job_id, page, res, ApproveScale(ft_per_paper_inch=float(ft), text=(text or None), picked_by_reviewer=True))
-            if _stored_scale_raw(job_id, page) is None:
-                # the engine's own reading confirmed with no pick on file: _page_scale writes nothing for that, so nothing
-                # told a review page that kept another number in its browser - its approve of that number went through
-                # (critic 23, RISK-1). Recorded as the review's go-back is: a dated tombstone, read as "the engine's
-                # reading" everywhere
-                _pf = _scale_pick_path(job_id, page)
-                _tomb = {"retired": True, "at": time.time(), "ft_per_paper_inch": float(ft)}
-                _pf.write_text(json.dumps(_tomb, indent=1))
-                _PICK_LAST[str(_pf)] = _tomb
+            # THE CARD IS STAMPED TOO (scale verdict S4): it sends the stamp of the record it last loaded
+            # (review_stamps); a card that saw another record, or another detection, writes nothing. A call with no
+            # stamp at all from the card's route ("") is refused like a stale one (CRITIC-scale-3 MINOR 4); None is an
+            # in-process call, which has no card to have seen anything.
+            _seen = _cf_placement.REVIEW_SET_SEEN.get()
+            if _seen == "":
+                raise HTTPException(409, "Nothing was saved: the Scale card sent no stamp of the review record it loaded. "
+                                         "Reload, then set the scale again.")
+            if _seen is not None and _seen != _scale_stamp(job_id, page):
+                raise HTTPException(409, "Nothing was saved: this sheet's scale changed in its review since the Scale "
+                                         "card loaded it. Reload, then set the scale again.")
+            # THE SAME PERSON RECORD AS THE REVIEW'S (scale verdict S2, 2026-10-02). The Scale card's number is a
+            # person's decision about the sheet: confirmed when it is the number in force on a sheet whose readings
+            # agree, picked when it is one of the engine's readings (going back to the engine's own included), typed
+            # otherwise - with who did it. Until S2 the engine's own number was written as a TOMBSTONE, which reads as
+            # "no person" (ruling 10) and lost the confirmation. Any write changes the record's stamp, so a review page
+            # that kept another number in its browser is still refused at Approve (critic 23, RISK-1).
+            det = _page_scale(job_id, page, res, unhidden=True)
+            # typed there -> typed; a printed reading chosen there (cutfill/server.py sets REVIEW_SET_CHOSEN) ->
+            # confirmed / picked / typed by _scale_person_how, on a full verdict (CRITIC-scale-1 B1, M2)
+            how = _scale_person_how(job_id, page, res, det, want, bool(_cf_placement.REVIEW_SET_CHOSEN.get()))
+            caller = _CF_CALLER.get()
+            _scale_person_write(job_id, page, res, want, text, how, caller[0] if caller else None)
     except HTTPException as e:
-        if e.status_code == 400:
-            raise                   # a number no review takes (_refuse_scale), said as the review says it
+        if e.status_code in (400, 409):
+            raise                   # a number no review takes (_refuse_scale), or a stale card (409), said as it is
         return False
     except (OSError, ValueError, TypeError):
         return False
@@ -8586,6 +12910,259 @@ def _cf_review_scale_set(project, key: str, ft: float, text: str) -> "bool | Non
 
 
 _cf_placement.REVIEW_SET = _cf_review_scale_set
+
+
+# ---------- scale verdict S4 / S5: what needs a scale, and the words that travel ----------------------------------
+_SV_KIND_WORDS = {"caption": "caption", "bar": "drawn bar", "dimensions": "printed dimensions", "profile_axis": "profile"}
+_SV_HOW_PLAIN = {"typed": "typed by the reviewer", "calibrated": "set by measuring a known length",
+                 "picked": "chosen by the reviewer from the sheet's readings",
+                 "confirmed": "checked by the reviewer by measuring a known length",
+                 "accepted": "accepted by the reviewer without measuring"}
+
+
+def _scale_dependent_rows(elements: list, extra: list, object_counts: dict) -> list:
+    """The labels of an approve's rows that need a scale (S4 rule 2): a labelled line not counted as objects (its
+    footage), and every calculator row whose unit is not EA (LF, SF, SY, CY: Flooring, Structure, Trench, Areas, Cut /
+    fill). A count (EA) needs none."""
+    out = []
+    for el in elements:
+        if el.get("label") is not None and el["label"] not in (object_counts or {}) and el["label"] not in out:
+            out.append(el["label"])
+    for ex in extra or []:
+        if not isinstance(ex, dict):
+            continue
+        try:
+            q = float(ex.get("qty", 0))
+        except (TypeError, ValueError):
+            continue
+        # an empty or unknown unit is NOT a count (CRITIC-scale-3 MINOR 3): only EA approves without a scale
+        unit = str(ex.get("unit") or "")[:8]
+        lab = str(ex.get("label", "")).strip()[:80]
+        if q > 0 and unit != "EA" and lab and lab not in out:
+            out.append(lab)
+    return out
+
+
+def _scale_choices_words(v: dict) -> str:
+    """The readings a disagreeing page offers, as the refusal names them: 1" = 4 ft (caption, drawn bar) or ..."""
+    from takeoff_engine.scale_verdict import agree as _agree
+    groups = []
+    for w in sorted(v.get("choices") or [], key=lambda w: float(w.get("value") or 0)):
+        if groups and _agree(groups[-1][0]["value"], w["value"]):
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    rank = ("caption", "bar", "dimensions", "profile_axis")
+    out = []
+    for g in groups:
+        best = sorted(g, key=lambda w: rank.index(w["kind"]) if w["kind"] in rank else 9)[0]
+        kinds = []
+        for w in sorted(g, key=lambda w: rank.index(w["kind"]) if w["kind"] in rank else 9):
+            k = _SV_KIND_WORDS.get(w["kind"], w["kind"])
+            if k not in kinds:
+                kinds.append(k)
+        out.append(f'1" = {_ft(best["value"])} ft ({", ".join(kinds)})')
+    return " or ".join(out)
+
+
+def _scale_needed_words(job_id: str, page: int, res: dict, dep: list) -> str:
+    """Why an approve with measured rows is refused on this page, in the words the review needs."""
+    v = _scale_verdict_full(job_id, page, res, _page_scale(job_id, page, res, unhidden=True)) or {}
+    rows = ", ".join(dep[:4]) + (f" and {len(dep) - 4} more" if len(dep) > 4 else "")
+    if v.get("state") == "CONFLICT":
+        return (f"Nothing was saved: this sheet's scale readings disagree ({_scale_choices_words(v)}), and this approve "
+                f"has measured quantities ({rows}). Choose a scale on the sheet, or untick the measured rows (counts "
+                f"can be approved without a scale), then approve again.")
+    return (f"Nothing was saved: this sheet has no scale, and this approve has measured quantities ({rows}). Set the "
+            f"scale (type it, or measure something you know), or untick the measured rows (counts can be approved "
+            f"without a scale), then approve again.")
+
+
+def _scale_plain_words(v: "dict | None") -> str:
+    """The scale and how it stands, in plain words, for the CSVs and the report (S5). Never "confirmed" unless a
+    person's record says confirmed or two kinds of witness agree."""
+    v = v or {}
+    p = v.get("person") or {}
+    if p.get("value"):
+        d = str(p.get("when") or "")[:10]
+        md = p.get("measure_disagreed") or {}
+        how_w = _SV_HOW_PLAIN.get(p.get("how"), "set by the reviewer")
+        if p.get("how") == "accepted" and md.get("ft"):
+            how_w = "accepted by the reviewer"      # they did measure; it disagreed (CRITIC-scale-3 M1)
+        return (f'1 in = {_ft(p["value"])} ft, {how_w}'
+                + (f" on {d}" if d else "")
+                + (f'; a measure on {str(md.get("at") or "")[:10]} said 1 in = {_ft(md.get("ft"))} ft'
+                   if md.get("ft") else ""))
+    st = v.get("state")
+    kinds = []
+    for w in v.get("agree") or []:
+        k = _SV_KIND_WORDS.get(w.get("kind"), w.get("kind"))
+        if k not in kinds:
+            kinds.append(k)
+    if st == "CONFIRMED":
+        return f'1 in = {_ft(v.get("value"))} ft, {" and ".join(kinds)} agree'
+    if st == "UNCHECKED":
+        if v.get("dimensions") == "pending":
+            return f'1 in = {_ft(v.get("value"))} ft, not confirmed (the printed dimensions are still being checked)'
+        return f'1 in = {_ft(v.get("value"))} ft, not confirmed (one reading: the {" and ".join(kinds) or "reading"})'
+    if st == "CONFLICT":
+        return f"no scale in force: the sheet's scale readings disagree ({_scale_choices_words(v)})"
+    if st == "NONE":
+        return "no scale set: the engine read none"
+    return "the scale could not be checked"
+
+
+def _scale_export_verdict(job_id: str, page: int, res: dict, det: "dict | None") -> dict:
+    """export["scaleVerdict"] (S5): the page's full verdict as later tools need it - state, value, plain words, the
+    witnesses (kind, value, how each was read), how a person set it and when. Never a person's name."""
+    v = _scale_verdict_full(job_id, page, res, _page_scale(job_id, page, res, unhidden=True)) or {}
+    p = v.get("person") or {}
+
+    def wl(key):
+        return [{"kind": w.get("kind"), "value": w.get("value"), "source": w.get("source")}
+                for w in v.get(key) or []]
+    return {"state": v.get("state"), "value": v.get("value"), "words": _scale_plain_words(v),
+            "agree": wl("agree"), "disagree": wl("disagree"), "offered": wl("offered"),
+            "otherPrinted": wl("other_printed"),
+            "person": ({"how": p.get("how"), "when": p.get("when"), "value": p.get("value")} if p.get("value") else None),
+            "inForce": None if det is None else det.get("ft_per_paper_inch")}
+
+
+def _scale_flag_words(job_id: str, pages: list) -> list:
+    """The bid sheet's and the report's scale flags for approved pages (S5), one line per kind, pages grouped:
+    "Scale not confirmed on pages 2, 3, 5" (one reading, no person's record) and "Scale readings disagree on page 4:
+    check it" (approved before readings were found to disagree). Read off each page's verdict NOW."""
+    unchecked, conflict, accepted, measured_off = [], [], [], []
+    for pno in pages:
+        st, mz = _scale_page_state_full(job_id, pno)
+        if st == "ACCEPTED" and mz:
+            # kept over the person's own disagreeing measure: its own line, with the measure (CRITIC-scale-3 M1)
+            measured_off.append(f"Scale accepted on page {pno + 1}; a measure on {str(mz.get('at') or '')[:10]} said "
+                                f"1 in = {_ft(mz.get('ft'))} ft")
+            continue
+        if st == "UNCHECKED":
+            unchecked.append(pno + 1)
+        elif st == "CONFLICT":
+            conflict.append(pno + 1)
+        elif st == "ACCEPTED":
+            accepted.append(pno + 1)
+    out = []
+
+    def pg(ns):
+        return ("page " if len(ns) == 1 else "pages ") + ", ".join(str(n) for n in ns)
+    if conflict:
+        out.append(f"Scale readings disagree on {pg(conflict)}: check it")
+    if unchecked:
+        out.append(f"Scale not confirmed on {pg(unchecked)}")
+    if accepted:
+        out.append(f"Scale accepted by the reviewer without measuring on {pg(accepted)}")
+    return out + measured_off
+
+
+def _scale_page_state(job_id: str, pno: int) -> "str | None":
+    return _scale_page_state_full(job_id, pno)[0]
+
+
+def _scale_page_state_full(job_id: str, pno: int) -> tuple:
+    """An approved page's verdict state now, for its flag: None when it was approved with no scale (nothing measured
+    rests on one), when a person's record stands, or when nothing can be read."""
+    try:
+        exp = json.loads((_job_dir(job_id) / f"p{pno}_elements.json").read_text(encoding="utf-8"))
+        res = json.loads((_job_dir(job_id) / f"p{pno}_result.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    if not (exp.get("scale") or {}).get("pixelsPerUnit"):
+        return None, None
+    v = _scale_verdict_full(job_id, pno, res, _page_scale(job_id, pno, res, unhidden=True)) or {}
+    p = v.get("person") or {}
+    if p.get("value"):
+        # a person's acceptance stays flagged until something confirms it (CRITIC-scale-2 M1); kept over their own
+        # disagreeing measure it is flagged WHATEVER the witnesses say, with that measure (CRITIC-scale-3 M1)
+        if p.get("how") == "accepted" and p.get("measure_agrees") is False:
+            return "ACCEPTED", p.get("measure")
+        return ("ACCEPTED" if (p.get("how") == "accepted" and v.get("state") != "CONFIRMED") else None), None
+    return v.get("state"), None
+
+
+_CF_CONFLICT_WORDS = "This sheet's scale readings disagree. Choose one on the sheet."
+_CF_CONFLICT_MEMO: dict = {}
+
+
+def _cf_review_conflict(project, key: str) -> "str | None":
+    """placement.REVIEW_CONFLICT (S4 rule 4): the words for a cut / fill sheet whose review's readings disagree with
+    no person's record, else None. The engine then hands over nothing and must not fall back to its own caption
+    reader. Memoised on the record's stamp (which covers the detection)."""
+    jp = _cf_sheet_job_page(project, key)
+    if jp is None:
+        return None
+    job_id, page = jp
+    try:
+        stamp = _scale_stamp(job_id, page)
+    except Exception:          # noqa: BLE001 - no answer makes no claim
+        return None
+    hit = _CF_CONFLICT_MEMO.get((job_id, page))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    try:
+        res = json.loads((_job_dir(job_id) / f"p{page}_result.json").read_text(encoding="utf-8"))
+        raw = _page_scale(job_id, page, res, unhidden=True)
+        ans = _CF_CONFLICT_WORDS if (raw is not None and raw.get("set_by") != _BY_REVIEWER
+                                     and _scale_disagrees(job_id, page, res, raw)) else None
+    except Exception:          # noqa: BLE001
+        return None
+    _CF_CONFLICT_MEMO[(job_id, page)] = (stamp, ans)
+    return ans
+
+
+def _cf_review_stamp(project, key: str) -> "str | None":
+    """placement.REVIEW_STAMP: the stamp of the review record a cut / fill sheet answers to, for the Scale card to send
+    back with its next write (S4 rule 4)."""
+    jp = _cf_sheet_job_page(project, key)
+    if jp is None:
+        return None
+    try:
+        return _scale_stamp(*jp)
+    except Exception:          # noqa: BLE001
+        return None
+
+
+_cf_placement.REVIEW_CONFLICT = _cf_review_conflict
+_cf_placement.REVIEW_STAMP = _cf_review_stamp
+
+
+def _scale_report_state_lines(job_id: str, pno: int, exp: dict) -> list:
+    """The report's scale-state line for an approved page (S5): the plain words of its verdict now, and the flag when
+    it is not confirmed or its readings disagree."""
+    try:
+        res = json.loads((_job_dir(job_id) / f"p{pno}_result.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    # ONE SCALE LINE PER PAGE (CRITIC-scale-3 MINOR 8): a page out of date says so in its own line, and a second
+    # "Scale: ..." with another number above it would be two scales on one header - nothing is added here then
+    if _export_outdated_why(job_id, pno, exp):
+        return []
+    v = _scale_verdict_full(job_id, pno, res, _page_scale(job_id, pno, res, unhidden=True))
+    if not v:
+        return []
+    # how that scale stands, without repeating its number (the line above has it)
+    words = _scale_plain_words(v)
+    try:
+        sc = exp.get("scale") or {}
+        was = float(exp.get("imageDpi") or 0) / float(sc.get("pixelsPerUnit") or 0)
+    except (TypeError, ValueError, ZeroDivisionError):
+        was = 0.0
+    m = re.match(r"^1 in = ([0-9.]+) ft, ", words)
+    if m and was > 0 and abs(float(m.group(1)) - was) <= 0.006 * was:
+        words = words[m.end():]
+    # wrapped to the report's line (it prints _ln[:118]): a disagreeing page's choices run long, and a cut mid-word
+    # lost the second reading (the live proof, 2026-10-02)
+    out = textwrap.wrap("Scale check: " + words, 116)
+    flags = _scale_flag_words(job_id, [pno])
+    if flags:
+        out.append(flags[0].replace(f"page {pno + 1}", "this page").replace("this page: check it",
+                                                                            "this page: check it before bidding"))
+        out = [ln for f in out for ln in textwrap.wrap(f, 116)]
+    return out
 
 # the host's cut / fill rows (webui/app.js CF_ROW_RE): a takeoff row with one of these labels is the job's cut / fill's
 _CF_HOST_ROW = re.compile(r"^(Site Cut|Site Fill)( – .+)?$|^(Export Cut|Import Structural|Silt / Construction Fence|"
@@ -8795,7 +13372,23 @@ def _ew_caveat(note) -> bool:
     return str(note).startswith("EARTHWORK (")
 
 
+_FL_READER: "contextvars.ContextVar" = contextvars.ContextVar("fl_reader", default=None)
+
+
 def _export_view(job_id: str, pno: int, exp: dict) -> dict:
+    """_export_view_ew, and on a SHARED sheet no flooring row of another account (ruling S): a reader
+    sees only the flooring rows its own account approved (_FL_READER, set by the route that serves the
+    export, the report and the bid sheet); a reader no route named sees none."""
+    out = _export_view_ew(job_id, pno, exp)
+    if isinstance(out, dict) and _calcstate_shared(job_id) and any(_fl_is_row(it) for it in out.get("items") or []):
+        me = _FL_READER.get()
+        out = dict(out)
+        out["items"] = [it for it in out.get("items") or []
+                        if not _fl_is_row(it) or (me and it.get("src") == "flooring" and it.get("fl_acct") == me)]
+    return out
+
+
+def _export_view_ew(job_id: str, pno: int, exp: dict) -> dict:
     """An approved export as every reader sees it: a v1.8.5 export without the old Earthwork calculator's rows and without
     its caveat notes (v1.8.5's EARTHWORK block runs from "EARTHWORK (" to the end of the notes, the work area's note
     apart); anything else exactly as it is. A copy: the file is never rewritten (an undo to v1.8.5 finds it as it was)."""
@@ -9125,7 +13718,7 @@ def _cutfill_read_queue(p, keys: list, full=()) -> None:
     threading.Thread(target=run, daemon=True, name=f"cutfill-read-queue-{pid}").start()
 
 
-def _cutfill_scale_handoff(cur, cur_src, det) -> tuple | None:
+def _cutfill_scale_handoff(cur, cur_src, det, verdict=None) -> tuple | None:
     """One scale in force, by rank: the reviewer's pick on THIS sheet outranks everything, a scale
     the operator typed or confirmed IN THE ENGINE outranks the reading here, and the reading here
     fills an empty one. A scale this hand-off put there earlier (from whichever sheet was opened
@@ -9145,7 +13738,18 @@ def _cutfill_scale_handoff(cur, cur_src, det) -> tuple | None:
         # card writes its typing into the review (2026-09-29), and an open that turned the operator's own word into
         # "confirmed in review" re-armed the compute's refusal wherever another sheet prints another scale
         return None
-    src = "confirmed in review" if by_reviewer else "read in review"
+    # the hand-off's words follow the record (scale verdict S4 rule 4): "confirmed in review" only for a person's
+    # confirmation, "set in review" for any other person's record; for the engine's reading, "read in review" when two
+    # kinds of witness agree, else "read in review, not confirmed" (a verdict not given counts as not confirmed)
+    if by_reviewer and (det or {}).get("set_how") == "accepted":
+        # accepted without measuring (CRITIC-scale-2 M1): the engine's reading with a click on it, not a check
+        src = ("read in review" if (verdict or {}).get("state") == "CONFIRMED"
+               else "read in review, not confirmed")
+    elif by_reviewer:
+        src = "confirmed in review" if (det or {}).get("set_how") == "confirmed" else "set in review"
+    else:
+        src = ("read in review" if (verdict or {}).get("state") == "CONFIRMED"
+               else "read in review, not confirmed")
     note = None
     if not empty and abs(float(cur) - fpi) > 1e-6:
         # the note is shown in the engine: its scales print like every other (a measured bar's
@@ -9349,10 +13953,13 @@ def cutfill_open(job_id: str, body: CutfillOpenBody):
             handed = None
             if ps.get("core_result") and ps.get("role") in _CF_ACTIVE:
                 try:
-                    det = _page_scale(job_id, primary, json.loads(Path(rf).read_text(encoding="utf-8")))
+                    _hres = json.loads(Path(rf).read_text(encoding="utf-8"))
+                    det = _page_scale(job_id, primary, _hres)          # None on readings that disagree (S4)
+                    _hv = _scale_verdict_full(job_id, primary, _hres, det) if det else None
                 except Exception:
                     det = None
-                got = _cutfill_scale_handoff(s.get("scale_ft_per_in"), s.get("scale_source"), det)
+                    _hv = None
+                got = _cutfill_scale_handoff(s.get("scale_ft_per_in"), s.get("scale_source"), det, _hv)
                 if got and _cf_display_for(s, p.data["pages"]) != key:
                     fpi, src, _note = got
                     if s.get("scale_ft_per_in") and abs(float(s["scale_ft_per_in"]) - fpi) > 1e-6:
@@ -9547,3 +14154,10 @@ def cutfill_rows(job_id: str, page: int, body: CutfillRowsBody):
 
 app.mount("/cutfill", _cutfill.app, name="cutfill")
 app.mount("/", StaticFiles(directory=ROOT / "webui", html=True), name="ui")
+
+# The e-mail door after a restart, when it is on: messages that were spooled and not yet read, and e-mailed pages
+# Detect had not reached. A moment after the import, on its own thread, so starting the service never waits on it.
+if _inbound.config() is not None:
+    _t = threading.Timer(2.0, _inbound_resume)
+    _t.daemon = True
+    _t.start()

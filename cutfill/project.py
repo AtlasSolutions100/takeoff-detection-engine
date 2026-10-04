@@ -2510,6 +2510,21 @@ def surfaces_for(project: Project) -> dict:
         display = next(iter(active), None)
     if display is None:
         return {"error": "Mark at least one sheet as existing / proposed / both."}
+    # a sheet whose review's scale readings disagree: no volume until a person chooses one on the sheet (scale verdict
+    # S4) - neither the scale handed over before nor this reader's own printed default
+    # EVERY sheet in the job, not the display sheet alone (CRITIC-scale-3 MINOR 9): a linked sheet whose readings
+    # disagree would be measured at the display sheet's scale - each is refused by name
+    from .placement import review_conflict
+    _cw = review_conflict(project, display)
+    _others = []
+    for _k in active:
+        if _k == display:
+            continue
+        if review_conflict(project, _k):
+            _nm = _sheet_words(project, _k)
+            _others.append(f"{_nm[:1].upper() + _nm[1:]}'s scale readings disagree. Choose one on that sheet.")
+    if _cw or _others:
+        return {"error": " ".join(([_cw] if _cw else []) + _others)}
     ft_per_in = s.get("scale_ft_per_in")
     warnings = []
     if not ft_per_in:
@@ -2916,7 +2931,13 @@ def limit_in_force(project: Project, region_pts, region_src: str, ft_per_pt: flo
 
 
 def _scale_in_force(project: Project, key: str | None) -> tuple[float | None, str]:
-    """(ft per pt, where it came from): the confirmed scale, else the sheet's printed default."""
+    """(ft per pt, where it came from): the confirmed scale, else the sheet's printed default - but NOTHING on a sheet
+    whose review's scale readings disagree with no person's record (scale verdict S4): no fallback to this reader's
+    own caption there, the words say why."""
+    from .placement import review_conflict
+    _cw = review_conflict(project, key)
+    if _cw:
+        return None, _cw
     s = project.data["settings"]
     if s.get("scale_ft_per_in"):
         return float(s["scale_ft_per_in"]) / 72.0, "confirmed"
@@ -3061,7 +3082,10 @@ def takeoff_preview(project: Project) -> dict:
     key = _display_key(project)
     fpp, scale_src = _scale_in_force(project, key)
     if not fpp:
-        return {"rows": [], "notes": ["No scale: type the sheet scale or confirm a printed one."], "scale": scale_src, "page": key}
+        # the readings-disagree words when that is why (scale verdict S4), else the no-scale words as before
+        _why = scale_src if str(scale_src).startswith("This sheet's scale readings disagree") \
+            else "No scale: type the sheet scale or confirm a printed one."
+        return {"rows": [], "notes": [_why], "scale": scale_src, "page": key}
     erosion = []
     if key:
         try:

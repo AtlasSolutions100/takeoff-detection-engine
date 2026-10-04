@@ -68,7 +68,7 @@ def check(ok, msg, got=None):
 
 
 async def _asgi(method, path, cookie, body=b""):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2"), (b"content-type", b"application/json"),
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3"), (b"content-type", b"application/json"),
                (b"content-length", str(len(body)).encode())]
     if cookie:
         headers.append((b"cookie", f"{server.SESSION_COOKIE}={cookie}".encode()))
@@ -130,9 +130,8 @@ check("A Curb" not in json.dumps(disk) and "31.5" not in json.dumps(disk.get("pr
       "A's rows, prices and trades are not written to the shared job's record", disk)
 check(disk.get("rows") == [{"label": "Old Curb", "qty": 9, "unit": "LF"}] and disk.get("prices") == {"Old Curb": 99.0},
       "what the file already held stays as it was (not deleted)", disk)
-check(disk["fl"]["types"][0]["sf_price"] == 0 and disk["fl"]["types"][0]["lf_price"] == 0
-      and disk["fl"]["types"][0]["waste_pct"] == 10 and disk.get("zones") == [[1, 2, 3, 4]],
-      "flooring prices are not stored; the flooring types, waste and work areas are", disk.get("fl"))
+check("fl" not in disk and "4.25" not in json.dumps(disk) and disk.get("zones") == [[1, 2, 3, 4]],
+      "no flooring part is taken from a browser at all (ruling P: the job document holds the flooring, per account); work areas are", disk.get("fl"))
 check("job_shared" not in disk, "the read-side marker is never stored")
 
 for who in (BOB, ALICE):
@@ -141,17 +140,17 @@ for who in (BOB, ALICE):
     check(st == 200 and "A Curb" not in txt and "Old Curb" not in txt and "31.5" not in txt and "4.25" not in txt
           and not any(k in got for k in ("rows", "prices", "trades", "rows_scale")),
           f"{who} reads the shared record: no rows, prices, trades or flooring prices of anybody", got)
-    check(got.get("zones") == [[1, 2, 3, 4]] and got["fl"]["types"][0]["name"] == "Carpet",
-          f"{who}: what is shared by design (work areas, flooring types) still comes back", got)
+    check(got.get("zones") == [[1, 2, 3, 4]] and "types" not in (got.get("fl") or {}),
+          f"{who}: what is shared by design (work areas) still comes back; no flooring types", got)
 
 # A's own job: the round trip still works
 OWN = f"/api/job/{JID['alice-own.pdf']}/page/0/calcstate"
 st, _ = call("POST", OWN, CK[ALICE], blob("A"))
 st2, got = call("GET", OWN, CK[ALICE])
 check(st == 200 and st2 == 200 and got.get("rows") == blob("A")["rows"] and got.get("prices") == {"A Curb": 31.5}
-      and got.get("trades") == {"A Curb": "Concrete"} and got["fl"]["types"][0]["sf_price"] == 4.25
-      and "job_shared" not in got,
-      "on A's own job rows, prices, trades and flooring prices round-trip as before", got)
+      and got.get("trades") == {"A Curb": "Concrete"} and "fl" not in got
+      and "job_shared" not in got,   # the flooring is the job document's: a page record never takes one from a browser
+      "on A's own job rows, prices and trades round-trip as before; a flooring part sent with them is not stored", got)
 st, _ = call("GET", OWN, CK[BOB])
 check(st == 404, "B cannot read A's own job (unchanged)", st)
 

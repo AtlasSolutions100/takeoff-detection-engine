@@ -153,7 +153,10 @@ def open_job(jid, pages, scales, printed):
 
 def scale_card(p, ft):
     """The Cut / fill Scale card: typed with sheet 3.0 on screen (it writes the sheet's review record)."""
-    return route("patch_settings", p.id, _Req({"scale_ft_per_in": ft, "scale_source": "typed", "scale_sheet": "d0p0"}))
+    # with the stamp of the review record it loaded, as the card sends it (a write with none is refused, CRITIC-scale-3)
+    from cutfill import placement as _pl
+    return route("patch_settings", p.id, _Req({"scale_ft_per_in": ft, "scale_source": "typed", "scale_sheet": "d0p0",
+                                               "scale_seen": _pl.review_stamps(p).get("d0p0")}))
 
 
 def compute(p):
@@ -179,7 +182,7 @@ NO_STAMP = object()
 
 def approve(jid, page, rows, ft, seen=NO_STAMP):
     kw = dict(labels={}, extra_items=[{"label": l, "qty": q, "unit": u} for l, q, u in rows],
-              scale=server.ApproveScale(ft_per_paper_inch=ft, text=f'1" = {ft:g}\'', picked_by_reviewer=True))
+              scale=server.ApproveScale(ft_per_paper_inch=ft, text=f'1" = {ft:g}\'', picked_by_reviewer=True, how="typed"))
     if seen is not NO_STAMP:
         kw["scale_seen"] = seen
     try:
@@ -306,10 +309,14 @@ def b_confirm():
     scale_card(p, 45.0)
     j = server.get_scale_pick(jid, 0)
     tomb = json.loads(pick_bytes(jid, 0) or b"null")
-    check(isinstance(tomb, dict) and tomb.get("retired") is True and tomb.get("at") and j.get("recorded") is True
-          and j.get("stamp") != deaf and j.get("in_force") == 45.0 and j.get("reviewer") is None,
-          "the Scale card's confirm of the engine's 45 is recorded (a dated tombstone: the review's 'the engine's reading'); "
-          "it wrote nothing, so a page holding another number never heard it: " + json.dumps(tomb))
+    # scale verdict S2 (coordinator rulings 8 / 10, 2026-10-02): the confirm is a PERSON'S record - how "confirmed",
+    # dated - where it used to be a tombstone, which reads as "no person"
+    # CRITIC-scale-1 M2: a number TYPED in the Scale card is recorded as typed, even when it is the engine's own
+    check(isinstance(tomb, dict) and tomb.get("how") == "typed" and tomb.get("ft_per_paper_inch") == 45.0
+          and tomb.get("at") and not tomb.get("retired") and j.get("recorded") is True
+          and j.get("stamp") != deaf and j.get("in_force") == 45.0 and (j.get("reviewer") or {}).get("how") == "typed",
+          "the Scale card's typing of the engine's 45 is recorded (a person's dated record, how typed); "
+          "it wrote nothing else, so a page holding another number never heard it: " + json.dumps(tomb))
     a = approve(jid, 0, [("Curb", 200.0, "LF")], 40.0, deaf)
     check(not a["ok"] and 'changed to 1" = 45 ft' in words(a.get("detail")) and review_ft(jid, 0) == 45.0,
           "...so that page's approve of its own unapproved 40 is refused, the 45 stands")
@@ -322,9 +329,12 @@ def b_get():
     j0 = server.get_scale_pick(jid, 0)
     approve(jid, 0, [("Curb", 200.0, "LF")], 50.0, j0.get("stamp"))
     j1 = server.get_scale_pick(jid, 0)
-    check(j0.get("stamp") == "none" and j0.get("recorded") is False and j1.get("stamp") == server._scale_stamp(jid, 0)
+    # CRITIC-scale-1 M1: the stamp is never a constant; it covers the record AND the detection's reading
+    check(j0.get("stamp") == server._scale_stamp_of(None, server._scale_detection_digest(jid, 0))
+          and j0.get("recorded") is False and j1.get("stamp") == server._scale_stamp(jid, 0)
           and j1.get("stamp") != j0.get("stamp") and (j1.get("reviewer") or {}).get("ft_per_paper_inch") == 50.0,
-          f"GET .../scale: 'none' with no record, the record's own stamp after ({j0.get('stamp')} -> {j1.get('stamp')})")
+          f"GET .../scale: the stamp of no record on this detection, the record's own stamp after "
+          f"({j0.get('stamp')} -> {j1.get('stamp')})")
 
 
 # ---- D: approved with the rows, then Remove from takeoff ---------------------------------------------------------------------
@@ -350,7 +360,9 @@ def d_removed():
     txt = " ".join(" ".join(pg.get_text().split()) for pg in doc)
     doc.close()
     check("removed from the takeoff" in txt, "D: ...and the report")
-    b = approve(jid, 0, [], 50.0, loaded(jid, 0)[0])
+    # (the takeoff starts empty, 2026-10-03: an approve with nothing in the takeoff is refused, so the page approved
+    # again carries the curb the estimator still bids)
+    b = approve(jid, 0, [("Curb", 200.0, "LF")], 50.0, loaded(jid, 0)[0])
     check(b["ok"] and not (server.approved_pages(jid).get("outdated") or {}),
           "D: the advice followed (approve page 1 again): the note goes")
     # the old Earthwork calculator's rows are not the engine's: a v1.8.5 export (no marks) carrying them is not said removed
@@ -373,12 +385,13 @@ def s2_race():
     real = server._page_scale
     inside = threading.Event()
 
-    def slow(job_id, page, res, sent=None):
-        # an injected pause in tab A's approve, between its stamp check and its write (the natural window is 0.24 ms)
+    def slow(job_id, page, res, sent=None, **kw):
+        # an injected pause in tab A's approve, between its stamp check and its write (the natural window is 0.24 ms);
+        # keywords pass through (the approve now names who: scale verdict S2)
         if sent is not None and threading.current_thread().name == "tabA":
             inside.set()
             time.sleep(0.6)
-        return real(job_id, page, res, sent)
+        return real(job_id, page, res, sent, **kw)
 
     out = {}
     server._page_scale = slow

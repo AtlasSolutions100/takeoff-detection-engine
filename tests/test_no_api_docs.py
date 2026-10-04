@@ -40,7 +40,7 @@ def ok(cond, msg, got=None):
 
 
 async def _asgi(path, cookie):
-    headers = [(b"host", b"testserver"), (b"x-core-client", b"2")]
+    headers = [(b"host", b"testserver"), (b"x-core-client", b"3")]
     if cookie:
         headers.append((b"cookie", f"{server.SESSION_COOKIE}={cookie}".encode()))
     scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}, "http_version": "1.1",

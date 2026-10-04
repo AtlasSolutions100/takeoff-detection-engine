@@ -75,7 +75,7 @@ does not rebuild behaviour. What each module shows:
 | Plans | - | sheet grid of this document (numbers, thumbnails, status, Detect all) | - |
 | Lines | Sheets; Line styles; Sheet legend; Callouts | canvas + ribbon | Sheet, Takeoff, Questions |
 | Counts | Sheets; Count symbols; Whole job; Across sheets | canvas | same |
-| Areas | Sheets; Flooring; Areas (square feet) | canvas | same |
+| Areas | Sheets; Flooring; Wall panels; Areas (square feet) | canvas | same |
 | Earthwork | - | the cut/fill engine (embedded), or Structure dig on the canvas | cut/fill totals + Add to takeoff |
 | Trenching | Sheets; Pipe trench | canvas | same |
 | Summary | - | takeoff by trade, unit price, extended, source; bid readiness | - |
@@ -162,6 +162,42 @@ From the data-source map (server.py, 2026-09-26):
 * UI copy rules (memory `ui-copy-rules`): no client names or job numbers on
   screen, warnings short and plain, load-bearing detail folded, never
   deleted. The accuracy flag (the BETA notice until 2026-10-01) stays on every surface.
+
+## What a merge of the fork needs here (2026-10-04: empty takeoff, bids by e-mail, wall panels)
+
+`app.js`, `style.css` and any script the fork adds (`wallpanels.js` / `.css`) are the fork's files, whole. The frame
+adds only what its own layout needs, and `tests/test_redesign_three_features.js` pins each of these:
+
+* **A new tool** goes in `shell.js` MODULES (`acts`, `owns`), `PANEL_MOD` and `BTN_PANEL`. Wall panels is in Areas and
+  opens before Detect (its button shows whenever a plan set is open). `yields`: the tab never opens its own panel
+  (Flooring) over an open Wall panels panel, and a Flooring the tab opened by itself steps down for it.
+* **A new child of the Projects page** needs a row in the named-area grid (`shell.css`, and the phone's in
+  `responsive.css`): the From e-mail list is `inbox`. Buttons that read as links there need the frame's button box
+  taken off.
+* **New activity actions** need words in `team.js` PHRASE (and in `shell.js` ACT_PHRASE when they name a project).
+* **Anything app.js puts in `.approve-bar` or `.links-bar`** travels with those bars into the right rail's foot. The
+  links bar shows while it holds a visible link OR button.
+* **Bid readiness** reads `tkReadiness()` (the takeoff row) and GET /approved `earlier` / `kept` (an earlier version's
+  approval: information, never "missing").
+* **A helper's name in `server.py`** must not be one the fork uses as a local: `tests/test_merge_shadow.py` holds that
+  (the merge joined a helper `_n` with a loop variable `_n`, and deleting a project answered 500).
+* **Fork tests that meet the frame** are adjusted here, never on the fork: the route count (`test_orphan_job.py`), the
+  buster pin (`test_scale_verdict_ui.js`), the viewer gate's sentence (`test_wp_acts.py`), the last-seen file
+  (`test_inbound_email.py`).
+
+The second merge of 2026-10-04 (the fork's fix round: the account file fails closed) added three:
+
+* **An account function of the redesign** - anything in `takeoff_engine/users.py` that changes `users.json` and carries
+  a role (`set_password`, `add_user`, `set_staff`, `set_role`, the command line) - is written the fork's way: under
+  `@_writing` (or inside `with _one_writer():`), the roster read with `_fresh()` and never `load()`, a name looked up
+  with `find(name, store)`. `load()`'s answer is this process's memory and is never changed in place. A file that is
+  there and can not be read is never "no accounts": such a change is refused (`Unreadable`), nothing is written, and
+  the page gets a 503. `tests/test_redesign_account_file.py` holds each function, the routes and the storm.
+* **The gate judges a request on one read of the roster.** `_SessionAuth._gate` takes the role from the roster the
+  session was just checked against (`role_of(user, _accounts)`). Read a second time, an account removed in between
+  had no role, and no role is not "viewer": a viewer's last request went through as a write.
+* **`app.js` is named one past the fork's at every merge that changes it** (313 after the fork's 312), so a browser
+  that holds the redesign's earlier number is handed the new file; `tests/test_redesign_three_features.js` pins it.
 
 ## The embedded cut/fill engine
 
