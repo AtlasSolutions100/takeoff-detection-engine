@@ -79,11 +79,12 @@ from pathlib import Path
 sys.path.insert(0, os.getcwd())
 from takeoff_engine import users  # noqa: E402
 
-# Our own team (the contact addresses Terms and Privacy already publish).
-# Staff see every document on the box and can delete any of them, which is
-# how staff-only sets stay reachable for a demo after they stop being shared,
-# and how a client's upload gets cleaned off afterwards.
-STAFF = ["koby@radiantaisoftware.com", "christian@radiantaisoftware.com"]
+# Our own team. Staff see every document on the box and can delete any of
+# them, which is how staff-only sets stay reachable for a demo after they stop
+# being shared, and how a client's upload gets cleaned off afterwards.
+# Since 2026-10-12 (Koby): these three and no others; the old work-domain
+# addresses are gone from the box and from Terms and Privacy.
+STAFF = ["kobystull123@gmail.com", "atlassolutions100@gmail.com", "support@coresoftware.tech"]
 
 # THE CUSTOMER LIST IS NOT IN THIS FILE (2026-10-01). It used to be a list
 # here, and this file is COPY'd into the Docker image, so anybody holding the
@@ -377,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     # --- credential file -------------------------------------------------
     out = jobs_dir / "demo-credentials.txt"
     lines = [
-        "CORE Takeoff - https://core.workoptional.studio",
+        "CORE Takeoff - https://core.coresoftware.tech",
         "",
         f"Everyone signs in with their EMAIL and the password: {DEFAULT_PASSWORD}",
         "They are then required to choose their own before they can do",

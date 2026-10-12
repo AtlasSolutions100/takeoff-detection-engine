@@ -24,7 +24,7 @@ def run(args):
         raise RuntimeError(r.stderr[-1500:])
 
 
-def card(path, title, sub, brand="CORE TAKEOFF · WORK OPTIONAL"):
+def card(path, title, sub, brand="CORE TAKEOFF · CORE SOFTWARE"):
     im = Image.new("RGB", (W, H), (13, 16, 20))
     d = ImageDraw.Draw(im)
     big = ImageFont.truetype("C:/Windows/Fonts/segoeuib.ttf", 64)
@@ -83,7 +83,7 @@ def main(take, title, sub, out):
     run([FF, "-y", "-loop", "1", "-t", "2.4", "-i", str(tc),
          "-vf", f"scale={W}:{H}", *ENC, str(tclip)])
     ec = work / "end.png"
-    card(ec, "CORE Takeoff", "core.workoptional.studio")
+    card(ec, "CORE Takeoff", "core.coresoftware.tech")
     eclip = work / "end.mp4"
     run([FF, "-y", "-loop", "1", "-t", "2.6", "-i", str(ec),
          "-vf", f"scale={W}:{H}", *ENC, str(eclip)])
