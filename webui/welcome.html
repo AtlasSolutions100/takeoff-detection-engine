@@ -1,13 +1,14 @@
 <!doctype html>
-<html lang="en" data-palette="steel" data-accent="green">
+<html lang="en" data-palette="core" data-accent="yellow">
 <head>
 <meta charset="utf-8">
 <title>CORE Takeoff &middot; One takeoff for every trade on the set</title>
 <meta name="description" content="Takeoff from PDF plan sets: cut and fill, trenching, counts, flooring and linework. Every quantity is traced to the line, symbol or label it came from. Automated detection can be wrong: double-check every quantity against the drawings.">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
-<link rel="alternate icon" href="/favicon.ico?v=1" sizes="16x16 32x32 48x48">
-<link rel="apple-touch-icon" href="/favicon-180.png?v=1">
+<link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico?v=3" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/favicon-180.png?v=3">
+<meta name="theme-color" content="#0e1013">
 <!-- PUBLIC PAGE. Everything it loads is on server.py's _PUBLIC list: this
      file, welcome.css, tokens.css and the three Plex font files. Nothing
      from another host - the app has to work in a field office offline. -->
@@ -20,15 +21,16 @@
       p = localStorage.getItem("core-palette");
       t = localStorage.getItem("core-theme");
       a = localStorage.getItem("core-accent");
-    } catch (e) { /* storage blocked: stay on steel */ }
-    d.setAttribute("data-palette", p === "nightcrew" ? "nightcrew" : "steel");
-    d.setAttribute("data-accent", a === "yellow" ? "yellow" : "green");
+    } catch (e) { /* storage blocked: stay on the defaults */ }
+    d.setAttribute("data-palette", p === "nightcrew" || p === "steel" ? p : "core");
+    d.setAttribute("data-accent", a === "green" ? "green" : "yellow");
     d.setAttribute("data-theme", t === "light" ? "light" : "dark");
   })();
 </script>
 <style>
   /* If the stylesheets are blocked or slow, never flash white. */
-  html { background: #0a1219; color: #e6eaee; }
+  html { background: #0e1013; color: #e8eaed; }
+  html[data-palette="steel"] { background: #0a1219; color: #e6eaee; }
   html[data-palette="nightcrew"] { background: #15181a; }
   html[data-theme="light"] { background: #f7f6f2; color: #1f2326; }
 </style>

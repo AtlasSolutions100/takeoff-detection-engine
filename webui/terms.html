@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>Terms of Service &middot; CORE Takeoff</title>
-<link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
-<link rel="alternate icon" href="/favicon.ico?v=1" sizes="16x16 32x32 48x48">
-<link rel="apple-touch-icon" href="/favicon-180.png?v=1">
+<link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico?v=3" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/favicon-180.png?v=3">
+<meta name="theme-color" content="#0e1013">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>
   // The look a signed-in user picked (Settings -> Appearance, this browser).
@@ -16,8 +17,8 @@
       t = localStorage.getItem("core-theme");
       a = localStorage.getItem("core-accent");
     } catch (e) { /* storage blocked: stay on steel */ }
-    d.setAttribute("data-palette", p === "nightcrew" ? "nightcrew" : "steel");
-    d.setAttribute("data-accent", a === "yellow" ? "yellow" : "green");
+    d.setAttribute("data-palette", p === "nightcrew" || p === "steel" ? p : "core");
+    d.setAttribute("data-accent", a === "green" ? "green" : "yellow");
     d.setAttribute("data-theme", t === "light" ? "light" : "dark");
   })();
 </script>

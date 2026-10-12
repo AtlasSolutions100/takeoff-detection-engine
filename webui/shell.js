@@ -1617,8 +1617,8 @@
     let d = null;
     try { d = fr && fr.contentDocument; } catch (e) { return; }
     if (!d || !d.head || !/\/cutfill\//.test(d.location.pathname)) return;
-    d.documentElement.dataset.palette = root.dataset.palette || "steel";
-    d.documentElement.dataset.accent = root.dataset.accent || "green";
+    d.documentElement.dataset.palette = root.dataset.palette || "core";
+    d.documentElement.dataset.accent = root.dataset.accent || "yellow";
     if (!d.getElementById("coreSkin")) {
       const l = d.createElement("link");
       l.id = "coreSkin"; l.rel = "stylesheet"; l.href = "/cutfill-skin.css?v=1";
@@ -1630,13 +1630,16 @@
 
   /* ---------------------------------------------------- APPEARANCE
      Two switches beside app.js's own theme (dark / paper, which app.js owns
-     with the ◐ button): the ACCENT - green (default) or yellow - and the
-     GROUND - steel blue-black (default) or graphite. This browser only. */
+     with the ◐ button): the ACCENT - yellow (default, the public site's) or
+     green - and the GROUND - CORE (default, the public site's), steel
+     blue-black or graphite. This browser only. A browser that never chose
+     gets the defaults; one that chose keeps its choice (localStorage). */
   const LOOK = {
-    accent:  { attr: "accent",  key: "core-accent",  dflt: "green", box: "svAccentChoice",
-               opts: { green: ["Green", "CORE's own green"], yellow: ["Yellow", "equipment yellow"] } },
-    palette: { attr: "palette", key: "core-palette", dflt: "steel", box: "svPaletteChoice",
-               opts: { steel: ["Steel", "blue-black"], nightcrew: ["Graphite", "graphite, uppercase titles"] } },
+    accent:  { attr: "accent",  key: "core-accent",  dflt: "yellow", box: "svAccentChoice",
+               opts: { yellow: ["Yellow", "CORE yellow"], green: ["Green", "the earlier green"] } },
+    palette: { attr: "palette", key: "core-palette", dflt: "core", box: "svPaletteChoice",
+               opts: { core: ["CORE", "neutral dark"], steel: ["Steel", "blue-black"],
+                       nightcrew: ["Graphite", "graphite, uppercase titles"] } },
   };
   function lookGet(which) {
     const L = LOOK[which], v = root.dataset[L.attr];

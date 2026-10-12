@@ -995,7 +995,8 @@ html.shell-on .sv-ch { border-radius: var(--t-r-2); border-color: var(--t-border
 html.shell-on .sv-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 7px;
   vertical-align: -1px; border: 1px solid var(--t-swatch-line); }
 html.shell-on .sw-accent-green { background: #3fa873; }
-html.shell-on .sw-accent-yellow { background: #f5c400; }
+html.shell-on .sw-accent-yellow { background: #f5c542; }
+html.shell-on .sw-palette-core { background: #171a20; }
 html.shell-on .sw-palette-steel { background: #0f1922; }
 html.shell-on .sw-palette-nightcrew { background: #1e2224; }
 html.shell-on .sv-book-table th { background: var(--t-surface-3); color: var(--t-text-faint); }

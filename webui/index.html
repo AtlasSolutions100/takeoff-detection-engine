@@ -3,31 +3,33 @@
 <head>
 <meta charset="utf-8">
 <script src="/client.js?v=3"></script>
-<title>CORE — Takeoff · Work Optional</title>
-<link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
-<link rel="alternate icon" href="/favicon.ico?v=1" sizes="16x16 32x32 48x48">
-<link rel="apple-touch-icon" href="/favicon-180.png?v=1">
+<title>CORE Takeoff</title>
+<link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico?v=3" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/favicon-180.png?v=3">
+<meta name="theme-color" content="#0e1013">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="tokens.css?v=2">
+<link rel="stylesheet" href="tokens.css?v=3">
 <!-- REDESIGN 2026-09-26: the round-3 frame. shell.css lays the new frame
      over style.css; shell.js (after app.js) composes it by moving app.js's
      own nodes. The palette/theme are applied before first paint so the page
      never flashes the wrong colours; shell-boot keeps the old layout from
      showing for the moment before shell.js runs (released after 4 s no
      matter what, so a failed shell.js leaves the old, working layout). -->
-<link rel="stylesheet" href="shell.css?v=15">
+<link rel="stylesheet" href="shell.css?v=16">
 <link rel="stylesheet" href="team.css?v=3">
 <link rel="stylesheet" href="responsive.css?v=8">
 <link rel="stylesheet" href="dock.css?v=4">
 <script>
 try {
   var d = document.documentElement;
-  d.dataset.palette = localStorage.getItem("core-palette") === "nightcrew" ? "nightcrew" : "steel";
-  d.dataset.accent = localStorage.getItem("core-accent") === "yellow" ? "yellow" : "green";
+  const pal = localStorage.getItem("core-palette");
+  d.dataset.palette = pal === "nightcrew" || pal === "steel" ? pal : "core";
+  d.dataset.accent = localStorage.getItem("core-accent") === "green" ? "green" : "yellow";
   if (localStorage.getItem("core-theme") === "light") d.dataset.theme = "light";
   d.classList.add("shell-boot");
   setTimeout(function () { d.classList.remove("shell-boot"); }, 4000);
-} catch (e) { /* storage blocked: steel, dark, no boot veil */ }
+} catch (e) { d.dataset.palette = d.dataset.palette || "core"; d.dataset.accent = d.dataset.accent || "yellow"; /* storage blocked: the defaults, dark, no boot veil */ }
 </script>
 <link rel="stylesheet" href="style.css?v=122">
 <link rel="stylesheet" href="wallpanels.css?v=2">
@@ -1215,7 +1217,7 @@ try {
 </div>
 <datalist id="legendVocab"></datalist>
 <script src="app.js?v=313"></script>
-<script src="shell.js?v=20"></script>
+<script src="shell.js?v=21"></script>
 <script src="team.js?v=7"></script>
 <script src="responsive.js?v=2"></script>
 <script src="dock.js?v=5"></script>

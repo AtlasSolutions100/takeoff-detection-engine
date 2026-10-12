@@ -1,12 +1,13 @@
 <!doctype html>
-<html lang="en" data-palette="steel" data-accent="green">
+<html lang="en" data-palette="core" data-accent="yellow">
 <head>
 <meta charset="utf-8">
 <script src="/client.js?v=3"></script>
 <title>Sign in &middot; CORE Takeoff</title>
-<link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
-<link rel="alternate icon" href="/favicon.ico?v=1" sizes="16x16 32x32 48x48">
-<link rel="apple-touch-icon" href="/favicon-180.png?v=1">
+<link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico?v=3" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/favicon-180.png?v=3">
+<meta name="theme-color" content="#0e1013">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Every asset this page needs has to be reachable BEFORE anyone is signed
      in. The page's own rules stay inline; the only other files are the
@@ -22,15 +23,16 @@
       p = localStorage.getItem("core-palette");
       t = localStorage.getItem("core-theme");
       a = localStorage.getItem("core-accent");
-    } catch (e) { /* storage blocked: stay on steel */ }
-    d.setAttribute("data-palette", p === "nightcrew" ? "nightcrew" : "steel");
-    d.setAttribute("data-accent", a === "yellow" ? "yellow" : "green");
+    } catch (e) { /* storage blocked: stay on the defaults */ }
+    d.setAttribute("data-palette", p === "nightcrew" || p === "steel" ? p : "core");
+    d.setAttribute("data-accent", a === "green" ? "green" : "yellow");
     d.setAttribute("data-theme", t === "light" ? "light" : "dark");
   })();
 </script>
 <link rel="stylesheet" href="/tokens.css">
 <style>
-  html { height: 100%; background: #060c12; color: #e6eaee; color-scheme: dark; }
+  html { height: 100%; background: #0a0c0f; color: #e8eaed; color-scheme: dark; }
+  html[data-palette="steel"] { background: #060c12; color: #e6eaee; }
   html[data-palette="nightcrew"] { background: #0d1012; }
   html[data-theme="light"] { background: #e4e1da; color: #1f2326; color-scheme: light; }
   * { box-sizing: border-box; }
